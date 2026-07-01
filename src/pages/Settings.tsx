@@ -10,8 +10,11 @@ export default function Settings() {
     storeConfig, updateStoreConfig, 
     branches, addBranch, updateBranch, deleteBranch,
     categories, addCategory, updateCategory, deleteCategory,
-    receiptConfig, updateReceiptConfig
+    receiptConfig, updateReceiptConfig,
+    getBaseCurrency
   } = useStore();
+
+  const baseCurrency = getBaseCurrency();
 
   const [rates, setRates] = useState<{ [code: string]: number }>(
     currencies.reduce((acc, c) => ({ ...acc, [c.code]: c.rateToBase }), {})
@@ -98,15 +101,22 @@ export default function Settings() {
                   <div className="text-[10px] font-black text-slate-900 uppercase">{currency.name}</div>
                   <div className="text-[8px] font-bold text-slate-400 uppercase">{currency.code}</div>
                 </div>
-                <div className="w-24">
-                  <input
-                    type="number"
-                    value={rates[currency.code] || ''}
-                    disabled={currency.isBase}
-                    onChange={(e) => setRates({ ...rates, [currency.code]: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-900 focus:ring-1 focus:ring-indigo-100 outline-none disabled:opacity-30"
-                  />
-                </div>
+                {currency.isBase ? (
+                  <div className="w-auto px-2 py-1 bg-slate-200 border border-slate-300 rounded-lg text-xs font-black text-slate-500 text-center">
+                    Moneda Base
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black text-slate-500">1 {currency.code} =</span>
+                    <input
+                      type="number"
+                      value={rates[currency.code] || ''}
+                      onChange={(e) => setRates({ ...rates, [currency.code]: parseFloat(e.target.value) || 0 })}
+                      className="w-20 px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-900 focus:ring-1 focus:ring-indigo-100 outline-none text-right"
+                    />
+                    <span className="text-[10px] font-black text-slate-500">{baseCurrency.code}</span>
+                  </div>
+                )}
               </div>
             ))}
           </div>

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   ShoppingCart,
   Plus,
@@ -29,9 +29,21 @@ export default function CustomerShop() {
   const baseCurrency = getBaseCurrency();
   const [cart, setCart] = useState<CartItem[]>([]);
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
+  const visibleBranches = useMemo(() => {
+    if (!catalogConfig.visibleBranches || catalogConfig.visibleBranches.length === 0) return branches;
+    return branches.filter(b => catalogConfig.visibleBranches?.includes(b.id));
+  }, [branches, catalogConfig.visibleBranches]);
+
   const [selectedBranchId, setSelectedBranchId] = useState<string>(
-    branches[0]?.id || "",
+    visibleBranches[0]?.id || "",
   );
+
+  // Sync selected branch if it disappears from visible list
+  useEffect(() => {
+    if (selectedBranchId && !visibleBranches.find(b => b.id === selectedBranchId)) {
+      setSelectedBranchId(visibleBranches[0]?.id || "");
+    }
+  }, [visibleBranches, selectedBranchId]);
   const [searchQuery, setSearchQuery] = useState("");
   const [orderCode, setOrderCode] = useState<string | null>(null);
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -181,7 +193,7 @@ export default function CustomerShop() {
             }}
             className="hidden sm:block px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none text-xs font-black text-slate-700 uppercase tracking-widest cursor-pointer hover:bg-slate-100 transition-colors"
           >
-            {branches.map((b) => (
+            {visibleBranches.map((b) => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
@@ -213,7 +225,7 @@ export default function CustomerShop() {
             }}
             className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none text-xs font-black text-slate-700 uppercase tracking-widest shadow-sm"
           >
-            {branches.map((b) => (
+            {visibleBranches.map((b) => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>

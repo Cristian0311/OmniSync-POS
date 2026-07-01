@@ -1,19 +1,52 @@
 import React, { useState } from "react";
-import { BarChart, LineChart, PieChart, TrendingUp, DollarSign, Calendar, Calculator, Package, User, MapPin, Eye, X, ShieldCheck, ArrowUpRight, ArrowDownRight, History, Brain, AlertCircle, FileSpreadsheet } from "lucide-react";
+import { BarChart, LineChart, PieChart, TrendingUp, DollarSign, Calendar, Calculator, Package, User, MapPin, Eye, X, ShieldCheck, ArrowUpRight, ArrowDownRight, History, Brain, AlertCircle, FileSpreadsheet, Download } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { cn } from "../lib/utils";
 import { InfoTooltip } from "../components/InfoTooltip";
 
 export default function Reports() {
-  const { transactions, getBaseCurrency, cashSessions, users, branches, currencies, warranties, returns, supplierOrders, products, inventory } = useStore();
+  const { transactions, getBaseCurrency, cashSessions, users, branches, currencies, warranties, returns, supplierOrders, products, inventory, bankTransactions, bankCards, customers } = useStore();
   const baseCurrency = getBaseCurrency();
 
   const totalSales = transactions.reduce((sum, t) => sum + t.total, 0);
   
-  // Calculate movements total
+  // Calculate cash movements total
   const allMovements = cashSessions.flatMap(s => s.movements || []);
-  const totalIncomes = allMovements.filter(m => m.type === 'income').reduce((s, m) => s + (m.amount * (currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1)), 0);
-  const totalExpenses = allMovements.filter(m => m.type === 'expense').reduce((s, m) => s + (m.amount * (currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1)), 0);
+  const totalCashIncomes = allMovements.filter(m => m.type === 'income').reduce((s, m) => s + (m.amount * (currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1)), 0);
+  const totalCashExpenses = allMovements.filter(m => m.type === 'expense').reduce((s, m) => s + (m.amount * (currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1)), 0);
+  
+  // Bank movements breakdown
+  const bankPaymentsReceived = bankTransactions.filter(t => t.type === 'payment_received').reduce((sum, t) => {
+    const card = bankCards.find(c => c.id === t.cardId);
+    const rate = currencies.find(c => c.code === card?.currency)?.rateToBase || 1;
+    return sum + (t.amount * rate);
+  }, 0);
+
+  const bankOtherDeposits = bankTransactions.filter(t => t.type === 'deposit').reduce((sum, t) => {
+    const card = bankCards.find(c => c.id === t.cardId);
+    const rate = currencies.find(c => c.code === card?.currency)?.rateToBase || 1;
+    return sum + (t.amount * rate);
+  }, 0);
+
+  const bankSupplierPayments = bankTransactions.filter(t => t.type === 'supplier_payment').reduce((sum, t) => {
+    const card = bankCards.find(c => c.id === t.cardId);
+    const rate = currencies.find(c => c.code === card?.currency)?.rateToBase || 1;
+    return sum + (t.amount * rate);
+  }, 0);
+
+  const bankOtherWithdrawals = bankTransactions.filter(t => t.type === 'withdrawal').reduce((sum, t) => {
+    const card = bankCards.find(c => c.id === t.cardId);
+    const rate = currencies.find(c => c.code === card?.currency)?.rateToBase || 1;
+    return sum + (t.amount * rate);
+  }, 0);
+
+  const totalBankDeposits = bankPaymentsReceived + bankOtherDeposits;
+  const totalBankWithdrawals = bankSupplierPayments + bankOtherWithdrawals;
+
+  // netFlow should be Sales + Other Incomes - Total Expenses
+  // Since totalSales already includes transfer payments, we only add OTHER deposits to avoid duplication
+  const totalIncomes = totalCashIncomes + bankOtherDeposits;
+  const totalExpenses = totalCashExpenses + totalBankWithdrawals;
   const netFlow = totalSales + totalIncomes - totalExpenses;
 
   const txCount = transactions.length;
@@ -110,18 +143,53 @@ export default function Reports() {
   const [activeTab, setActiveTab] = useState<'sessions' | 'sales' | 'details' | 'warranties' | 'movements' | 'pandl' | 'forecast'>('pandl');
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
 
+  const exportSalesCSV = () => {
+    const headers = ["Fecha", "ID Ticket", "Cliente", "Cajero", "Total", "Monedas"];
+    const rows = transactions.map(t => [
+      new Date(t.date).toLocaleDateString(),
+      t.id,
+      customers.find(c => c.id === t.customerId)?.name || "Mostrador",
+      users.find(u => u.id === t.userId)?.name || "N/A",
+      t.total,
+      t.payments.map(p => `${p.amount} ${p.currencyCode}`).join(' | ')
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(r => r.join(","))
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `reporte_ventas_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-[1400px] mx-auto">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-        <div>
-          <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2 uppercase">
-            Ventas y Reportes
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
+        <div className="px-2">
+          <h2 className="text-base font-black text-slate-900 tracking-tighter flex items-center gap-2 uppercase">
+            Panel de Reportes
           </h2>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Análisis Financiero y Operativo</p>
+          <p className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] mt-0.5">Control Financiero Operativo</p>
         </div>
         
         {/* Navigation Bar Top */}
         <div className="flex flex-wrap items-center gap-2">
+          <button 
+            onClick={exportSalesCSV}
+            className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-[8px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all flex items-center gap-2"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Exportar CSV
+          </button>
+          <div className="w-px h-6 bg-slate-200 mx-1" />
           {[
             { id: 'pandl', label: 'P&L', group: 'finance' },
             { id: 'sales', label: 'Ventas', group: 'finance' },
@@ -148,45 +216,86 @@ export default function Reports() {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
-            <DollarSign className="w-4 h-4" />
+          <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
+            <DollarSign className="w-3.5 h-3.5" />
           </div>
-          <div>
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ingresos Ventas</p>
-            <h3 className="text-lg font-black text-slate-900">{formatMoney(totalSales)}</h3>
+          <div className="min-w-0">
+            <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest truncate">Ingresos Ventas</p>
+            <h3 className="text-base font-black text-slate-900 truncate">{formatMoney(totalSales)}</h3>
           </div>
         </div>
 
         <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-rose-50 flex items-center justify-center text-rose-600">
-            <ArrowDownRight className="w-4 h-4" />
+          <div className="w-7 h-7 rounded-lg bg-rose-50 flex items-center justify-center text-rose-600 shrink-0">
+            <ArrowDownRight className="w-3.5 h-3.5" />
           </div>
-          <div>
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Gastos / Egresos</p>
-            <h3 className="text-lg font-black text-slate-900">{formatMoney(totalExpenses)}</h3>
+          <div className="min-w-0">
+            <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest truncate">Gastos / Egresos</p>
+            <h3 className="text-base font-black text-slate-900 truncate">{formatMoney(totalExpenses)}</h3>
           </div>
         </div>
         
         <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
-            <TrendingUp className="w-4 h-4" />
+          <div className="w-7 h-7 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+            <TrendingUp className="w-3.5 h-3.5" />
           </div>
-          <div>
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Flujo Neto</p>
-            <h3 className="text-lg font-black text-slate-900">{formatMoney(netFlow)}</h3>
+          <div className="min-w-0">
+            <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest truncate">Flujo Neto</p>
+            <h3 className="text-base font-black text-slate-900 truncate">{formatMoney(netFlow)}</h3>
           </div>
         </div>
 
         <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
-            <Package className="w-4 h-4" />
+          <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
+            <Package className="w-3.5 h-3.5" />
           </div>
-          <div>
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Transacciones</p>
-            <h3 className="text-lg font-black text-slate-900">{txCount}</h3>
+          <div className="min-w-0">
+            <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest truncate">Transacciones</p>
+            <h3 className="text-base font-black text-slate-900 truncate">{txCount}</h3>
           </div>
+        </div>
+      </div>
+
+      <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
+        <h3 className="text-[8px] font-black text-slate-400 uppercase tracking-[0.3em] mb-3 px-1">Desglose Divisas</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          {currencies.map(c => {
+            const cashTotal = transactions.reduce((sum, tx) => {
+              const payment = tx.payments.find(p => p.currencyCode === c.code && p.method === 'cash');
+              return sum + (payment?.amount || 0);
+            }, 0);
+            const transferTotal = transactions.reduce((sum, tx) => {
+              const payment = tx.payments.find(p => p.currencyCode === c.code && p.method === 'transfer');
+              return sum + (payment?.amount || 0);
+            }, 0);
+
+            if (cashTotal === 0 && transferTotal === 0) return null;
+
+            return (
+              <div key={c.code} className="p-2 bg-slate-50/50 rounded-xl border border-slate-100/50">
+                <p className="text-[9px] font-black text-slate-900 mb-1.5 flex items-center justify-between">
+                  {c.code}
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-200"></span>
+                </p>
+                <div className="space-y-1">
+                  {cashTotal > 0 && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-[7px] font-black text-slate-400 uppercase">Cash</span>
+                      <span className="text-[9px] font-black text-emerald-600 tracking-tighter">{formatMoney(cashTotal, c.code)}</span>
+                    </div>
+                  )}
+                  {transferTotal > 0 && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-[7px] font-black text-slate-400 uppercase">Transf</span>
+                      <span className="text-[9px] font-black text-blue-600 tracking-tighter">{formatMoney(transferTotal, c.code)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -202,29 +311,29 @@ export default function Reports() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/50 border-b border-slate-100">
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">ID</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Usuario / Sucursal</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Apertura</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Cierre</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Fondo</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">ID</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Usuario / Sucursal</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Apertura</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Cierre</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Fondo</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Estado</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
                 {cashSessions.map(session => (
                   <tr key={session.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-6 py-4 font-black text-slate-900 text-[10px] uppercase">{session.id.slice(0, 8)}</td>
-                    <td className="px-6 py-4">
-                      <div className="text-xs font-black text-slate-900 uppercase tracking-tighter">{users.find(u => u.id === session.userId)?.name || session.userId}</div>
-                      <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{branches.find(b => b.id === session.branchId)?.name}</div>
+                    <td className="px-4 py-2.5 font-black text-slate-900 text-[9px] uppercase tracking-tighter">{session.id.slice(0, 8)}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="text-[10px] font-black text-slate-900 uppercase tracking-tighter">{users.find(u => u.id === session.userId)?.name || session.userId}</div>
+                      <div className="text-[7px] font-black text-slate-400 uppercase tracking-widest">{branches.find(b => b.id === session.branchId)?.name}</div>
                     </td>
-                    <td className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase">{new Date(session.openedAt).toLocaleString()}</td>
-                    <td className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase">{session.closedAt ? new Date(session.closedAt).toLocaleString() : '-'}</td>
-                    <td className="px-6 py-4 font-black text-slate-900 text-xs">{formatMoney(session.openingBalance)} <span className="text-[9px] text-slate-400">{baseCurrency.code}</span></td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-2.5 text-[9px] font-black text-slate-500 uppercase">{new Date(session.openedAt).toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-[9px] font-black text-slate-500 uppercase">{session.closedAt ? new Date(session.closedAt).toLocaleString() : '-'}</td>
+                    <td className="px-4 py-2.5 font-black text-slate-900 text-[10px]">{formatMoney(session.openingBalance)} <span className="text-[8px] text-slate-400">{baseCurrency.code}</span></td>
+                    <td className="px-4 py-2.5">
                       <span className={cn(
-                        "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest",
-                        session.status === 'open' ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"
+                        "px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest",
+                        session.status === 'open' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-50 text-slate-600 border border-slate-100"
                       )}>
                         {session.status === 'open' ? 'Abierta' : 'Cerrada'}
                       </span>
@@ -256,73 +365,65 @@ export default function Reports() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/50 border-b border-slate-100">
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">ID / Fecha</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Vendedor / Sucursal</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Productos Vendidos</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Métodos de Pago / Divisas</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Total ({baseCurrency.code})</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">ID / Fecha</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Vendedor / Sucursal</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Productos</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Pago / Divisas</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] text-right">Total ({baseCurrency.code})</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {transactions.map(tx => (
                   <tr key={tx.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="text-[10px] font-black text-slate-900 uppercase">{tx.id.slice(0, 10)}</div>
-                      <div className="text-[9px] font-bold text-slate-400 uppercase">{new Date(tx.date).toLocaleString()}</div>
+                    <td className="px-4 py-2.5">
+                      <div className="text-[9px] font-black text-slate-900 uppercase tracking-tighter">{tx.id.slice(0, 10)}</div>
+                      <div className="text-[7px] font-bold text-slate-400 uppercase tracking-tight">{new Date(tx.date).toLocaleString()}</div>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2 mb-1">
-                        <User className="w-3 h-3 text-slate-300" />
-                        <span className="text-xs font-black text-slate-900 uppercase tracking-tighter">{users.find(u => u.id === tx.userId)?.name || tx.userId}</span>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <User className="w-2.5 h-2.5 text-slate-300" />
+                        <span className="text-[10px] font-black text-slate-900 uppercase tracking-tighter">{users.find(u => u.id === tx.userId)?.name || tx.userId}</span>
                       </div>
-                      <div className="flex items-center gap-2 text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                        <MapPin className="w-3 h-3 text-slate-300" />
+                      <div className="flex items-center gap-1.5 text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                        <MapPin className="w-2.5 h-2.5 text-slate-300" />
                         {branches.find(b => b.id === tx.branchId)?.name}
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1 max-w-xs">
+                    <td className="px-4 py-2.5">
+                      <div className="flex flex-wrap gap-1 max-w-[200px]">
                         {tx.items.slice(0, 2).map((item, idx) => (
-                          <div key={idx} className="flex flex-col gap-0.5 mb-1">
-                            <span className="inline-flex items-center gap-1 bg-slate-50 text-slate-600 px-1.5 py-0.5 rounded border border-slate-100 text-[8px] font-black uppercase tracking-widest">
-                              <Package className="w-2 h-2" />
-                              {item.quantity} {getProductName(item.product)}
+                          <div key={idx} className="flex flex-col gap-0 mt-0.5">
+                            <span className="inline-flex items-center gap-1 bg-slate-50 text-slate-600 px-1 py-0.25 rounded border border-slate-100 text-[7px] font-black uppercase tracking-tighter">
+                              {item.quantity}x {getProductName(item.product)}
                             </span>
-                            {item.serialNumber && (
-                              <span className="text-[7px] font-bold text-indigo-500 uppercase ml-1">SN: {item.serialNumber}</span>
-                            )}
-                            {item.warrantyCode && (
-                              <span className="text-[7px] font-bold text-emerald-500 uppercase ml-1">GDA: {item.warrantyCode}</span>
-                            )}
                           </div>
                         ))}
                         {tx.items.length > 2 && (
                           <button 
                             onClick={() => setExpandedSession(tx.id)}
-                            className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100 text-[8px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors"
+                            className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-600 px-1 py-0.25 rounded border border-indigo-100 text-[7px] font-black uppercase tracking-tighter hover:bg-indigo-100 transition-colors"
                           >
-                            <Eye className="w-2.5 h-2.5" />
-                            +{tx.items.length - 2} más
+                            +{tx.items.length - 2}
                           </button>
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="space-y-1">
+                    <td className="px-4 py-2.5">
+                      <div className="space-y-0.5">
                         {tx.payments.map((p, idx) => (
-                          <div key={idx} className="flex items-center gap-2">
+                          <div key={idx} className="flex items-center gap-1.5">
                             <span className={cn(
-                              "px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-widest",
-                              p.method === 'cash' ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"
+                              "px-1 py-0 rounded text-[6px] font-black uppercase tracking-tighter border",
+                              p.method === 'cash' ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-blue-50 text-blue-700 border-blue-100"
                             )}>
-                              {p.method === 'cash' ? 'EFECTIVO' : 'TRANSF'}
+                              {p.method === 'cash' ? 'EFECT' : 'TRANS'}
                             </span>
-                            <span className="text-[10px] font-black text-slate-900">{formatMoney(p.amount, p.currencyCode)}</span>
+                            <span className="text-[9px] font-black text-slate-900 tracking-tighter">{formatMoney(p.amount, p.currencyCode)}</span>
                           </div>
                         ))}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-right font-black text-slate-900 text-sm">
+                    <td className="px-4 py-2.5 text-right font-black text-slate-900 text-[11px] tracking-tighter">
                       {formatMoney(tx.total)}
                     </td>
                   </tr>
@@ -458,35 +559,35 @@ export default function Reports() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/50 border-b border-slate-100">
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Fecha / Turno</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Descripción</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sucursal / Usuario</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipo</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Monto</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Fecha / Turno</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Descripción</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Sucursal / Usuario</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Tipo</th>
+                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] text-right">Monto</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {cashSessions.flatMap(s => (s.movements || []).map(m => ({ ...m, sessionId: s.id, branchId: s.branchId, userId: s.userId }))).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(m => (
                   <tr key={m.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="text-[10px] font-black text-slate-900 uppercase">{new Date(m.date).toLocaleDateString()}</div>
-                      <div className="text-[8px] font-bold text-slate-400 uppercase">{new Date(m.date).toLocaleTimeString()}</div>
+                    <td className="px-4 py-2.5">
+                      <div className="text-[9px] font-black text-slate-900 uppercase tracking-tighter">{new Date(m.date).toLocaleDateString()}</div>
+                      <div className="text-[7px] font-bold text-slate-400 uppercase tracking-tight">{new Date(m.date).toLocaleTimeString()}</div>
                     </td>
-                    <td className="px-6 py-4 text-xs font-bold text-slate-700 uppercase">{m.description}</td>
-                    <td className="px-6 py-4">
-                      <div className="text-[10px] font-black text-slate-900 uppercase">{branches.find(b => b.id === m.branchId)?.name}</div>
-                      <div className="text-[8px] font-bold text-slate-400 uppercase">{users.find(u => u.id === m.userId)?.name}</div>
+                    <td className="px-4 py-2.5 text-[10px] font-black text-slate-700 uppercase tracking-tighter">{m.description}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="text-[9px] font-black text-slate-900 uppercase tracking-tighter">{branches.find(b => b.id === m.branchId)?.name}</div>
+                      <div className="text-[7px] font-bold text-slate-400 uppercase tracking-widest">{users.find(u => u.id === m.userId)?.name}</div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-2.5">
                       <span className={cn(
-                        "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest",
-                        m.type === 'income' ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                        "px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest border",
+                        m.type === 'income' ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-rose-50 text-rose-700 border-rose-100"
                       )}>
-                        {m.type === 'income' ? 'ENTRADA' : 'EGRESO / GASTO'}
+                        {m.type === 'income' ? 'ENTRADA' : 'EGRESO'}
                       </span>
                     </td>
                     <td className={cn(
-                      "px-6 py-4 text-right font-black text-sm",
+                      "px-4 py-2.5 text-right font-black text-[11px] tracking-tighter",
                       m.type === 'income' ? "text-emerald-600" : "text-rose-600"
                     )}>
                       {m.type === 'expense' ? '-' : '+'}{formatMoney(m.amount, m.currencyCode)}
@@ -507,117 +608,93 @@ export default function Reports() {
       )}
 
       {activeTab === 'pandl' && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-            <div className="p-6 bg-slate-900 text-white">
-              <div className="flex justify-between items-start mb-6">
-                <div>
-                  <h2 className="text-lg font-black uppercase tracking-tighter">Estado de Resultados (P&L)</h2>
-                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Resumen Financiero Real</p>
+        <div className="space-y-4">
+          <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="p-6 bg-slate-950 text-white relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-600/10 blur-[100px] rounded-full -mr-32 -mt-32"></div>
+              <div className="relative z-10">
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <h2 className="text-xl font-black uppercase tracking-tighter leading-none mb-1">Estado de Resultados</h2>
+                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-[0.3em]">Auditoría Financiera Real</p>
+                  </div>
+                  <div className="bg-slate-900 px-3 py-1 rounded-full border border-slate-800">
+                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Periodo: Actual</p>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-black text-slate-400 uppercase">Periodo</p>
-                  <p className="text-xs font-bold uppercase">Junio 2026</p>
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                <div>
-                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Ventas Brutas</p>
-                  <p className="text-3xl font-black">{formatMoney(totalSales)}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1">Costo de Ventas (Stock)</p>
-                  <p className="text-3xl font-black">
-                    -{formatMoney(transactions.reduce((sum, t) => sum + t.items.reduce((s, i) => s + (i.product.costPrice * i.quantity), 0), 0))}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Utilidad Bruta</p>
-                  <p className="text-3xl font-black">
-                    {formatMoney(totalSales - transactions.reduce((sum, t) => sum + t.items.reduce((s, i) => s + (i.product.costPrice * i.quantity), 0), 0))}
-                  </p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="p-4 bg-slate-900/50 rounded-2xl border border-slate-800">
+                    <p className="text-[8px] font-black text-indigo-400 uppercase tracking-[0.2em] mb-2">Ventas Brutas (POS)</p>
+                    <p className="text-2xl font-black tracking-tighter">{formatMoney(totalSales)}</p>
+                  </div>
+                  <div className="p-4 bg-slate-900/50 rounded-2xl border border-slate-800">
+                    <p className="text-[8px] font-black text-rose-400 uppercase tracking-[0.2em] mb-2">Costo Inventario (Vendido)</p>
+                    <p className="text-2xl font-black tracking-tighter">
+                      -{formatMoney(transactions.reduce((sum, t) => sum + t.items.reduce((s, i) => s + (i.product.costPrice * i.quantity), 0), 0))}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-indigo-600 rounded-2xl shadow-lg shadow-indigo-500/20">
+                    <p className="text-[8px] font-black text-indigo-100 uppercase tracking-[0.2em] mb-2">Margen Bruto</p>
+                    <p className="text-2xl font-black tracking-tighter">
+                      {formatMoney(totalSales - transactions.reduce((sum, t) => sum + t.items.reduce((s, i) => s + (i.product.costPrice * i.quantity), 0), 0))}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="p-8 space-y-8">
-              {/* Otros Ingresos */}
-              <div>
-                <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2 flex items-center justify-between">
-                  <span>Otros Ingresos de Caja</span>
-                  <span className="text-emerald-600">+{formatMoney(totalIncomes)}</span>
-                </h4>
-                <div className="space-y-3">
-                  {allMovements.filter(m => m.type === 'income').slice(0, 5).map(m => (
-                    <div key={m.id} className="flex justify-between items-center py-2 px-4 bg-slate-50/50 rounded-xl">
-                      <div>
-                        <p className="text-[10px] font-black text-slate-700 uppercase">{m.description}</p>
-                        <p className="text-[8px] font-bold text-slate-400 uppercase">{new Date(m.date).toLocaleDateString()}</p>
-                      </div>
-                      <span className="text-[10px] font-black text-emerald-600">+{formatMoney(m.amount, m.currencyCode)}</span>
-                    </div>
-                  ))}
-                  {allMovements.filter(m => m.type === 'income').length === 0 && (
-                    <p className="text-[8px] font-bold text-slate-300 uppercase text-center py-2">No hay otros ingresos registrados</p>
-                  )}
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Entradas */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-2">
+                  <h4 className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Entradas Adicionales</h4>
+                  <span className="text-[10px] font-black text-emerald-600">+{formatMoney(totalIncomes)}</span>
                 </div>
-              </div>
-
-              {/* Gastos Operativos */}
-              <div>
-                <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2 flex items-center justify-between">
-                  <span>Gastos Operativos y Egresos</span>
-                  <span className="text-rose-600">-{formatMoney(totalExpenses + users.reduce((s, u) => s + (u.baseSalary || 0), 0) + supplierOrders.filter(o => o.status === 'received').reduce((s, o) => s + o.total, 0))}</span>
-                </h4>
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center py-2 px-4 bg-slate-50 rounded-xl">
-                    <span className="text-[10px] font-black text-slate-600 uppercase">Salarios y Comisiones (Base Diario)</span>
-                    <span className="text-[10px] font-black text-rose-600">-{formatMoney(users.reduce((s, u) => s + (u.baseSalary || 0), 0))}</span>
+                <div className="space-y-1.5">
+                  <div className="p-2.5 bg-emerald-50/30 rounded-xl border border-emerald-100/50 flex justify-between items-center">
+                    <span className="text-[8px] font-black text-emerald-800/60 uppercase tracking-tighter">Cash In (Caja)</span>
+                    <span className="text-[10px] font-black text-emerald-600 tracking-tighter">+{formatMoney(totalCashIncomes)}</span>
                   </div>
-                  <div className="flex justify-between items-center py-2 px-4 bg-slate-50 rounded-xl">
-                    <span className="text-[10px] font-black text-slate-600 uppercase">Compras a Proveedores y Logística (Recibidas)</span>
-                    <span className="text-[10px] font-black text-rose-600">-{formatMoney(supplierOrders.filter(o => o.status === 'received').reduce((s, o) => s + o.total + (o.transportCost || 0), 0))}</span>
-                  </div>
-                  <div className="space-y-2 mt-4">
-                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest px-1">Detalle de Gastos de Caja</p>
-                    {allMovements.filter(m => m.type === 'expense').slice(0, 10).map(m => (
-                      <div key={m.id} className="flex justify-between items-center py-2 px-4 bg-white border border-slate-100 rounded-xl">
-                        <div>
-                          <p className="text-[10px] font-black text-slate-700 uppercase">{m.description}</p>
-                          <p className="text-[8px] font-bold text-slate-400 uppercase">{new Date(m.date).toLocaleDateString()}</p>
-                        </div>
-                        <span className="text-[10px] font-black text-rose-600">-{formatMoney(m.amount, m.currencyCode)}</span>
-                      </div>
-                    ))}
+                  <div className="p-2.5 bg-emerald-50/30 rounded-xl border border-emerald-100/50 flex justify-between items-center">
+                    <span className="text-[8px] font-black text-emerald-800/60 uppercase tracking-tighter">Depósitos Bancarios</span>
+                    <span className="text-[10px] font-black text-emerald-600 tracking-tighter">+{formatMoney(totalBankDeposits)}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Utilidad Neta Final */}
-              <div className="pt-6 border-t-4 border-slate-900 flex justify-between items-center">
-                <div>
-                  <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Utilidad Real Neta</h3>
-                  <p className="text-[9px] font-bold text-slate-400 uppercase">Después de todos los costos, compras y gastos</p>
+              {/* Salidas */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-2">
+                  <h4 className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Salidas Totales</h4>
+                  <span className="text-[10px] font-black text-rose-600">-{formatMoney(totalExpenses)}</span>
                 </div>
-                <div className="text-right">
-                  {(() => {
-                    const grossProfit = totalSales - transactions.reduce((sum, t) => sum + t.items.reduce((s, i) => s + (i.product.costPrice * i.quantity), 0), 0);
-                    const totalPurchases = supplierOrders.filter(o => o.status === 'received').reduce((s, o) => s + o.total + (o.transportCost || 0), 0);
-                    const netUtility = grossProfit + totalIncomes - totalExpenses - users.reduce((s, u) => s + (u.baseSalary || 0), 0) - totalPurchases;
-                    return (
-                      <>
-                        <p className={cn(
-                          "text-4xl font-black",
-                          netUtility > 0 ? "text-emerald-600" : "text-rose-600"
-                        )}>
-                          {formatMoney(netUtility)}
-                        </p>
-                        <p className="text-[9px] font-black text-slate-400 uppercase">{baseCurrency.code}</p>
-                      </>
-                    );
-                  })()}
+                <div className="space-y-1.5">
+                  <div className="p-2.5 bg-rose-50/30 rounded-xl border border-rose-100/50 flex justify-between items-center">
+                    <span className="text-[8px] font-black text-rose-800/60 uppercase tracking-tighter">Cash Out (Caja)</span>
+                    <span className="text-[10px] font-black text-rose-600 tracking-tighter">-{formatMoney(totalCashExpenses)}</span>
+                  </div>
+                  <div className="p-2.5 bg-rose-50/30 rounded-xl border border-rose-100/50 flex justify-between items-center">
+                    <span className="text-[8px] font-black text-rose-800/60 uppercase tracking-tighter">Retiros / Pagos Bancarios</span>
+                    <span className="text-[10px] font-black text-rose-600 tracking-tighter">-{formatMoney(totalBankWithdrawals)}</span>
+                  </div>
                 </div>
+              </div>
+            </div>
+
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-black text-slate-900 uppercase tracking-tighter leading-none mb-1">Utilidad Neta del Periodo</h3>
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest italic">Consolidado final después de egresos e impuestos implícitos</p>
+              </div>
+              <div className="text-right">
+                <p className={cn(
+                  "text-3xl font-black tracking-tighter leading-none",
+                  netFlow > 0 ? "text-emerald-600" : "text-rose-600"
+                )}>
+                  {formatMoney(netFlow)}
+                </p>
+                <p className="text-[8px] font-black text-slate-400 uppercase mt-1 tracking-widest">Balance Final Disponible</p>
               </div>
             </div>
           </div>

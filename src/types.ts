@@ -93,6 +93,7 @@ export interface CatalogConfig {
   bannerText: string;
   whatsappNumber: string;
   showPrices: boolean;
+  visibleBranches?: string[]; // IDs of branches to show in catalog
 }
 
 export interface Transaction {
@@ -109,6 +110,7 @@ export interface Transaction {
   customerId?: string;
   ncf?: string; // Numero de Comprobante Fiscal
   ncfType?: string; // e.g., 'B01', 'B02'
+  changeGiven?: number; // In base currency
 }
 
 export interface ReturnItem {
@@ -194,7 +196,7 @@ export interface SalarySettlement {
   commissions: number;
   total: number;
   date: string;
-  status: 'pending' | 'paid' | 'cancelled';
+  status: 'pending' | 'paid' | 'cancelled' | 'waiting';
 }
 
 export interface InventoryTransfer {
@@ -207,6 +209,7 @@ export interface InventoryTransfer {
   toBranchName: string;
   variantLabel?: string;
   quantity: number;
+  variants?: { variantLabel: string; quantity: number }[]; // For grouped transfers
   date: string;
   userId: string;
   status: 'pending' | 'completed' | 'cancelled';

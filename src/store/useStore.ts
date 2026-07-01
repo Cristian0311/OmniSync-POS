@@ -96,6 +96,7 @@ interface AppState {
   batchDeleteProducts: (ids: string[]) => void;
   batchUpdateProducts: (ids: string[], updates: Partial<Product>) => void;
   transferInventory: (productId: string, fromBranchId: string, toBranchId: string, quantity: number, variantLabel?: string) => boolean;
+  transferInventoryBatch: (productId: string, fromBranchId: string, toBranchId: string, variants: { variantLabel: string; quantity: number }[]) => boolean;
   adjustInventory: (productId: string, branchId: string, delta: number, variantLabel?: string, minQuantity?: number) => void;
   setInventoryQuantity: (productId: string, branchId: string, quantity: number, variantLabel?: string, minQuantity?: number) => void;
   
@@ -225,7 +226,13 @@ export const useStore = create<AppState>((set, get) => ({
   storeConfig: { storeName: 'Mi Tienda POS', address: 'Calle Principal 123', phone: '+53 51234567', receiptNotes: '¡Gracias por su compra!' },
   updateStoreConfig: (config) => set({ storeConfig: config }),
 
-  catalogConfig: { themeColor: '#4f46e5', bannerText: '¡Bienvenidos a nuestra tienda virtual!', whatsappNumber: '+5351234567', showPrices: true },
+  catalogConfig: { 
+    themeColor: '#4f46e5', 
+    bannerText: '¡Bienvenidos a nuestra tienda virtual!', 
+    whatsappNumber: '+5351234567', 
+    showPrices: true,
+    visibleBranches: ['b1']
+  },
   updateCatalogConfig: (config) => set({ catalogConfig: config }),
 
   branches: INITIAL_BRANCHES,
@@ -321,6 +328,66 @@ export const useStore = create<AppState>((set, get) => ({
         userId: get().currentUser?.id || 'system',
         status: 'completed',
         variantLabel
+      });
+    }
+    return success;
+  },
+  transferInventoryBatch: (productId, fromBranchId, toBranchId, variants) => {
+    let success = false;
+    let totalQuantity = 0;
+    set((state) => {
+      const newInventory = [...state.inventory];
+      let allValid = true;
+
+      // Check if we have enough stock for all variants
+      for (const v of variants) {
+        if (v.quantity <= 0) continue;
+        const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && i.variantLabel === v.variantLabel);
+        if (sourceIdx === -1 || newInventory[sourceIdx].quantity < v.quantity) {
+          allValid = false;
+          break;
+        }
+      }
+
+      if (allValid && variants.length > 0) {
+        for (const v of variants) {
+          if (v.quantity <= 0) continue;
+          totalQuantity += v.quantity;
+          const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && i.variantLabel === v.variantLabel);
+          newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newInventory[sourceIdx].quantity - v.quantity };
+          
+          const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && i.variantLabel === v.variantLabel);
+          if (targetIdx !== -1) {
+            newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newInventory[targetIdx].quantity + v.quantity };
+          } else {
+            newInventory.push({ productId, branchId: toBranchId, quantity: v.quantity, minQuantity: 5, variantLabel: v.variantLabel });
+          }
+        }
+        success = true;
+      }
+      
+      return success ? { inventory: newInventory } : {};
+    });
+
+    if (success) {
+      const product = get().products.find(p => p.id === productId);
+      const fromBranch = get().branches.find(b => b.id === fromBranchId);
+      const toBranch = get().branches.find(b => b.id === toBranchId);
+      
+      get().addTransfer({
+        id: crypto.randomUUID(),
+        productId,
+        productName: product?.name || 'Producto',
+        fromBranchId,
+        fromBranchName: fromBranch?.name || 'Sucursal',
+        toBranchId,
+        toBranchName: toBranch?.name || 'Sucursal',
+        quantity: totalQuantity,
+        variants: variants,
+        date: new Date().toISOString(),
+        userId: get().currentUser?.id || 'system',
+        status: 'completed',
+        variantLabel: variants.length === 1 ? variants[0].variantLabel : 'Múltiples Variantes'
       });
     }
     return success;

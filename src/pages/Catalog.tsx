@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { QrCode, Store, ExternalLink, Settings2, Smartphone, Save, Info } from "lucide-react";
+import { QrCode, Store, ExternalLink, Settings2, Smartphone, Save, Info, Check } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useStore } from "../store/useStore";
 import { cn } from "../lib/utils";
@@ -33,13 +33,13 @@ export default function Catalog() {
       </header>
 
       {/* Alerta de Red Local */}
-      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex gap-3 items-start">
-        <Info className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+      <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex gap-3 items-start">
+        <Info className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
         <div>
-          <h4 className="text-xs font-black text-amber-900 uppercase tracking-widest mb-1">Importante sobre dispositivos móviles</h4>
-          <p className="text-xs font-bold text-amber-700/80">
-            Para que los clientes o tú mismo puedan acceder desde un teléfono, la computadora y el teléfono deben estar en la <strong>misma red Wi-Fi</strong>. 
-            Además, el código QR debe apuntar a la <strong>dirección IP local de tu computadora</strong> (ej. 192.168.1.15:3000), no a <i>localhost</i>.
+          <h4 className="text-xs font-black text-emerald-900 uppercase tracking-widest mb-1">Acceso a la Tienda en Línea</h4>
+          <p className="text-xs font-bold text-emerald-700/80">
+            Tu tienda está alojada en la nube de Render con base de datos en Supabase. 
+            Cualquier persona con acceso a internet puede entrar desde su computadora o celular a la URL de tu tienda.
           </p>
         </div>
       </div>
@@ -57,11 +57,11 @@ export default function Catalog() {
               QR de la Tienda
             </h3>
             <p className="text-slate-500 text-xs font-bold mb-6 max-w-xs mx-auto">
-              Escanea para acceder a la tienda. Si escaneas desde otro dispositivo, asegúrate de configurar la IP correcta abajo.
+              Los clientes pueden escanear este código o usar el enlace web para ver los productos.
             </p>
 
             <div className="w-full text-left space-y-2 mb-6">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dirección del QR (Host/IP)</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Enlace de Acceso (URL)</label>
               <div className="relative">
                 <Smartphone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input 
@@ -69,7 +69,7 @@ export default function Catalog() {
                   value={hostAddress}
                   onChange={(e) => setHostAddress(e.target.value)}
                   className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-1 focus:ring-indigo-100 outline-none"
-                  placeholder="ej. 192.168.1.15:3000"
+                  placeholder="ej. misistema.com"
                 />
               </div>
             </div>
@@ -179,6 +179,43 @@ export default function Catalog() {
               <div>
                 <label htmlFor="showPrices" className="text-[11px] font-black text-slate-900 uppercase tracking-widest cursor-pointer select-none">Mostrar Precios</label>
                 <p className="text-[9px] font-bold text-slate-500">Si está desactivado, el cliente solo armará el pedido sin ver los precios.</p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <label className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Sucursales Visibles en el Catálogo</label>
+              <div className="grid sm:grid-cols-2 gap-3">
+                {useStore.getState().branches.map(branch => (
+                  <div 
+                    key={branch.id}
+                    onClick={() => {
+                      const current = configForm.visibleBranches || [];
+                      const exists = current.includes(branch.id);
+                      const next = exists 
+                        ? current.filter(id => id !== branch.id)
+                        : [...current, branch.id];
+                      setConfigForm({...configForm, visibleBranches: next});
+                    }}
+                    className={cn(
+                      "flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer",
+                      (configForm.visibleBranches || []).includes(branch.id)
+                        ? "bg-indigo-50 border-indigo-200"
+                        : "bg-white border-slate-100 hover:border-slate-200"
+                    )}
+                  >
+                    <div className={cn(
+                      "w-4 h-4 rounded flex items-center justify-center border transition-colors",
+                      (configForm.visibleBranches || []).includes(branch.id)
+                        ? "bg-indigo-600 border-indigo-600"
+                        : "bg-white border-slate-300"
+                    )}>
+                      {(configForm.visibleBranches || []).includes(branch.id) && (
+                        <Check className="w-2.5 h-2.5 text-white" />
+                      )}
+                    </div>
+                    <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight">{branch.name}</span>
+                  </div>
+                ))}
               </div>
             </div>
 

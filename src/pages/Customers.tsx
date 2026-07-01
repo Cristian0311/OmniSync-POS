@@ -1,20 +1,31 @@
 import React, { useState } from "react";
-import { Users, Search, Plus, Star, Phone, Mail, Edit, Trash2 } from "lucide-react";
+import { Users, Search, Plus, Star, Phone, Mail, Edit, Trash2, History, X, Package, Clock, DollarSign, ShoppingBag } from "lucide-react";
 import { useStore } from "../store/useStore";
-import { Customer } from "../types";
+import { Customer, Transaction } from "../types";
+import { cn } from "../lib/utils";
 
 export default function Customers() {
-  const { customers, addCustomer, updateCustomer, deleteCustomer } = useStore();
+  const { customers, addCustomer, updateCustomer, deleteCustomer, transactions, getBaseCurrency } = useStore();
+  const baseCurrency = getBaseCurrency();
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [viewingHistory, setViewingHistory] = useState<Customer | null>(null);
   const [newCustomer, setNewCustomer] = useState({ name: "", email: "", phone: "", taxId: "" });
 
   const filteredCustomers = customers.filter(c => 
     c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.phone.includes(searchQuery)
+    c.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.phone?.includes(searchQuery)
   );
+
+  const getCustomerTransactions = (customerId: string) => {
+    return transactions.filter(t => t.customerId === customerId).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  };
+
+  const formatMoney = (amount: number) => {
+    return `${baseCurrency.symbol} ${amount.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
 
   const handleAddCustomer = (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,6 +119,13 @@ export default function Customers() {
                   <td className="px-5 py-3 text-right">
                     <div className="flex justify-end gap-1">
                       <button 
+                        onClick={() => setViewingHistory(customer)}
+                        className="text-slate-500 hover:text-emerald-600 transition-colors p-1.5 hover:bg-emerald-50 rounded-lg border border-slate-100 shadow-sm"
+                        title="Ver Historial"
+                      >
+                        <History className="w-4 h-4" />
+                      </button>
+                      <button 
                         onClick={() => {
                           setEditingCustomer(customer);
                           setNewCustomer({ name: customer.name, email: customer.email || "", phone: customer.phone || "", taxId: customer.taxId || "" });
@@ -131,6 +149,77 @@ export default function Customers() {
           </table>
         </div>
       </div>
+
+      {/* History Sidebar/Modal */}
+      {viewingHistory && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-[2px] z-50 flex justify-end animate-in fade-in duration-300">
+          <div className="w-full max-w-lg bg-white h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <div>
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-tighter">Historial de Compras</h3>
+                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">{viewingHistory.name}</p>
+              </div>
+              <button onClick={() => setViewingHistory(null)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {getCustomerTransactions(viewingHistory.id).length > 0 ? (
+                getCustomerTransactions(viewingHistory.id).map(tx => (
+                  <div key={tx.id} className="p-4 bg-white border border-slate-100 rounded-2xl shadow-sm hover:border-indigo-100 transition-colors">
+                    <div className="flex justify-between items-start mb-3 pb-3 border-b border-slate-50">
+                      <div>
+                        <div className="text-[10px] font-black text-slate-900 uppercase">#{tx.id.slice(-8)}</div>
+                        <div className="text-[8px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 mt-0.5">
+                          <Clock className="w-3 h-3" />
+                          {new Date(tx.date).toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs font-black text-emerald-600">{formatMoney(tx.total)}</div>
+                        <div className="text-[7px] font-black text-slate-400 uppercase tracking-widest">{tx.payments.map(p => p.method).join(' / ')}</div>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      {tx.items.map((item, idx) => (
+                        <div key={idx} className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <Package className="w-3 h-3 text-slate-300" />
+                            <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight">{item.quantity}x {item.product.name}</span>
+                          </div>
+                          <span className="text-[9px] font-bold text-slate-400">{formatMoney(item.product.price * item.quantity)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center opacity-20 py-20">
+                  <ShoppingBag className="w-12 h-12 mb-4" />
+                  <p className="text-[10px] font-black uppercase tracking-widest">Sin transacciones registradas</p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 bg-slate-50 border-t border-slate-100">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Total Acumulado</span>
+                <span className="text-base font-black text-slate-900">
+                  {formatMoney(getCustomerTransactions(viewingHistory.id).reduce((sum, t) => sum + t.total, 0))}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Frecuencia</span>
+                <span className="text-[10px] font-black text-indigo-600 uppercase">
+                  {getCustomerTransactions(viewingHistory.id).length} Visitas
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Agregar Cliente (Compact) */}
       {showAddModal && (

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Calculator, Lock, Unlock, TrendingUp, DollarSign, Clock, AlertCircle } from "lucide-react";
+import { Calculator, Lock, Unlock, TrendingUp, DollarSign, Clock, AlertCircle, List } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { Payment } from "../types";
 import { InfoTooltip } from "../components/InfoTooltip";
@@ -90,6 +90,36 @@ export default function CashRegister() {
 
     return expected;
   }, [session, transactions, currentBranchId, baseCurrency, currencies]);
+
+  const sessionProducts = useMemo(() => {
+    if (!session) return [];
+    
+    const sessionTx = transactions.filter(
+      t => t.branchId === currentBranchId && t.userId === session.userId && new Date(t.date) >= new Date(session.openedAt)
+    );
+
+    const productMap: { [key: string]: { name: string, quantity: number, total: number, currency: string } } = {};
+
+    sessionTx.forEach(tx => {
+      tx.items.forEach(item => {
+        const key = `${item.product.id}-${tx.payments[0]?.currencyCode || baseCurrency.code}`;
+        const itemTotal = item.product.price * item.quantity;
+        if (productMap[key]) {
+          productMap[key].quantity += item.quantity;
+          productMap[key].total += itemTotal;
+        } else {
+          productMap[key] = {
+            name: item.product.name,
+            quantity: item.quantity,
+            total: itemTotal,
+            currency: tx.payments[0]?.currencyCode || baseCurrency.code
+          };
+        }
+      });
+    });
+
+    return Object.values(productMap).sort((a, b) => b.quantity - a.quantity);
+  }, [session, transactions, currentBranchId, baseCurrency]);
 
   const handleClose = (e: React.FormEvent) => {
     e.preventDefault();
@@ -283,7 +313,19 @@ export default function CashRegister() {
               <div className="bg-white rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden">
                 <div className="px-5 py-4 border-b border-slate-50 flex items-center justify-between bg-slate-50/50">
                   <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Arqueo de Caja</h3>
-                  <TrendingUp className="w-4 h-4 text-emerald-500" />
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      const autoBalances: {[key: string]: number} = {};
+                      expectedBalances.forEach(eb => {
+                        autoBalances[`${eb.currencyCode}-${eb.method}`] = eb.amount;
+                      });
+                      setClosingBalances(autoBalances);
+                    }}
+                    className="text-[8px] font-black uppercase text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2 py-1 rounded-lg transition-colors border border-indigo-100"
+                  >
+                    Auto-completar
+                  </button>
                 </div>
 
                 <form onSubmit={handleClose} className="p-5 space-y-6">
@@ -449,6 +491,34 @@ export default function CashRegister() {
                       <p className="text-xs font-black text-indigo-600">{formatMoney(eb.amount, eb.currencyCode)}</p>
                     </div>
                   ))}
+                </div>
+              </div>
+
+              {/* Products Sold Sidebar */}
+              <div className="bg-white rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-50 flex items-center justify-between bg-slate-50/50">
+                  <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">Productos Vendidos</h3>
+                  <List className="w-4 h-4 text-slate-300" />
+                </div>
+                <div className="p-4 space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar">
+                  {sessionProducts.length > 0 ? (
+                    sessionProducts.map((sp, idx) => (
+                      <div key={idx} className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                        <div className="flex justify-between items-start mb-1">
+                          <p className="text-[10px] font-black text-slate-900 uppercase tracking-tighter truncate max-w-[120px]">{sp.name}</p>
+                          <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-lg uppercase">{sp.currency}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">{sp.quantity} unidad(es)</p>
+                          <p className="text-[10px] font-black text-slate-700">
+                            {formatMoney(sp.total, currencies.find(c => c.code === sp.currency)?.symbol || '')}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-center py-8 text-[10px] font-black text-slate-300 uppercase tracking-widest">No hay ventas registradas</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -649,11 +719,11 @@ export default function CashRegister() {
                 </button>
                 <button 
                   onClick={() => {
-                    updateSalarySettlement(pendingSettlement.id, { status: 'cancelled' });
+                    updateSalarySettlement(pendingSettlement.id, { status: 'waiting' });
                   }}
-                  className="py-4 bg-white border border-slate-200 text-slate-400 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all active:scale-95"
+                  className="py-4 bg-amber-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-amber-600 transition-all shadow-xl shadow-amber-100 active:scale-95"
                 >
-                  CANCELAR
+                  ESPERAR
                 </button>
               </div>
             </div>

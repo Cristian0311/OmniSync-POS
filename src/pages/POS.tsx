@@ -27,6 +27,8 @@ export default function POS() {
 
   const [activePaymentLineId, setActivePaymentLineId] = useState<string | null>(null);
 
+  const [changeMix, setChangeMix] = useState<{[code: string]: number}>({});
+
   const [qrCodeInput, setQrCodeInput] = useState("");
   const [posError, setPosError] = useState("");
   const [posSuccess, setPosSuccess] = useState("");
@@ -80,7 +82,9 @@ export default function POS() {
     return sum + (line.amount * currency.rateToBase);
   }, 0);
 
-  const remainingBase = Math.max(0, totalBase - totalPaidBase);
+  const balanceBase = totalBase - totalPaidBase;
+  const remainingBase = Math.max(0, balanceBase);
+  const changeBase = Math.abs(Math.min(0, balanceBase));
   const isPaid = remainingBase === 0 && totalBase > 0;
 
   const generateSerial = () => {
@@ -355,14 +359,25 @@ export default function POS() {
   };
 
   const handleWhatsAppReceipt = (tx: Transaction) => {
+    let phone = "";
     const customer = useStore.getState().customers.find(c => c.id === tx.customerId);
-    if (!customer?.phone) {
-      alert("El cliente no tiene un número de teléfono registrado.");
+    if (customer?.phone) {
+      phone = customer.phone.replace(/\D/g,'');
+    } else {
+      const input = window.prompt("Ingrese el número de WhatsApp del cliente:");
+      if (!input) return;
+      phone = input.replace(/\D/g,'');
+    }
+    
+    if (!phone) {
+      alert("Número de teléfono inválido.");
       return;
     }
+    
     const storeName = useStore.getState().storeConfig.storeName;
-    const text = `Hola ${customer.name}, gracias por tu compra en ${storeName}. Tu recibo es ${tx.id} por un total de ${formatMoney(tx.total, baseCurrency.symbol)}.`;
-    const url = `https://wa.me/${customer.phone.replace(/\D/g,'')}?text=${encodeURIComponent(text)}`;
+    let itemsText = tx.items.map(i => `${i.quantity}x ${i.product.name} - ${formatMoney(i.product.price * i.quantity, baseCurrency.symbol)}`).join('%0A');
+    const text = `Hola, gracias por tu compra en *${storeName}*.%0A%0A*Detalle del recibo ${tx.id}:*%0A${itemsText}%0A%0A*Total:* ${formatMoney(tx.total, baseCurrency.symbol)}%0A%0A¡Vuelve pronto!`;
+    const url = `https://wa.me/${phone}?text=${text}`;
     window.open(url, '_blank');
   };
 
@@ -404,7 +419,8 @@ export default function POS() {
       items: cart,
       payments: finalizedPayments,
       status: 'completed',
-      customerId: currentCustomerId
+      customerId: currentCustomerId,
+      changeGiven: changeBase
     };
 
     // Generate NCF if customer is selected or if config requires it
@@ -419,14 +435,15 @@ export default function POS() {
     // Register bank transactions
     finalizedPayments.forEach(p => {
       if (p.method === 'transfer' && p.bankCardId) {
+        const itemDetails = cart.map(item => `${item.quantity}x ${item.product.name}`).join(', ');
         addBankTransaction({
           id: generateId('BTX'),
           cardId: p.bankCardId,
           type: 'payment_received',
-          amount: p.amount * p.exchangeRate, // Convert to base currency or use the actual currency if needed? Wait, the bank account has a currency. Let's just use base currency for now if it's mixed. Wait, bank cards have their own currency. Let's convert to Bank Card Currency.
+          amount: p.amount * p.exchangeRate,
           date: tx.date,
           reference: tx.id,
-          description: `Cobro de Ticket ${tx.id}`,
+          description: `Venta ${tx.id}: ${itemDetails.substring(0, 100)}${itemDetails.length > 100 ? '...' : ''}`,
           transactionId: tx.id
         });
       }
@@ -477,24 +494,24 @@ export default function POS() {
 
       {/* Checkout Modal - Compact & Linear Redesign */}
       {showCheckoutModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[95vh] border border-white/20">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white rounded-[1.5rem] sm:rounded-[2rem] shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[98vh] border border-white/20">
             
             {/* Header: Total Summary (Compact) */}
-            <div className="bg-slate-900 text-white p-6 relative">
+            <div className="bg-slate-900 text-white p-4 sm:p-6 relative">
               <button 
                 onClick={() => { setShowCheckoutModal(false); setPaymentLines([]); setActivePaymentLineId(null); }}
-                className="absolute right-4 top-4 p-1.5 hover:bg-white/10 rounded-full transition-colors"
+                className="absolute right-3 top-3 sm:right-4 sm:top-4 p-1.5 hover:bg-white/10 rounded-full transition-colors"
               >
                 <Plus className="w-5 h-5 rotate-45" />
               </button>
               
               <div className="text-center">
-                <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Total a Cobrar</p>
-                <h3 className="text-4xl font-black tracking-tight">{formatMoney(totalBase, baseCurrency.symbol)}</h3>
-                <div className="mt-2 flex flex-wrap justify-center gap-2">
+                <p className="text-slate-400 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] mb-0.5 sm:mb-1">Total a Cobrar</p>
+                <h3 className="text-2xl sm:text-4xl font-black tracking-tight">{formatMoney(totalBase, baseCurrency.symbol)}</h3>
+                <div className="mt-1 sm:mt-2 flex flex-wrap justify-center gap-1.5 sm:gap-2">
                   {currencies.filter(c => !c.isBase).map(c => (
-                    <span key={c.code} className="text-[9px] font-black bg-white/5 border border-white/10 px-2 py-0.5 rounded-lg text-slate-300">
+                    <span key={c.code} className="text-[8px] sm:text-[9px] font-black bg-white/5 border border-white/10 px-2 py-0.5 rounded-lg text-slate-300">
                       {c.code}: {formatMoney(totalBase / c.rateToBase, c.symbol)}
                     </span>
                   ))}
@@ -502,28 +519,100 @@ export default function POS() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+            <div className="flex-1 overflow-y-auto p-3 sm:p-5 space-y-2 sm:space-y-3">
               {/* Status Bar (Compact) */}
               <div className="flex gap-2">
-                <div className="flex-1 bg-slate-50 border border-slate-100 p-3 rounded-2xl">
-                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Pagado</p>
-                  <p className="text-base font-black text-slate-900">{formatMoney(totalPaidBase, baseCurrency.symbol)}</p>
+                <div className="flex-1 bg-slate-50 border border-slate-100 p-2 sm:p-3 rounded-xl sm:rounded-2xl">
+                  <p className="text-[7px] sm:text-[8px] font-black text-slate-400 uppercase tracking-widest">Pagado</p>
+                  <p className="text-sm sm:text-base font-black text-slate-900">{formatMoney(totalPaidBase, baseCurrency.symbol)}</p>
                 </div>
                 <div className={cn(
-                  "flex-1 p-3 rounded-2xl border transition-colors",
+                  "flex-1 p-2 sm:p-3 rounded-xl sm:rounded-2xl border transition-colors",
                   remainingBase > 0 ? "bg-rose-50 border-rose-100" : "bg-emerald-50 border-emerald-100"
                 )}>
-                  <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">
+                  <p className="text-[7px] sm:text-[8px] font-black uppercase tracking-widest text-slate-400">
                     {remainingBase > 0 ? "Faltante" : "Vuelto"}
                   </p>
                   <p className={cn(
-                    "text-base font-black",
+                    "text-sm sm:text-base font-black",
                     remainingBase > 0 ? "text-rose-600" : "text-emerald-600"
                   )}>
-                    {formatMoney(Math.abs(remainingBase), baseCurrency.symbol)}
+                    {formatMoney(remainingBase > 0 ? remainingBase : changeBase, baseCurrency.symbol)}
                   </p>
                 </div>
               </div>
+
+              {changeBase > 0 && (
+                <div className="bg-indigo-50 border border-indigo-100 rounded-xl sm:rounded-2xl p-3 sm:p-4 shadow-inner">
+                  <div className="flex justify-between items-end mb-2 sm:mb-3">
+                    <div>
+                      <p className="text-[9px] sm:text-[10px] font-black text-indigo-900 uppercase tracking-widest">Vuelto Mixto</p>
+                    </div>
+                    <button 
+                      onClick={() => setChangeMix({})}
+                      className="text-[7px] sm:text-[8px] font-black uppercase text-indigo-600 hover:text-indigo-800 bg-indigo-100/50 hover:bg-indigo-100 px-1.5 py-0.5 rounded"
+                    >Limpiar</button>
+                  </div>
+                  <div className="space-y-1.5 sm:space-y-2">
+                    {currencies.map(c => {
+                      const otherCurrenciesBase = Object.entries(changeMix).filter(([code]) => code !== c.code).reduce((sum, [code, val]) => {
+                        const rate = currencies.find(curr => curr.code === code)?.rateToBase || 1;
+                        return sum + (Number(val) * rate);
+                      }, 0);
+                      const remainingInThisCurrency = Math.max(0, (changeBase - otherCurrenciesBase) / c.rateToBase);
+
+                      return (
+                        <div key={c.code} className="flex items-center gap-2 sm:gap-3 bg-white p-1.5 sm:p-2 rounded-lg sm:rounded-xl border border-indigo-50 shadow-sm">
+                          <span className="w-8 sm:w-10 text-[9px] sm:text-[10px] font-black text-slate-700 uppercase text-center">{c.code}</span>
+                          <input 
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={changeMix[c.code] !== undefined ? changeMix[c.code] : ''}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value);
+                              if (isNaN(val)) {
+                                const newMix = { ...changeMix };
+                                delete newMix[c.code];
+                                setChangeMix(newMix);
+                              } else {
+                                setChangeMix({ ...changeMix, [c.code]: val });
+                              }
+                            }}
+                            className="flex-1 px-2 py-1 sm:py-1.5 bg-slate-50 border border-slate-100 rounded-md sm:rounded-lg text-xs sm:text-sm font-black focus:ring-2 focus:ring-indigo-500 outline-none text-right"
+                            placeholder={remainingInThisCurrency.toFixed(2)}
+                          />
+                          <button 
+                            onClick={() => setChangeMix({ ...changeMix, [c.code]: Number(remainingInThisCurrency.toFixed(2)) })}
+                            className="text-[8px] sm:text-[9px] font-black text-indigo-600 bg-indigo-50 px-1.5 py-1 rounded-md sm:rounded-lg hover:bg-indigo-100 uppercase"
+                          >
+                            Máx
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {(() => {
+                    const totalMixBase = Object.entries(changeMix).reduce((sum, [code, val]) => {
+                      const rate = currencies.find(curr => curr.code === code)?.rateToBase || 1;
+                      return sum + (Number(val) * rate);
+                    }, 0);
+                    const diff = changeBase - totalMixBase;
+                    if (Object.keys(changeMix).length === 0) return null;
+                    return Math.abs(diff) > 0.01 ? (
+                      <div className="mt-2 p-1.5 bg-rose-50 border border-rose-100 rounded-lg flex justify-between items-center text-[10px]">
+                        <span className="font-bold text-rose-600 uppercase tracking-tighter">Falta:</span>
+                        <span className="font-black text-rose-700">{formatMoney(diff, baseCurrency.symbol)}</span>
+                      </div>
+                    ) : (
+                      <div className="mt-2 p-1.5 bg-emerald-50 border border-emerald-100 rounded-lg flex justify-between items-center text-[10px]">
+                        <span className="font-bold text-emerald-600 uppercase tracking-tighter">Completado</span>
+                        <span className="font-black text-emerald-700">OK</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
 
               {/* Linear Payment Inputs (Compact) */}
               <div className="space-y-1.5">
@@ -582,7 +671,10 @@ export default function POS() {
                         )}
                       >Efectivo</button>
                       <button
-                        onClick={() => updatePaymentLine(activePaymentLineId, 'method', 'transfer')}
+                        onClick={() => {
+                          updatePaymentLine(activePaymentLineId, 'method', 'transfer');
+                          updatePaymentLine(activePaymentLineId, 'code', baseCurrency.code); // Force base currency
+                        }}
                         className={cn(
                           "py-2 rounded-lg text-[9px] font-black uppercase transition-all",
                           paymentLines.find(l => l.id === activePaymentLineId)?.method === 'transfer' ? "bg-blue-600 text-white shadow-sm" : "text-slate-400 hover:bg-slate-50 disabled:opacity-20"
@@ -593,17 +685,16 @@ export default function POS() {
                       {currencies.map(c => (
                         <button
                           key={c.code}
+                          disabled={paymentLines.find(l => l.id === activePaymentLineId)?.method === 'transfer' && c.code !== baseCurrency.code}
                           onClick={() => {
                             const line = paymentLines.find(l => l.id === activePaymentLineId);
                             if (line) {
-                              const newMethod = line.method;
                               updatePaymentLine(line.id, 'code', c.code);
-                              updatePaymentLine(line.id, 'method', newMethod);
                             }
                           }}
                           className={cn(
                             "flex-1 py-2 px-3 rounded-lg text-[9px] font-black transition-all",
-                            paymentLines.find(l => l.id === activePaymentLineId)?.code === c.code ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:bg-slate-50"
+                            paymentLines.find(l => l.id === activePaymentLineId)?.code === c.code ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:bg-slate-50 disabled:opacity-30"
                           )}
                         >{c.code}</button>
                       ))}
@@ -1096,48 +1187,30 @@ export default function POS() {
               )}
             </div>
             
-            <div className="p-4 bg-slate-50 flex gap-2 print:hidden overflow-x-auto custom-scrollbar">
+            <div className="p-3 bg-slate-50 flex gap-2 print:hidden overflow-x-auto justify-center items-center">
               <button 
                 onClick={() => setShowReceiptModal(null)}
-                className="flex-1 py-2 px-3 bg-white border border-slate-200 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition-colors whitespace-nowrap"
+                className="px-4 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm"
               >
                 Cerrar
               </button>
-              {showReceiptModal.customerId && (
-                <>
-                  <button 
-                    onClick={() => handleWhatsAppReceipt(showReceiptModal)}
-                    className="flex-1 py-2 px-3 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
-                    title="Enviar por WhatsApp"
-                  >
-                    <MessageSquare className="w-4 h-4" />
-                    WA
-                  </button>
-                  <button 
-                    onClick={() => handleEmailReceipt(showReceiptModal)}
-                    className="flex-1 py-2 px-3 bg-blue-500 text-white rounded-xl font-medium hover:bg-blue-600 transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
-                    title="Enviar por Correo"
-                  >
-                    <Mail className="w-4 h-4" />
-                    Email
-                  </button>
-                </>
-              )}
+              
+              <button 
+                onClick={() => handleWhatsAppReceipt(showReceiptModal)}
+                className="px-4 py-1.5 bg-emerald-500 text-white rounded-lg text-xs font-bold hover:bg-emerald-600 transition-all flex items-center gap-1.5 shadow-sm shadow-emerald-200"
+                title="Enviar por WhatsApp"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                WhatsApp
+              </button>
+              
               <button 
                 onClick={() => handleThermalPrint(showReceiptModal)}
-                className="flex-1 py-2 px-3 bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
-                title="Impresión Térmica USB (Abre Gaveta)"
+                className="px-4 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-all flex items-center gap-1.5 shadow-sm"
+                title="Impresión Térmica USB"
               >
-                <Receipt className="w-4 h-4" />
-                USB
-              </button>
-              <button 
-                onClick={() => window.print()}
-                className="flex-1 py-2 px-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
-                title="Impresión del Sistema"
-              >
-                <Receipt className="w-4 h-4" />
-                Sys
+                <Receipt className="w-3.5 h-3.5" />
+                Imprimir
               </button>
             </div>
           </div>

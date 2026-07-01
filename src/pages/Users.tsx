@@ -119,10 +119,10 @@ export default function Users() {
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 font-black text-slate-900 text-xs">{formatMoney(user.baseSalary || 0)}</td>
+                    <td className="px-6 py-4 font-black text-slate-900 text-xs">{user.role === 'admin' ? '-' : formatMoney(user.baseSalary || 0)}</td>
                     <td className="px-6 py-4 font-black text-slate-900 text-xs">{formatMoney(totalVentas)}</td>
                     <td className="px-6 py-4 font-black text-emerald-600 text-xs">{formatMoney(comision)}</td>
-                    <td className="px-6 py-4 font-black text-indigo-600 text-xs">{formatMoney(pagoTotalHoy)}</td>
+                    <td className="px-6 py-4 font-black text-indigo-600 text-xs">{user.role === 'admin' ? '-' : formatMoney(pagoTotalHoy)}</td>
                     <td className="px-6 py-4 text-right">
                       <button 
                         onClick={() => setAuditingUser(user)}
@@ -177,13 +177,14 @@ export default function Users() {
                         <div key={settlement.id} className="bg-white border border-slate-100 rounded-2xl p-3 flex items-center justify-between hover:border-indigo-100 transition-colors group">
                           <div className="flex items-center gap-3">
                             <button 
-                              onClick={() => updateSalarySettlement(settlement.id, { status: settlement.status === 'paid' ? 'cancelled' : 'paid' })}
+                              onClick={() => updateSalarySettlement(settlement.id, { status: settlement.status === 'paid' ? 'waiting' : 'paid' })}
                               className={cn(
                                 "w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:scale-105",
                                 settlement.status === 'paid' ? "bg-emerald-50 text-emerald-600" : 
-                                settlement.status === 'cancelled' ? "bg-rose-50 text-rose-600" : "bg-amber-50 text-amber-600"
+                                settlement.status === 'cancelled' ? "bg-rose-50 text-rose-600" : 
+                                settlement.status === 'waiting' ? "bg-amber-50 text-amber-600" : "bg-indigo-50 text-indigo-600"
                               )}
-                              title={settlement.status === 'paid' ? 'Marcar como Cancelado' : 'Marcar como Pagado'}
+                              title={settlement.status === 'paid' ? 'Poner en Espera' : 'Marcar como Pagado'}
                             >
                               <DollarSign className="w-4 h-4" />
                             </button>
@@ -192,7 +193,11 @@ export default function Users() {
                                 {formatMoney(settlement.total)}
                               </p>
                               <p className="text-[8px] font-bold text-slate-400 uppercase">
-                                {new Date(settlement.date).toLocaleDateString()} • {settlement.status === 'paid' ? 'Pagado' : settlement.status === 'cancelled' ? 'Cancelado' : 'Pendiente'}
+                                {new Date(settlement.date).toLocaleDateString()} • {
+                                  settlement.status === 'paid' ? 'Pagado' : 
+                                  settlement.status === 'cancelled' ? 'Cancelado' : 
+                                  settlement.status === 'waiting' ? 'En Espera' : 'Pendiente'
+                                }
                               </p>
                             </div>
                           </div>
@@ -329,16 +334,19 @@ export default function Users() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Rol</label>
-                  <select required value={formData.role} onChange={e => setFormData({...formData, role: e.target.value as 'admin'|'cashier'})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Rol</label>
+                  <select required value={formData.role} onChange={e => {
+                    const role = e.target.value as 'admin'|'cashier';
+                    setFormData({...formData, role, baseSalary: role === 'admin' ? 0 : formData.baseSalary});
+                  }} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold">
                     <option value="cashier">Cajero / Vendedor</option>
                     <option value="admin">Administrador</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Sucursal Asignada</label>
-                  <select required value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none">
-                    <option value="">Cualquier Sucursal</option>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Sucursal Asignada</label>
+                  <select required value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold">
+                    <option value="">Cualquier Sucursal (Todos los accesos)</option>
                     {branches.map(b => (
                       <option key={b.id} value={b.id}>{b.name}</option>
                     ))}
@@ -346,10 +354,12 @@ export default function Users() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Salario Base (Día)</label>
-                <input type="number" required value={formData.baseSalary} onChange={e => setFormData({...formData, baseSalary: parseFloat(e.target.value)})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" />
-              </div>
+              {formData.role !== 'admin' && (
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Salario Base (Día)</label>
+                  <input type="number" required value={formData.baseSalary} onChange={e => setFormData({...formData, baseSalary: parseFloat(e.target.value)})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold" />
+                </div>
+              )}
 
               <p className="text-xs text-slate-500 pt-2 border-t border-slate-100">Las comisiones por venta se configuran individualmente en cada producto (Inventario {'>'} Nuevo Producto).</p>
 

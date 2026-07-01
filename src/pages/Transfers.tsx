@@ -5,7 +5,7 @@ import { cn, generateId } from "../lib/utils";
 import { InventoryTransfer } from "../types";
 
 export default function Transfers() {
-  const { branches, products, inventory, transferInventory, transfers, addTransfer, currentBranchId, currentUser } = useStore();
+  const { branches, products, inventory, transferInventoryBatch, transfers, currentBranchId, currentUser } = useStore();
   const [showAddModal, setShowAddModal] = useState(false);
   const [formData, setFormData] = useState({
     productId: '',
@@ -35,52 +35,20 @@ export default function Transfers() {
       return;
     }
 
-    let allSuccess = true;
-    let someSuccess = false;
+    const variantsPayload = variantsToTransfer.map(([v, q]) => ({ variantLabel: v, quantity: q as number }));
+    const success = transferInventoryBatch(
+      formData.productId,
+      formData.fromBranchId,
+      formData.toBranchId,
+      variantsPayload
+    );
 
-    for (const [variant, qty] of variantsToTransfer) {
-      if (qty <= 0) continue;
-      const success = transferInventory(
-        formData.productId,
-        formData.fromBranchId,
-        formData.toBranchId,
-        qty,
-        variant
-      );
-
-      if (success) {
-        someSuccess = true;
-        const fromBranch = branches.find(b => b.id === formData.fromBranchId);
-        const toBranch = branches.find(b => b.id === formData.toBranchId);
-
-        addTransfer({
-          id: generateId('TRF'),
-          productId: formData.productId,
-          productName: selectedProduct.name,
-          fromBranchId: formData.fromBranchId,
-          fromBranchName: fromBranch?.name || 'Origen',
-          toBranchId: formData.toBranchId,
-          toBranchName: toBranch?.name || 'Destino',
-          quantity: qty,
-          date: new Date().toISOString(),
-          status: 'completed',
-          variantLabel: variant,
-          userId: currentUser?.id || 'u1'
-        });
-      } else {
-        allSuccess = false;
-      }
-    }
-
-    if (someSuccess) {
-      if (!allSuccess) {
-        alert("Algunas transferencias fallaron por falta de stock. Las demás se completaron.");
-      }
+    if (success) {
       setShowAddModal(false);
       setFormData({ ...formData, productId: '' });
       setVariantQuantities({});
     } else {
-      setError("No hay suficiente stock en la sucursal de origen para realizar la transferencia.");
+      setError("No hay suficiente stock en la sucursal de origen para realizar la transferencia de algunas variantes.");
     }
   };
 
