@@ -230,7 +230,7 @@ export const useStore = create<AppState>()(
       'supplier_order_items', 'supplier_orders', 'suppliers',
       'inventory_transfers', 'cash_movements', 'cash_sessions',
       'warranties', 'returns', 'transaction_items', 'transaction_payments', 'transactions',
-      'customers', 'inventory_levels', 'products', 'categories', 'branches', 'users'
+      'customers', 'inventory_levels', 'products', 'categories', 'users', 'branches'
     ];
     
     // Clear in supabase
@@ -264,7 +264,11 @@ export const useStore = create<AppState>()(
       inventoryAudits: [],
       salarySettlements: [],
       quotes: [],
-      timeShifts: []
+      timeShifts: [],
+      cart: [],
+      currentCustomerId: undefined,
+      pendingSyncTransactions: [],
+      pendingOrders: [],
     });
   },
   addUser: async (user) => {
@@ -360,10 +364,13 @@ export const useStore = create<AppState>()(
       branches: state.branches.map(b => b.id === id ? { ...b, ...branch } : b)
     }));
     try {
-      await supabase.from('branches').update({
-        name: branch.name,
-        address: branch.address
-      }).eq('id', id);
+      const updateData: any = {};
+      if (branch.name !== undefined) updateData.name = branch.name;
+      if (branch.address !== undefined) updateData.address = branch.address;
+      
+      if (Object.keys(updateData).length > 0) {
+        await supabase.from('branches').update(updateData).eq('id', id);
+      }
     } catch (error) {
       console.error('Error updating branch:', error);
     }
@@ -409,10 +416,13 @@ export const useStore = create<AppState>()(
       categories: state.categories.map(c => c.id === id ? { ...c, ...category } : c)
     }));
     try {
-      await supabase.from('categories').update({
-        name: category.name,
-        department: category.department
-      }).eq('id', id);
+      const updateData: any = {};
+      if (category.name !== undefined) updateData.name = category.name;
+      if (category.department !== undefined) updateData.department = category.department;
+      
+      if (Object.keys(updateData).length > 0) {
+        await supabase.from('categories').update(updateData).eq('id', id);
+      }
     } catch (error) {
       console.error('Error updating category:', error);
     }
@@ -690,13 +700,51 @@ export const useStore = create<AppState>()(
     }
     return success;
   },
-  batchDeleteProducts: (ids) => set((state) => ({
-    products: state.products.filter(p => !ids.includes(p.id)),
-    inventory: state.inventory.filter(i => !ids.includes(i.productId))
-  })),
-  batchUpdateProducts: (ids, updates) => set((state) => ({
-    products: state.products.map(p => ids.includes(p.id) ? { ...p, ...updates } : p)
-  })),
+  batchDeleteProducts: async (ids) => {
+    set((state) => ({
+      products: state.products.filter(p => !ids.includes(p.id)),
+      inventory: state.inventory.filter(i => !ids.includes(i.productId))
+    }));
+    try {
+      await supabase.from('products').delete().in('id', ids);
+    } catch (error) {
+      console.error('Error batch deleting products from Supabase:', error);
+    }
+  },
+  batchUpdateProducts: async (ids, updates) => {
+    set((state) => ({
+      products: state.products.map(p => ids.includes(p.id) ? { ...p, ...updates } : p)
+    }));
+    try {
+      const updateData: any = {};
+      if (updates.name !== undefined) updateData.name = updates.name;
+      if (updates.sku !== undefined) updateData.sku = updates.sku;
+      if (updates.barcode !== undefined) updateData.barcode = updates.barcode;
+      if (updates.costPrice !== undefined) updateData.cost_price = updates.costPrice;
+      if (updates.price !== undefined) updateData.price = updates.price;
+      if (updates.margin !== undefined) updateData.margin = updates.margin;
+      if (updates.categoryId !== undefined) updateData.category_id = updates.categoryId !== 'General' ? updates.categoryId : null;
+      if (updates.color !== undefined) updateData.color = updates.color;
+      if (updates.commissionType !== undefined) updateData.commission_type = updates.commissionType;
+      if (updates.commissionValue !== undefined) updateData.commission_value = updates.commissionValue;
+      if (updates.unit !== undefined) updateData.unit = updates.unit;
+      if (updates.status !== undefined) updateData.status = updates.status;
+      if (updates.minStockAlert !== undefined) updateData.min_stock_alert = updates.minStockAlert;
+      if (updates.hasSerial !== undefined) updateData.has_serial = updates.hasSerial;
+      if (updates.isKit !== undefined) updateData.is_kit = updates.isKit;
+      if (updates.warrantyDays !== undefined) updateData.warranty_days = updates.warrantyDays;
+      if (updates.deviceColor !== undefined) updateData.device_color = updates.deviceColor;
+      if (updates.availableSizes !== undefined) updateData.available_sizes = updates.availableSizes;
+      if (updates.availableColors !== undefined) updateData.available_colors = updates.availableColors;
+      if (updates.nextSerial !== undefined) updateData.next_serial = updates.nextSerial;
+
+      if (Object.keys(updateData).length > 0) {
+        await supabase.from('products').update(updateData).in('id', ids);
+      }
+    } catch (error) {
+      console.error('Error batch updating products in Supabase:', error);
+    }
+  },
   adjustInventory: async (productId, branchId, delta, variantLabel, minQuantity) => {
     let newQty = 0;
     let newMinQty = minQuantity ?? 5;
@@ -1262,7 +1310,8 @@ export const useStore = create<AppState>()(
     try {
       await supabase.from('cash_sessions').update({
         closed_at: new Date().toISOString(),
-        status: 'closed'
+        status: 'closed',
+        closing_balances: closingBalances ? JSON.stringify(closingBalances) : null
       }).eq('id', sessionId);
     } catch (error) {
       console.error('Error updating session in Supabase:', error);
@@ -1377,6 +1426,7 @@ export const useStore = create<AppState>()(
       if (o.status !== undefined) updateData.status = o.status;
       if (o.expectedDeliveryDate !== undefined) updateData.expected_delivery_date = o.expectedDeliveryDate;
       if (o.transportDetails !== undefined) updateData.transport_details = o.transportDetails;
+      if (o.transportCost !== undefined) updateData.transport_cost = o.transportCost;
       if (o.total !== undefined) updateData.total = o.total;
 
       if (Object.keys(updateData).length > 0) {
@@ -1889,6 +1939,7 @@ export const useStore = create<AppState>()(
           openedAt: s.opened_at,
           closedAt: s.closed_at || undefined,
           openingBalance: s.opening_balance,
+          closingBalances: s.closing_balances || undefined,
           expectedBalance: s.expected_balance || undefined,
           status: s.status,
           movements: cashMovementsData?.filter(m => m.session_id === s.id).map(m => ({

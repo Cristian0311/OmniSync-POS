@@ -192,6 +192,7 @@ create table if not exists cash_sessions (
   opened_at timestamp with time zone not null,
   closed_at timestamp with time zone,
   opening_balance numeric not null,
+  closing_balances jsonb,
   expected_balance numeric,
   status text not null,
   user_id text references users(id),
