@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { formatMoney, cn } from '../lib/utils';
 import { TrendingUp, TrendingDown, AlertCircle, Minus } from 'lucide-react';
+import { InfoTooltip } from './InfoTooltip';
 
 export function ABCAnalysis() {
   const { products, inventory, transactions, getBaseCurrency } = useStore();
@@ -73,9 +74,9 @@ export function ABCAnalysis() {
   return (
     <div className="bg-white rounded-[2rem] shadow-sm border border-slate-100 p-6 flex flex-col gap-6">
       <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-        <div>
+        <div className="flex items-center gap-2">
           <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">Análisis ABC de Inventario</h2>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Clasificación basada en el principio de Pareto (80/20)</p>
+          <InfoTooltip text="Clasifica tus productos según su valor de ventas. Clase A: 70% del valor (muy importantes), Clase B: 20%, Clase C: 10%. Ayuda a priorizar pedidos y auditorías." position="bottom" />
         </div>
       </div>
 

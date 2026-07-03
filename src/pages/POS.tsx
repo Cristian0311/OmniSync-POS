@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Search, Plus, Minus, CreditCard, Receipt, Trash2, ShoppingCart, ShieldCheck, DollarSign, QrCode, ArrowLeftRight, UserPlus, X, Lock, Camera, MessageSquare, Mail } from "lucide-react";
+import { Search, Plus, Minus, CreditCard, Receipt, Trash2, ShoppingCart, ShieldCheck, DollarSign, QrCode, ArrowLeftRight, UserPlus, X, Lock, Camera, MessageSquare, Mail, HelpCircle } from "lucide-react";
 import { Html5QrcodeScanner, Html5Qrcode } from "html5-qrcode";
 import { cn, generateId } from "../lib/utils";
 import { useStore } from "../store/useStore";
 import { Product, Payment, Transaction } from "../types";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
+import { InfoTooltip } from "../components/InfoTooltip";
 
 export default function POS() {
-  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, inventory, addCustomer, bankCards, addBankTransaction, addQuote } = useStore();
+  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, inventory, addCustomer, bankCards, addBankTransaction, addQuote, customers, quotes } = useStore();
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
@@ -15,7 +16,36 @@ export default function POS() {
   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', email: '', taxId: '' });
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [configData, setConfigData] = useState<{ serialNumber?: string, selectedSize?: string, selectedColor?: string }>({});
+  const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
   
+  const queryParams = new URLSearchParams(window.location.search);
+  const isQuoteMode = queryParams.get('mode') === 'quote';
+  const loadQuoteId = queryParams.get('loadQuote');
+
+  useEffect(() => {
+    if (loadQuoteId) {
+      const quote = quotes.find(q => q.id === loadQuoteId);
+      if (quote) {
+        clearCart();
+        quote.items.forEach(item => {
+          // Re-adding items to cart
+          // We need to handle the state carefully because addToCart might be async or depend on refs
+          // But here it is straightforward from the store
+          for(let i=0; i<item.quantity; i++) {
+            addToCart(item.product, item.serialNumber, {
+              size: item.selectedSize,
+              color: item.selectedColor,
+              variantLabel: item.variantLabel
+            });
+          }
+        });
+        if (quote.customerId) setCartCustomer(quote.customerId);
+        setPosSuccess("Cotización cargada exitosamente");
+        setTimeout(() => setPosSuccess(""), 3000);
+      }
+    }
+  }, [loadQuoteId, quotes]);
+
   const currentSession = getCurrentSession(currentBranchId, currentUser?.id || 'u1');
   
   // Checkout Modal State
@@ -311,19 +341,20 @@ export default function POS() {
       id: quoteId,
       branchId: currentBranchId || "",
       userId: currentUser?.id || "",
-      customerId: selectedCustomer?.id,
+      customerId: currentCustomerId,
       date: new Date().toISOString(),
       subtotal: subtotalBase,
       tax: taxBase,
       total: totalBase,
       items: cart,
       status: "pending",
-      notes: "Generada desde POS"
+      notes: "Generada desde el módulo de Cotizaciones"
     };
     await addQuote(newQuote);
-    setCart([]);
-    setSelectedCustomer(null);
+    clearCart();
+    setCartCustomer(undefined);
     alert("Cotización guardada exitosamente");
+    window.location.href = '/quotes';
   };
   const handleThermalPrint = async (tx: Transaction) => {
     try {
@@ -504,7 +535,7 @@ export default function POS() {
           )}
         </div>
       )}
-      {!currentSession && (
+      {!currentSession && !isQuoteMode && (
         <div className="absolute inset-0 bg-slate-900/10 backdrop-blur-sm z-40 flex items-center justify-center rounded-2xl">
           <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md">
             <h3 className="text-xl font-bold text-slate-900 mb-2">Caja Cerrada</h3>
@@ -884,33 +915,53 @@ export default function POS() {
         
         {/* Top Bar: Search & Categories (Compact) */}
         <div className="p-3 border-b border-slate-100 space-y-2">
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4" />
-              <input 
-                type="text" 
-                placeholder="Producto o barras..." 
-                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:ring-1 focus:ring-indigo-200 outline-none transition-all text-xs font-medium"
-              />
-            </div>
-            
-            <div className="flex gap-2">
-              <select 
-                value={currentBranchId}
-                onChange={(e) => setCurrentBranch(e.target.value)}
-                className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 outline-none text-[10px] font-black uppercase tracking-widest text-slate-600 focus:ring-1 focus:ring-indigo-200"
+          {isQuoteMode && (
+            <div className="bg-indigo-600 text-white px-4 py-2 flex justify-between items-center rounded-xl mb-2">
+              <span className="text-[10px] font-black uppercase tracking-widest">Modo: Nueva Cotización</span>
+              <button 
+                onClick={() => window.location.href = '/quotes'}
+                className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all"
               >
-                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-              <div className="relative w-40">
-                <QrCode className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4" />
+                Cancelar y Volver
+              </button>
+            </div>
+          )}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="flex-1 relative flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4" />
                 <input 
                   type="text" 
-                  value={qrCodeInput}
-                  onChange={(e) => setQrCodeInput(e.target.value)}
-                  placeholder="QR..." 
-                  className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:ring-1 focus:ring-indigo-200 outline-none uppercase text-xs font-black"
+                  placeholder="Producto o barras..." 
+                  className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:ring-1 focus:ring-indigo-200 outline-none transition-all text-xs font-medium"
                 />
+              </div>
+              <InfoTooltip text="Busca productos por nombre, SKU o código de barras. También puedes usar un escáner físico." position="bottom" />
+            </div>
+            
+            <div className="flex gap-2 items-center">
+              <div className="flex items-center gap-1">
+                <select 
+                  value={currentBranchId}
+                  onChange={(e) => setCurrentBranch(e.target.value)}
+                  className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 outline-none text-[10px] font-black uppercase tracking-widest text-slate-600 focus:ring-1 focus:ring-indigo-200"
+                >
+                  {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+                <InfoTooltip text="Cambia la sucursal actual para ver el inventario disponible en cada una." position="bottom" />
+              </div>
+              <div className="relative w-40 flex items-center gap-1">
+                <div className="relative flex-1">
+                  <QrCode className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4" />
+                  <input 
+                    type="text" 
+                    value={qrCodeInput}
+                    onChange={(e) => setQrCodeInput(e.target.value)}
+                    placeholder="QR..." 
+                    className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:ring-1 focus:ring-indigo-200 outline-none uppercase text-xs font-black"
+                  />
+                </div>
+                <InfoTooltip text="Carga una orden generada desde el catálogo virtual escaneando su código QR." position="bottom" />
               </div>
               <button 
                 onClick={handleScanQR}
@@ -976,7 +1027,7 @@ export default function POS() {
                 {/* Image Area */}
                 <div className="w-full aspect-square bg-slate-50 rounded-xl mb-2 flex items-center justify-center overflow-hidden relative">
                   {product.image ? (
-                    <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                    <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
                   ) : (
                     <div className={cn("w-full h-full opacity-10", product.color)} />
                   )}
@@ -1115,20 +1166,23 @@ export default function POS() {
             </div>
           </div>
 
-          <button 
-            disabled={cart.length === 0}
-            onClick={openCheckout}
-            className="w-full bg-indigo-600 text-white font-black text-[11px] uppercase tracking-widest py-3.5 rounded-2xl flex items-center justify-center gap-2 hover:bg-indigo-700 active:scale-95 transition-all shadow-lg shadow-indigo-100 disabled:opacity-30 disabled:grayscale disabled:shadow-none"
-          >
-            Pagar Ticket
-          </button>
-          <button
-            disabled={cart.length === 0}
-            onClick={handleSaveQuote}
-            className="w-full bg-slate-800 text-white font-black text-[11px] uppercase tracking-widest py-3.5 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-700 active:scale-95 transition-all mt-3 disabled:opacity-30 disabled:grayscale disabled:shadow-none"
-          >
-            Guardar Cotización
-          </button>
+          {!isQuoteMode ? (
+            <button 
+              disabled={cart.length === 0}
+              onClick={openCheckout}
+              className="w-full bg-indigo-600 text-white font-black text-[11px] uppercase tracking-widest py-3.5 rounded-2xl flex items-center justify-center gap-2 hover:bg-indigo-700 active:scale-95 transition-all shadow-lg shadow-indigo-100 disabled:opacity-30 disabled:grayscale disabled:shadow-none"
+            >
+              Pagar Ticket
+            </button>
+          ) : (
+            <button
+              disabled={cart.length === 0}
+              onClick={handleSaveQuote}
+              className="w-full bg-indigo-600 text-white font-black text-[11px] uppercase tracking-widest py-3.5 rounded-2xl flex items-center justify-center gap-2 hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-30 disabled:grayscale disabled:shadow-none"
+            >
+              Confirmar Cotización
+            </button>
+          )}
         </div>
       </div>
 

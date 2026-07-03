@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { Users, Search, Plus, Star, Phone, Mail, Edit, Trash2, History, X, Package, Clock, DollarSign, ShoppingBag } from "lucide-react";
+import { Users, Search, Plus, Star, Phone, Mail, Edit, Trash2, History, X, Package, Clock, DollarSign, ShoppingBag, HelpCircle } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { Customer, Transaction } from "../types";
 import { cn } from "../lib/utils";
+import { InfoTooltip } from "../components/InfoTooltip";
 
 export default function Customers() {
   const { customers, addCustomer, updateCustomer, deleteCustomer, transactions, getBaseCurrency } = useStore();
@@ -53,9 +54,9 @@ export default function Customers() {
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500 h-full flex flex-col pb-8">
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <div>
+        <div className="flex items-center gap-2">
           <h2 className="text-xl font-black text-slate-900 tracking-tight uppercase">Directorio de Clientes</h2>
-          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Gestión de fidelidad</p>
+          <InfoTooltip text="Gestiona tu base de datos de clientes. Registra sus datos para facturación, seguimiento de ventas y programas de fidelidad." position="bottom" />
         </div>
         <button 
           onClick={() => setShowAddModal(true)}

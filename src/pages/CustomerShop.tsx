@@ -85,8 +85,13 @@ export default function CustomerShop() {
   ]);
 
   const formatMoney = (amount: number, currency = baseCurrency) => {
-    const converted = amount * currency.rateToBase;
-    const formatted = converted.toLocaleString("es-CU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    // If currency is base, no conversion needed. 
+    // If not, we divide by the rate (e.g. Price in CUP / 320 = Price in USD)
+    const converted = currency.isBase ? amount : amount / (currency.rateToBase || 1);
+    const formatted = converted.toLocaleString("es-CU", { 
+      minimumFractionDigits: 2, 
+      maximumFractionDigits: 2 
+    });
     return `${currency.symbol} ${formatted}`;
   };
 
@@ -327,10 +332,21 @@ export default function CustomerShop() {
                   className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 flex flex-col h-full hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group"
                 >
                   <div className="relative w-full aspect-square rounded-2xl bg-slate-50 mb-5 flex items-center justify-center overflow-hidden">
-                    <div className={cn("absolute inset-0 opacity-20 transition-transform duration-500 group-hover:scale-110", product.color)}></div>
-                    <span className="relative z-10 text-5xl font-black text-slate-800 opacity-50 drop-shadow-sm">
-                      {product.name.charAt(0)}
-                    </span>
+                    {product.image ? (
+                      <img 
+                        src={product.image} 
+                        alt={product.name}
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <>
+                        <div className={cn("absolute inset-0 opacity-20 transition-transform duration-500 group-hover:scale-110", product.color)}></div>
+                        <span className="relative z-10 text-5xl font-black text-slate-800 opacity-50 drop-shadow-sm">
+                          {product.name.charAt(0)}
+                        </span>
+                      </>
+                    )}
                     {isOutOfStock && (
                       <div className="absolute top-3 right-3 bg-rose-500 text-white text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full shadow-lg backdrop-blur-md">
                         Agotado
@@ -450,11 +466,20 @@ export default function CustomerShop() {
                     className="flex gap-4 bg-white border border-slate-100 p-4 rounded-2xl shadow-sm hover:border-indigo-100 transition-colors"
                   >
                     <div
-                      className={cn("w-16 h-16 rounded-xl flex items-center justify-center shrink-0 opacity-80", item.product.color)}
+                      className={cn("w-16 h-16 rounded-xl flex items-center justify-center shrink-0 overflow-hidden opacity-80", !item.product.image && item.product.color)}
                     >
-                      <span className="font-black text-xl text-slate-900 opacity-50">
-                        {item.product.name.charAt(0)}
-                      </span>
+                      {item.product.image ? (
+                        <img 
+                          src={item.product.image} 
+                          alt={item.product.name}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <span className="font-black text-xl text-slate-900 opacity-50">
+                          {item.product.name.charAt(0)}
+                        </span>
+                      )}
                     </div>
                     <div className="flex-1 flex flex-col justify-center">
                       <h4 className="font-black text-slate-900 text-xs uppercase tracking-tighter leading-tight mb-1">

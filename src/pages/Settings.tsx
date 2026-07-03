@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store } from "lucide-react";
+import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { Branch, Category } from "../types";
@@ -11,7 +11,7 @@ export default function Settings() {
     branches, addBranch, updateBranch, deleteBranch,
     categories, addCategory, updateCategory, deleteCategory,
     receiptConfig, updateReceiptConfig,
-    getBaseCurrency
+    getBaseCurrency, clearAllData
   } = useStore();
 
   const baseCurrency = getBaseCurrency();
@@ -27,6 +27,26 @@ export default function Settings() {
 
   const [newCategory, setNewCategory] = useState({ name: "", department: "" });
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleClearData = async () => {
+    const confirmMessage = "¿ESTÁS SEGURO QUE DESEAS ELIMINAR TODOS LOS DATOS?\n\nEsta acción borrará todo el inventario, transacciones, clientes, empleados y configuraciones. El software se reiniciará por completo.\n\nEscribe 'ELIMINAR' para confirmar.";
+    const userPrompt = window.prompt(confirmMessage);
+    
+    if (userPrompt === 'ELIMINAR') {
+      setIsLoading(true);
+      try {
+        await clearAllData();
+        window.location.reload();
+      } catch (e) {
+        alert("Ocurrió un error al eliminar los datos.");
+      } finally {
+        setIsLoading(false);
+      }
+    } else if (userPrompt !== null) {
+      alert("Operación cancelada. El texto ingresado no coincide.");
+    }
+  };
 
   const handleSaveRates = () => {
     Object.entries(rates).forEach(([code, rate]) => {
@@ -361,6 +381,40 @@ export default function Settings() {
               Guardar Configuración de Ticket
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Zona Peligrosa */}
+      <div className="bg-white rounded-2xl shadow-sm border border-red-100 p-5 space-y-4">
+        <div className="flex items-center gap-3 border-b border-red-50 pb-3">
+          <div className="bg-red-50 p-2 rounded-lg text-red-600">
+            <AlertTriangle className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="text-xs font-black text-red-600 uppercase tracking-wider">Zona Peligrosa</h3>
+            <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Acciones destructivas del sistema</p>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-red-50/50 p-4 rounded-xl border border-red-100">
+          <div>
+            <h4 className="text-sm font-bold text-slate-900">Restablecer Sistema por Completo</h4>
+            <p className="text-xs text-slate-600 mt-1">
+              Esto eliminará <strong>todos</strong> los datos de la base de datos (inventario, ventas, clientes, usuarios) y te cerrará la sesión. Se requerirá registrar de nuevo a un administrador.
+            </p>
+          </div>
+          <button
+            onClick={handleClearData}
+            disabled={isLoading}
+            className="w-full sm:w-auto shrink-0 px-6 py-3 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition-all shadow-lg shadow-red-200 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isLoading ? (
+              <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-white"></div>
+            ) : (
+              <Trash2 className="w-3.5 h-3.5" />
+            )}
+            {isLoading ? 'Eliminando...' : 'Eliminar Todo y Reiniciar'}
+          </button>
         </div>
       </div>
     </div>

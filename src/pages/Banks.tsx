@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { generateId, cn } from '../lib/utils';
-import { CreditCard, Plus, ArrowUpRight, ArrowDownRight, DollarSign, Search, List, Activity } from 'lucide-react';
+import { CreditCard, Plus, ArrowUpRight, ArrowDownRight, DollarSign, Search, List, Activity, HelpCircle } from 'lucide-react';
 import { BankCard, BankTransaction } from '../types';
+import { InfoTooltip } from '../components/InfoTooltip';
 
 export default function Banks() {
   const { bankCards, bankTransactions, addBankCard, updateBankCard, deleteBankCard, getBaseCurrency, addBankTransaction } = useStore();
@@ -111,9 +112,9 @@ export default function Banks() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <div>
+        <div className="flex items-center gap-2">
           <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Cuentas Bancarias</h1>
-          <p className="text-sm font-bold text-slate-400">Gestiona tus tarjetas y cuentas para transferencias</p>
+          <InfoTooltip text="Gestiona tus cuentas bancarias y tarjetas. Aquí puedes registrar depósitos, retiros y transferencias entre cuentas para mantener tu saldo actualizado." position="bottom" />
         </div>
         <button
           onClick={() => { setEditingCard(null); setFormData({ name: "", bank: "", lastFour: "", balance: 0, currency: getBaseCurrency().code, isActive: true }); setShowAddModal(true); }}

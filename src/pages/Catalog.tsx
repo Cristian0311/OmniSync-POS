@@ -3,6 +3,7 @@ import { QrCode, Store, ExternalLink, Settings2, Smartphone, Save, Info, Check }
 import { QRCodeSVG } from "qrcode.react";
 import { useStore } from "../store/useStore";
 import { cn } from "../lib/utils";
+import WebStoreAdmin from "../components/WebStoreAdmin";
 
 export default function Catalog() {
   const { catalogConfig, updateCatalogConfig } = useStore();
@@ -31,6 +32,8 @@ export default function Catalog() {
           Portal para clientes, código QR y diseño
         </p>
       </header>
+
+      <WebStoreAdmin />
 
       {/* Alerta de Red Local */}
       <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex gap-3 items-start">

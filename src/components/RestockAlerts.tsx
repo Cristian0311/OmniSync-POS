@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { useStore } from '../store/useStore';
-import { AlertTriangle, Clock, TrendingUp, Calendar, AlertCircle } from 'lucide-react';
+import { AlertTriangle, Clock, TrendingUp, Calendar, AlertCircle, HelpCircle } from 'lucide-react';
+import { InfoTooltip } from './InfoTooltip';
 
 export function RestockAlerts() {
   const { products, inventory, transactions, currentBranchId } = useStore();
@@ -76,9 +77,9 @@ export function RestockAlerts() {
       </div>
 
       <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
-        <div className="p-6 border-b border-slate-100">
+        <div className="p-6 border-b border-slate-100 flex items-center gap-2">
           <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">Sugerencias de Compra</h2>
-          <p className="text-xs font-bold text-slate-400 mt-1">Basado en el ritmo de ventas de los últimos 30 días</p>
+          <InfoTooltip text="Calcula cuánto tiempo durará tu inventario actual basándose en el ritmo de ventas diario de los últimos 30 días. Ayuda a evitar quiebres de stock." position="bottom" />
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { FileText, Search, Plus, Filter, FileCheck, CheckCircle2, Copy } from 'lucide-react';
+import { FileText, Search, Plus, Filter, FileCheck, CheckCircle2, Copy, HelpCircle } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { formatMoney } from '../lib/utils';
 import { useNavigate } from 'react-router-dom';
+import { InfoTooltip } from '../components/InfoTooltip';
 
 export default function Quotes() {
   const { quotes, currentUser, customers, getBaseCurrency } = useStore();
@@ -24,28 +25,23 @@ export default function Quotes() {
   }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const handleConvertToSale = (quote: any) => {
-    // Aquí podríamos cargar el carrito desde la cotización, pero requiere 
-    // agregar lógica en POS.tsx o un flag en global state.
-    // Por simplicidad en este prototipo, indicamos un mensaje.
-    alert("Para cobrar esta cotización, por favor, use la vista de TPV.");
+    navigate(`/pos?loadQuote=${quote.id}`);
   };
 
   return (
     <div className="flex-1 bg-slate-50 overflow-auto p-4 sm:p-8">
       <div className="max-w-7xl mx-auto space-y-6">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-              <FileText className="w-8 h-8 text-indigo-600" />
-              Cotizaciones
-            </h1>
-            <p className="text-slate-500 text-sm mt-1">
-              Administra las cotizaciones guardadas.
-            </p>
-          </div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                <FileText className="w-8 h-8 text-indigo-600" />
+                Cotizaciones
+              </h1>
+              <InfoTooltip text="Crea y gestiona presupuestos para tus clientes. Las cotizaciones pueden convertirse en ventas reales desde el Punto de Venta." position="bottom" />
+            </div>
           
           <button 
-            onClick={() => navigate('/pos')}
+            onClick={() => navigate('/pos?mode=quote')}
             className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-indigo-700 transition-colors flex items-center gap-2 shadow-lg shadow-indigo-100"
           >
             <Plus className="w-5 h-5" />

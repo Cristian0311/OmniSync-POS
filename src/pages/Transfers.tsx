@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { ArrowLeftRight, Search, Plus, Package, MapPin, ArrowRight, History, CheckCircle, Clock } from "lucide-react";
+import { ArrowLeftRight, Search, Plus, Package, MapPin, ArrowRight, History, CheckCircle, Clock, HelpCircle } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { cn, generateId } from "../lib/utils";
 import { InventoryTransfer } from "../types";
+import { InfoTooltip } from "../components/InfoTooltip";
 
 export default function Transfers() {
   const { branches, products, inventory, transferInventoryBatch, transfers, currentBranchId, currentUser } = useStore();
@@ -15,7 +16,7 @@ export default function Transfers() {
   const [variantQuantities, setVariantQuantities] = useState<{ [key: string]: number }>({});
   const [error, setError] = useState("");
 
-  const handleTransfer = (e: React.FormEvent) => {
+  const handleTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
@@ -36,7 +37,7 @@ export default function Transfers() {
     }
 
     const variantsPayload = variantsToTransfer.map(([v, q]) => ({ variantLabel: v, quantity: q as number }));
-    const success = transferInventoryBatch(
+    const success = await transferInventoryBatch(
       formData.productId,
       formData.fromBranchId,
       formData.toBranchId,
@@ -55,17 +56,17 @@ export default function Transfers() {
   const selectedProduct = products.find(p => p.id === formData.productId);
 
   return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-8">
-      <header className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Transferencias</h2>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Movimiento de Stock entre Sucursales</p>
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20 p-4 sm:p-6 max-w-full overflow-x-hidden">
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight uppercase">Transferencias</h2>
+          <InfoTooltip text="Este módulo permite mover stock entre tus diferentes sucursales. Selecciona un producto, la sucursal de origen y la de destino." position="bottom" />
         </div>
         <button 
           onClick={() => setShowAddModal(true)}
-          className="bg-indigo-600 text-white px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 flex items-center gap-2 active:scale-95"
+          className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-bold text-[10px] uppercase tracking-tight hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100/50 flex items-center gap-1.5 active:scale-95 whitespace-nowrap"
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-3.5 h-3.5" />
           Nueva Transferencia
         </button>
       </header>
@@ -248,7 +249,7 @@ export default function Transfers() {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Origen</label>
                       <select 
@@ -275,17 +276,17 @@ export default function Transfers() {
                   </div>
                 </div>
 
-                <div className="flex gap-3 pt-4">
+                <div className="flex flex-col sm:flex-row gap-3 pt-4">
                   <button 
                     type="button"
                     onClick={() => setShowAddModal(false)}
-                    className="flex-1 py-4 bg-white border border-slate-200 text-slate-400 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 active:scale-95 transition-all"
+                    className="flex-1 py-3 bg-white border border-slate-200 text-slate-400 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 active:scale-95 transition-all"
                   >
                     Cancelar
                   </button>
                   <button 
                     type="submit"
-                    className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-700 shadow-xl shadow-indigo-100 active:scale-95 transition-all"
+                    className="flex-1 py-3 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-700 shadow-xl shadow-indigo-100 active:scale-95 transition-all"
                   >
                     Confirmar Envío
                   </button>

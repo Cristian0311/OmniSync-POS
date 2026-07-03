@@ -176,6 +176,7 @@ export default function Reports() {
         <div className="px-2">
           <h2 className="text-base font-black text-slate-900 tracking-tighter flex items-center gap-2 uppercase">
             Panel de Reportes
+            <InfoTooltip text="Panel integral de métricas. Visualiza tus ventas, flujos de caja e insights generados por IA sobre tu inventario." position="bottom" />
           </h2>
           <p className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] mt-0.5">Control Financiero Operativo</p>
         </div>
@@ -440,6 +441,7 @@ export default function Reports() {
             <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
               <Calculator className="w-3.5 h-3.5 text-indigo-600" />
               Lista de Empleados y Turnos
+              <InfoTooltip text="Desglosa la actividad por cajero y sucursal. Expande una fila para ver el detalle de tickets emitidos en ese turno." position="bottom" />
             </h3>
           </div>
           <div className="divide-y divide-slate-50">
@@ -553,6 +555,7 @@ export default function Reports() {
             <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
               <History className="w-3.5 h-3.5 text-indigo-600" />
               Ingresos y Egresos de Caja
+              <InfoTooltip text="Historial completo de movimientos manuales de efectivo (vales, gastos menores, depósitos adicionales)." position="bottom" />
             </h3>
           </div>
           <div className="overflow-x-auto">

@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
+import RegisterAdmin from "./pages/RegisterAdmin";
 import Dashboard from "./pages/Dashboard";
 import POS from "./pages/POS";
 import Inventory from "./pages/Inventory";
@@ -26,7 +27,7 @@ import Banks from "./pages/Banks";
 import { useStore } from "./store/useStore";
 
 export default function App() {
-  const { currentUser, setOfflineStatus, isOffline, syncPendingTransactions, initializeFromSupabase } = useStore();
+  const { currentUser, users, isInitialized, setOfflineStatus, isOffline, syncPendingTransactions, initializeFromSupabase } = useStore();
 
   useEffect(() => {
     initializeFromSupabase();
@@ -56,12 +57,23 @@ export default function App() {
     };
   }, [setOfflineStatus, syncPendingTransactions, isOffline]);
 
+  if (!isInitialized) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
+  const needsAdminRegistration = users.length === 0;
+
   return (
     <Router>
       <Routes>
         <Route path="/shop" element={<CustomerShop />} />
         
         <Route path="/*" element={
+          needsAdminRegistration ? <RegisterAdmin /> :
           !currentUser ? <Login /> : (
             <Layout>
               <Routes>

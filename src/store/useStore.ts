@@ -5,9 +5,7 @@ import { Branch, Category, Product, InventoryLevel, CartItem, Transaction, Retur
 import { generateId, generateReadableId } from '../lib/utils';
 
 // --- Datos Iniciales ---
-const INITIAL_USERS: User[] = [
-  { id: 'u1', name: 'Administrador', email: 'admin@tienda.com', role: 'admin', password: 'admin', commissionRate: 0, baseSalary: 1000 },
-];
+const INITIAL_USERS: User[] = [];
 
 const INITIAL_FISCAL_CONFIGS: FiscalConfig[] = [
   { id: 'fc1', type: 'B01', name: 'Crédito Fiscal', prefix: 'B01', current: 1, limit: 1000, active: true },
@@ -54,6 +52,7 @@ const INITIAL_CATEGORIES: Category[] = [
 // --- Definición del Store ---
 interface AppState {
   // Offline Architecture
+  isInitialized: boolean;
   isOffline: boolean;
   pendingSyncTransactions: Transaction[];
   setOfflineStatus: (status: boolean) => void;
@@ -64,6 +63,7 @@ interface AppState {
   currentUser: User | null;
   login: (email: string, pass: string) => boolean;
   logout: () => void;
+  clearAllData: () => Promise<void>;
   addUser: (user: User) => void;
   updateUser: (id: string, user: Partial<User>) => void;
   deleteUser: (id: string) => void;
@@ -97,8 +97,8 @@ interface AppState {
   deleteProduct: (id: string) => void;
   batchDeleteProducts: (ids: string[]) => void;
   batchUpdateProducts: (ids: string[], updates: Partial<Product>) => void;
-  transferInventory: (productId: string, fromBranchId: string, toBranchId: string, quantity: number, variantLabel?: string) => boolean;
-  transferInventoryBatch: (productId: string, fromBranchId: string, toBranchId: string, variants: { variantLabel: string; quantity: number }[]) => boolean;
+  transferInventory: (productId: string, fromBranchId: string, toBranchId: string, quantity: number, variantLabel?: string) => Promise<boolean>;
+  transferInventoryBatch: (productId: string, fromBranchId: string, toBranchId: string, variants: { variantLabel: string; quantity: number }[]) => Promise<boolean>;
   adjustInventory: (productId: string, branchId: string, delta: number, variantLabel?: string, minQuantity?: number) => void;
   setInventoryQuantity: (productId: string, branchId: string, quantity: number, variantLabel?: string, minQuantity?: number) => void;
   
@@ -194,6 +194,7 @@ interface AppState {
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
+  isInitialized: false,
   isOffline: !navigator.onLine,
   pendingSyncTransactions: [],
   setOfflineStatus: (status) => set({ isOffline: status }),
@@ -221,6 +222,51 @@ export const useStore = create<AppState>()(
     return false;
   },
   logout: () => set({ currentUser: null }),
+  clearAllData: async () => {
+    // Determine the order to avoid foreign key constraints
+    const tables = [
+      'time_shifts', 'quote_items', 'quotes', 'salary_settlements',
+      'inventory_audit_items', 'inventory_audits', 'bank_transactions', 'bank_cards',
+      'supplier_order_items', 'supplier_orders', 'suppliers',
+      'inventory_transfers', 'cash_movements', 'cash_sessions',
+      'warranties', 'returns', 'transaction_items', 'transaction_payments', 'transactions',
+      'customers', 'inventory_levels', 'products', 'categories', 'branches', 'users'
+    ];
+    
+    // Clear in supabase
+    try {
+      for (const table of tables) {
+        await supabase.from(table).delete().neq('id', 'dummy_id_to_match_all');
+      }
+    } catch (error) {
+      console.error('Error clearing data in Supabase:', error);
+    }
+    
+    // Reset local state to initial empty values
+    set({
+      users: [],
+      currentUser: null,
+      branches: [],
+      currentBranchId: 'main',
+      categories: [],
+      products: [],
+      inventory: [],
+      customers: [],
+      transactions: [],
+      returns: [],
+      warranties: [],
+      cashSessions: [],
+      transfers: [],
+      suppliers: [],
+      supplierOrders: [],
+      bankCards: [],
+      bankTransactions: [],
+      inventoryAudits: [],
+      salarySettlements: [],
+      quotes: [],
+      timeShifts: []
+    });
+  },
   addUser: async (user) => {
     set((state) => ({ users: [...state.users, user] }));
     try {
@@ -490,19 +536,25 @@ export const useStore = create<AppState>()(
       console.error('Error deleting product from Supabase:', error);
     }
   },
-  transferInventory: (productId, fromBranchId, toBranchId, quantity, variantLabel) => {
+  transferInventory: async (productId, fromBranchId, toBranchId, quantity, variantLabel) => {
     let success = false;
+    let newSourceQty = 0;
+    let newTargetQty = 0;
+    
     set((state) => {
       const newInventory = [...state.inventory];
       
       const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && i.variantLabel === variantLabel);
       if (sourceIdx !== -1 && newInventory[sourceIdx].quantity >= quantity) {
-        newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newInventory[sourceIdx].quantity - quantity };
+        newSourceQty = newInventory[sourceIdx].quantity - quantity;
+        newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newSourceQty };
         
         const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && i.variantLabel === variantLabel);
         if (targetIdx !== -1) {
-          newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newInventory[targetIdx].quantity + quantity };
+          newTargetQty = newInventory[targetIdx].quantity + quantity;
+          newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newTargetQty };
         } else {
+          newTargetQty = quantity;
           newInventory.push({ productId, branchId: toBranchId, quantity, minQuantity: 5, variantLabel });
         }
         success = true;
@@ -512,30 +564,54 @@ export const useStore = create<AppState>()(
     });
 
     if (success) {
-      const product = get().products.find(p => p.id === productId);
-      const fromBranch = get().branches.find(b => b.id === fromBranchId);
-      const toBranch = get().branches.find(b => b.id === toBranchId);
-      
-      get().addTransfer({
-        id: crypto.randomUUID(),
-        productId,
-        productName: product?.name || 'Producto',
-        fromBranchId,
-        fromBranchName: fromBranch?.name || 'Sucursal',
-        toBranchId,
-        toBranchName: toBranch?.name || 'Sucursal',
-        quantity,
-        date: new Date().toISOString(),
-        userId: get().currentUser?.id || 'system',
-        status: 'completed',
-        variantLabel
-      });
+      try {
+        // Update Supabase
+        await Promise.all([
+          supabase.from('inventory_levels').upsert({
+            product_id: productId,
+            branch_id: fromBranchId,
+            variant_label: variantLabel || null,
+            quantity: newSourceQty,
+            min_quantity: 5
+          }, { onConflict: 'product_id, branch_id, variant_label' }),
+          supabase.from('inventory_levels').upsert({
+            product_id: productId,
+            branch_id: toBranchId,
+            variant_label: variantLabel || null,
+            quantity: newTargetQty,
+            min_quantity: 5
+          }, { onConflict: 'product_id, branch_id, variant_label' })
+        ]);
+
+        const product = get().products.find(p => p.id === productId);
+        const fromBranch = get().branches.find(b => b.id === fromBranchId);
+        const toBranch = get().branches.find(b => b.id === toBranchId);
+        
+        get().addTransfer({
+          id: crypto.randomUUID(),
+          productId,
+          productName: product?.name || 'Producto',
+          fromBranchId,
+          fromBranchName: fromBranch?.name || 'Sucursal',
+          toBranchId,
+          toBranchName: toBranch?.name || 'Sucursal',
+          quantity,
+          date: new Date().toISOString(),
+          userId: get().currentUser?.id || 'system',
+          status: 'completed',
+          variantLabel
+        });
+      } catch (error) {
+        console.error('Error in transferInventory sync:', error);
+      }
     }
     return success;
   },
-  transferInventoryBatch: (productId, fromBranchId, toBranchId, variants) => {
+  transferInventoryBatch: async (productId, fromBranchId, toBranchId, variants) => {
     let success = false;
     let totalQuantity = 0;
+    const updates: { branchId: string; variantLabel: string; quantity: number }[] = [];
+    
     set((state) => {
       const newInventory = [...state.inventory];
       let allValid = true;
@@ -555,13 +631,19 @@ export const useStore = create<AppState>()(
           if (v.quantity <= 0) continue;
           totalQuantity += v.quantity;
           const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && i.variantLabel === v.variantLabel);
-          newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newInventory[sourceIdx].quantity - v.quantity };
+          const newSourceQty = newInventory[sourceIdx].quantity - v.quantity;
+          newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newSourceQty };
           
+          updates.push({ branchId: fromBranchId, variantLabel: v.variantLabel, quantity: newSourceQty });
+
           const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && i.variantLabel === v.variantLabel);
           if (targetIdx !== -1) {
-            newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newInventory[targetIdx].quantity + v.quantity };
+            const newTargetQty = newInventory[targetIdx].quantity + v.quantity;
+            newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newTargetQty };
+            updates.push({ branchId: toBranchId, variantLabel: v.variantLabel, quantity: newTargetQty });
           } else {
             newInventory.push({ productId, branchId: toBranchId, quantity: v.quantity, minQuantity: 5, variantLabel: v.variantLabel });
+            updates.push({ branchId: toBranchId, variantLabel: v.variantLabel, quantity: v.quantity });
           }
         }
         success = true;
@@ -571,25 +653,40 @@ export const useStore = create<AppState>()(
     });
 
     if (success) {
-      const product = get().products.find(p => p.id === productId);
-      const fromBranch = get().branches.find(b => b.id === fromBranchId);
-      const toBranch = get().branches.find(b => b.id === toBranchId);
-      
-      get().addTransfer({
-        id: crypto.randomUUID(),
-        productId,
-        productName: product?.name || 'Producto',
-        fromBranchId,
-        fromBranchName: fromBranch?.name || 'Sucursal',
-        toBranchId,
-        toBranchName: toBranch?.name || 'Sucursal',
-        quantity: totalQuantity,
-        variants: variants,
-        date: new Date().toISOString(),
-        userId: get().currentUser?.id || 'system',
-        status: 'completed',
-        variantLabel: variants.length === 1 ? variants[0].variantLabel : 'Múltiples Variantes'
-      });
+      try {
+        // Update Supabase
+        await Promise.all(updates.map(update => 
+          supabase.from('inventory_levels').upsert({
+            product_id: productId,
+            branch_id: update.branchId,
+            variant_label: update.variantLabel || null,
+            quantity: update.quantity,
+            min_quantity: 5
+          }, { onConflict: 'product_id, branch_id, variant_label' })
+        ));
+
+        const product = get().products.find(p => p.id === productId);
+        const fromBranch = get().branches.find(b => b.id === fromBranchId);
+        const toBranch = get().branches.find(b => b.id === toBranchId);
+        
+        get().addTransfer({
+          id: crypto.randomUUID(),
+          productId,
+          productName: product?.name || 'Producto',
+          fromBranchId,
+          fromBranchName: fromBranch?.name || 'Sucursal',
+          toBranchId,
+          toBranchName: toBranch?.name || 'Sucursal',
+          quantity: totalQuantity,
+          variants: variants,
+          date: new Date().toISOString(),
+          userId: get().currentUser?.id || 'system',
+          status: 'completed',
+          variantLabel: variants.length === 1 ? variants[0].variantLabel : 'Múltiples Variantes'
+        });
+      } catch (error) {
+        console.error('Error in transferInventoryBatch sync:', error);
+      }
     }
     return success;
   },
@@ -780,7 +877,7 @@ export const useStore = create<AppState>()(
         product_name: item.product.name,
         quantity: item.quantity,
         price: item.product.price,
-        tax: item.product.taxRate || 0,
+        tax: 0,
         variant_label: item.variantLabel || null
       }));
       if (quoteItems.length > 0) {
@@ -1718,6 +1815,7 @@ export const useStore = create<AppState>()(
           name: u.name,
           email: u.email,
           role: u.role,
+          password: u.password,
           commissionRate: u.commission_rate,
           baseSalary: u.base_salary,
           salesGoal: u.sales_goal || 0,
@@ -1876,7 +1974,7 @@ export const useStore = create<AppState>()(
           status: q.status,
           notes: q.notes || undefined,
           items: (q.quote_items || []).map((i: any) => ({
-            product: { id: i.product_id, name: i.product_name, price: i.price, taxRate: i.tax },
+            product: { id: i.product_id, name: i.product_name, price: i.price },
             quantity: i.quantity,
             variantLabel: i.variant_label || undefined
           }))
@@ -1914,10 +2012,12 @@ export const useStore = create<AppState>()(
           total: s.total,
           date: s.date,
           status: s.status
-        })) : state.salarySettlements
+        })) : state.salarySettlements,
+        isInitialized: true
       }));
     } catch (error) {
       console.error('Error fetching from Supabase:', error);
+      set({ isInitialized: true });
     }
   }
 }),

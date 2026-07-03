@@ -301,39 +301,48 @@ export default function Inventory() {
       {/* Advanced Unified Toolbar - Linear & Compact */}
       <div className="bg-white p-2 rounded-2xl border border-slate-100 shadow-sm flex flex-col lg:flex-row gap-2 items-center justify-between">
         <div className="flex flex-wrap gap-2 items-center w-full lg:w-auto">
-          <div className="relative flex-1 lg:flex-none lg:w-56 group">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
-            <input 
-              type="text" 
-              placeholder="Buscar productos..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold focus:bg-white focus:ring-1 focus:ring-indigo-100 outline-none transition-all placeholder:text-slate-400"
-            />
-          </div>
-          
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <select 
-              value={selectedBranch}
-              onChange={(e) => setSelectedBranch(e.target.value)}
-              className="px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none hover:bg-slate-100 transition-colors cursor-pointer appearance-none min-w-[110px]"
-            >
-              <option value="all">Sucs: Todas</option>
-              {branches.map(b => (
-                <option key={b.id} value={b.id}>{b.name}</option>
-              ))}
-            </select>
+            <div className="flex-1 relative flex items-center gap-1.5">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                <input 
+                  type="text" 
+                  placeholder="Buscar productos..." 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold focus:bg-white focus:ring-1 focus:ring-indigo-100 outline-none transition-all placeholder:text-slate-400"
+                />
+              </div>
+              <InfoTooltip text="Busca productos por nombre, SKU o código de barras." position="bottom" />
+            </div>
+            
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex items-center gap-1">
+                <select 
+                  value={selectedBranch}
+                  onChange={(e) => setSelectedBranch(e.target.value)}
+                  className="px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none hover:bg-slate-100 transition-colors cursor-pointer appearance-none min-w-[110px]"
+                >
+                  <option value="all">Sucs: Todas</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+                <InfoTooltip text="Filtra por una sucursal específica para ver su stock local." position="bottom" />
+              </div>
 
-            <select 
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none hover:bg-slate-100 transition-colors cursor-pointer appearance-none min-w-[110px]"
-            >
-              <option value="all">Cats: Todas</option>
-              {categories.map(cat => (
-                <option key={cat.id} value={cat.id}>{cat.name}</option>
-              ))}
-            </select>
+              <div className="flex items-center gap-1">
+                <select 
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none hover:bg-slate-100 transition-colors cursor-pointer appearance-none min-w-[110px]"
+                >
+                  <option value="all">Cats: Todas</option>
+                  {categories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+                <InfoTooltip text="Filtra los productos por su categoría o departamento." position="bottom" />
+              </div>
 
             <button 
               onClick={() => setShowCategoryModal(true)}
@@ -468,7 +477,7 @@ export default function Inventory() {
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden shrink-0 border border-slate-200">
                           {item.image ? (
-                            <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                            <img src={item.image} alt={item.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                           ) : (
                             <div className={cn("w-full h-full opacity-20", item.color)} />
                           )}
@@ -600,7 +609,7 @@ export default function Inventory() {
               <div key={item.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group relative">
                 <div className="h-40 bg-slate-100 relative">
                   {item.image ? (
-                    <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                    <img src={item.image} alt={item.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     <div className={cn("w-full h-full opacity-20", item.color)} />
                   )}
