@@ -38,6 +38,8 @@ export default function Suppliers() {
     address: ""
   });
 
+  const [editingOrder, setEditingOrder] = useState<SupplierOrder | null>(null);
+
   const [orderFormData, setOrderFormData] = useState<{
     supplierId: string;
     branchId: string;
@@ -51,6 +53,31 @@ export default function Suppliers() {
     items: [{ productId: "", quantity: 1, cost: 0 }],
     expectedDeliveryDate: ""
   });
+
+  const handleOpenOrderModal = (order?: SupplierOrder) => {
+    if (order) {
+      setEditingOrder(order);
+      setOrderFormData({
+        supplierId: order.supplierId,
+        branchId: order.branchId,
+        expectedDeliveryDate: order.expectedDeliveryDate || "",
+        transportDetails: order.transportDetails || "",
+        transportCost: order.transportCost || 0,
+        items: order.items.map(i => ({ productId: i.productId, variantLabel: i.variantLabel, quantity: i.quantity, cost: i.cost }))
+      });
+    } else {
+      setEditingOrder(null);
+      setOrderFormData({
+        supplierId: selectedSupplier ? selectedSupplier.id : "",
+        branchId: "",
+        expectedDeliveryDate: "",
+        transportDetails: "",
+        transportCost: 0,
+        items: [{ productId: "", quantity: 1, cost: 0 }]
+      });
+    }
+    setShowOrderModal(true);
+  };
 
   const filteredSuppliers = suppliers.filter(s => 
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -82,19 +109,32 @@ export default function Suppliers() {
     const transportCost = orderFormData.transportCost || 0;
     const transportDetails = orderFormData.transportDetails || "";
 
-    createSupplierOrder({
-      id: `ORD-${Date.now()}`,
-      supplierId: orderFormData.supplierId,
-      branchId: orderFormData.branchId,
-      date: new Date().toISOString(),
-      expectedDeliveryDate: orderFormData.expectedDeliveryDate,
-      items,
-      total,
-      status: 'pending',
-      transportCost,
-      transportDetails
-    });
+    if (editingOrder) {
+      updateSupplierOrder(editingOrder.id, {
+        supplierId: orderFormData.supplierId,
+        branchId: orderFormData.branchId,
+        expectedDeliveryDate: orderFormData.expectedDeliveryDate,
+        items,
+        total,
+        transportCost,
+        transportDetails
+      });
+    } else {
+      createSupplierOrder({
+        id: `ORD-${Date.now()}`,
+        supplierId: orderFormData.supplierId,
+        branchId: orderFormData.branchId,
+        date: new Date().toISOString(),
+        expectedDeliveryDate: orderFormData.expectedDeliveryDate,
+        items,
+        total,
+        status: 'pending',
+        transportCost,
+        transportDetails
+      });
+    }
     setShowOrderModal(false);
+    setEditingOrder(null);
   };
 
   return (
@@ -113,7 +153,7 @@ export default function Suppliers() {
             Nuevo Proveedor
           </button>
           <button 
-            onClick={() => setShowOrderModal(true)}
+            onClick={() => handleOpenOrderModal()}
             className="flex-1 sm:flex-none px-4 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center justify-center gap-2"
           >
             <Truck className="w-3.5 h-3.5" />
@@ -172,7 +212,7 @@ export default function Suppliers() {
                   >
                     Editar
                   </button>
-                  <button className="p-2 bg-slate-50 text-slate-400 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition-all">
+                  <button onClick={() => deleteSupplier(s.id)} className="p-2 bg-slate-50 text-slate-400 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition-all">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -211,12 +251,22 @@ export default function Suppliers() {
                       {order.items.length} Ptos • CUP {order.total.toLocaleString()}
                     </div>
                     {order.status === 'pending' && (
-                      <button 
-                        onClick={() => updateSupplierOrder(order.id, { status: 'received' })}
-                        className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-all"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button 
+                          onClick={() => handleOpenOrderModal(order)}
+                          title="Editar Orden"
+                          className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-all"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                        </button>
+                        <button 
+                          onClick={() => updateSupplierOrder(order.id, { status: 'received' })}
+                          title="Recibir Mercancía"
+                          className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-all"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     )}
                   </div>
                   <div className="space-y-1 bg-slate-50/50 p-2 rounded-lg border border-slate-100/50">
@@ -424,7 +474,7 @@ export default function Suppliers() {
               </div>
 
               <button type="submit" className="w-full py-3.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100">
-                Crear Orden de Compra
+                {editingOrder ? 'Guardar Cambios' : 'Crear Orden de Compra'}
               </button>
             </form>
           </div>

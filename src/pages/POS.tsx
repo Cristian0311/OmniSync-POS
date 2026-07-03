@@ -7,7 +7,7 @@ import { Product, Payment, Transaction } from "../types";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 
 export default function POS() {
-  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, inventory, addCustomer, bankCards, addBankTransaction } = useStore();
+  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, inventory, addCustomer, bankCards, addBankTransaction, addQuote } = useStore();
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
@@ -304,6 +304,27 @@ export default function POS() {
     setShowCheckoutModal(true);
   };
 
+  const handleSaveQuote = async () => {
+    if (cart.length === 0) return;
+    const quoteId = crypto.randomUUID();
+    const newQuote: import("../types").Quote = {
+      id: quoteId,
+      branchId: currentBranchId || "",
+      userId: currentUser?.id || "",
+      customerId: selectedCustomer?.id,
+      date: new Date().toISOString(),
+      subtotal: subtotalBase,
+      tax: taxBase,
+      total: totalBase,
+      items: cart,
+      status: "pending",
+      notes: "Generada desde POS"
+    };
+    await addQuote(newQuote);
+    setCart([]);
+    setSelectedCustomer(null);
+    alert("Cotización guardada exitosamente");
+  };
   const handleThermalPrint = async (tx: Transaction) => {
     try {
       const { printReceiptOverSerial } = await import('../lib/escpos');
@@ -1100,6 +1121,13 @@ export default function POS() {
             className="w-full bg-indigo-600 text-white font-black text-[11px] uppercase tracking-widest py-3.5 rounded-2xl flex items-center justify-center gap-2 hover:bg-indigo-700 active:scale-95 transition-all shadow-lg shadow-indigo-100 disabled:opacity-30 disabled:grayscale disabled:shadow-none"
           >
             Pagar Ticket
+          </button>
+          <button
+            disabled={cart.length === 0}
+            onClick={handleSaveQuote}
+            className="w-full bg-slate-800 text-white font-black text-[11px] uppercase tracking-widest py-3.5 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-700 active:scale-95 transition-all mt-3 disabled:opacity-30 disabled:grayscale disabled:shadow-none"
+          >
+            Guardar Cotización
           </button>
         </div>
       </div>

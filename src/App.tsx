@@ -13,6 +13,7 @@ import Inventory from "./pages/Inventory";
 import Catalog from "./pages/Catalog";
 import Returns from "./pages/Returns";
 import Users from "./pages/Users";
+import Quotes from "./pages/Quotes";
 import Settings from "./pages/Settings";
 import Customers from "./pages/Customers";
 import CashRegister from "./pages/CashRegister";
@@ -25,9 +26,11 @@ import Banks from "./pages/Banks";
 import { useStore } from "./store/useStore";
 
 export default function App() {
-  const { currentUser, setOfflineStatus, isOffline, syncPendingTransactions } = useStore();
+  const { currentUser, setOfflineStatus, isOffline, syncPendingTransactions, initializeFromSupabase } = useStore();
 
   useEffect(() => {
+    initializeFromSupabase();
+    
     const handleOnline = () => {
       setOfflineStatus(false);
       syncPendingTransactions();
@@ -74,6 +77,7 @@ export default function App() {
                 <Route path="/returns" element={<Returns />} />
                 <Route path="/customers" element={<Customers />} />
                 <Route path="/reports" element={currentUser.role === 'admin' ? <Reports /> : <Navigate to="/" replace />} />
+                <Route path="/quotes" element={<Quotes />} />
                 <Route path="/users" element={currentUser.role === 'admin' ? <Users /> : <Navigate to="/" replace />} />
                 <Route path="/settings" element={currentUser.role === 'admin' ? <Settings /> : <Navigate to="/" replace />} />
               </Routes>

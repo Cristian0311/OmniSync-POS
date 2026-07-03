@@ -18,7 +18,9 @@ import {
   Wifi,
   WifiOff,
   CloudOff,
-  CreditCard
+  CreditCard,
+  FileText,
+  Clock
 } from "lucide-react";
 import React, { useState, useEffect } from "react";
 import { cn } from "../lib/utils";
@@ -33,8 +35,12 @@ const adminNavItems = [
   { name: "Inventario", href: "/inventory", icon: Package },
   { name: "Auditoría Stock", href: "/inventory-audit", icon: ClipboardCheck },
   { name: "Proveedores", href: "/suppliers", icon: Truck },
-  { name: "Cuentas Bancarias", href: "/banks", icon: CreditCard },
+  { name: "Cuentas Bancarias", href: "/banks", icon: CreditCard,
+  FileText,
+  Clock },
   { name: "Catálogo QR", href: "/catalog", icon: Store },
+  { name: "Cotizaciones", href: "/quotes", icon: FileText,
+  Clock },
   { name: "Devoluciones", href: "/returns", icon: RotateCcw },
   { name: "Reportes", href: "/reports", icon: BarChart },
   { name: "Empleados", href: "/users", icon: Users },
@@ -47,13 +53,30 @@ const cashierNavItems = [
   { name: "Transferencias", href: "/transfers", icon: ArrowLeftRight },
   { name: "Clientes (POS)", href: "/customers", icon: UserCircle },
   { name: "Tienda Web (Admin)", href: "/catalog", icon: Store },
+  { name: "Cotizaciones", href: "/quotes", icon: FileText,
+  Clock },
   { name: "Devoluciones", href: "/returns", icon: RotateCcw },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const { currentUser, logout, isOffline } = useStore();
+  const { currentUser, logout, isOffline, timeShifts, addTimeShift, updateTimeShift } = useStore();
+  const activeShift = timeShifts.find(s => s.userId === currentUser?.id && !s.clockOut);
+  const handleClockIn = () => {
+    if (currentUser) {
+      addTimeShift({
+        id: crypto.randomUUID(),
+        userId: currentUser.id,
+        clockIn: new Date().toISOString()
+      });
+    }
+  };
+  const handleClockOut = () => {
+    if (activeShift) {
+      updateTimeShift(activeShift.id, { clockOut: new Date().toISOString() });
+    }
+  };
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -150,6 +173,26 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 {currentUser?.role}
               </p>
             </div>
+          </div>
+          {/* Time Shift Control */}
+          <div className="mb-4">
+            {activeShift ? (
+              <button
+                onClick={handleClockOut}
+                className="w-full bg-amber-100 text-amber-700 py-2 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-2 hover:bg-amber-200 transition-colors"
+              >
+                <Clock className="w-3.5 h-3.5" />
+                Marcar Salida
+              </button>
+            ) : (
+              <button
+                onClick={handleClockIn}
+                className="w-full bg-emerald-100 text-emerald-700 py-2 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-2 hover:bg-emerald-200 transition-colors"
+              >
+                <Clock className="w-3.5 h-3.5" />
+                Marcar Entrada
+              </button>
+            )}
           </div>
           <button
             onClick={logout}

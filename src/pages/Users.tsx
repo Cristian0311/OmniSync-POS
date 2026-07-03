@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Shield, UserPlus, DollarSign, X, Eye, Calculator, Package, Clock, MapPin } from "lucide-react";
+import { Shield, UserPlus, DollarSign, X, Eye, Calculator, Package, Clock, MapPin, Target } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { User, CashRegisterSession, Transaction } from "../types";
 import { InfoTooltip } from "../components/InfoTooltip";
@@ -17,6 +17,7 @@ export default function Users() {
     password: "",
     role: "cashier",
     baseSalary: 0,
+    salesGoal: 0,
     commissionRate: 0,
     phone: "",
     branchId: ""
@@ -38,7 +39,7 @@ export default function Users() {
       id: `u-${Date.now()}`
     } as User);
     setShowAddModal(false);
-    setFormData({ name: "", email: "", password: "", role: "cashier", baseSalary: 0, commissionRate: 0, phone: "", branchId: "" });
+    setFormData({ name: "", email: "", password: "", role: "cashier", baseSalary: 0, salesGoal: 0, commissionRate: 0, phone: "", branchId: "" });
   };
 
   return (
@@ -50,7 +51,10 @@ export default function Users() {
           </h2>
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Accesos y Comisiones</p>
         </div>
-        <button onClick={() => setShowAddModal(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95">
+        <button 
+          onClick={() => setShowAddModal(true)} 
+          className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95"
+        >
           <UserPlus className="w-4 h-4" />
           Añadir Empleado
         </button>
@@ -64,31 +68,32 @@ export default function Users() {
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Empleado</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Rol / Sucursal</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Salario (Día)</th>
+                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Meta Ventas</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Ventas Hoy</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Comisión Hoy</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Pago Total</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Auditoría</th>
               </tr>
             </thead>
-          <tbody className="divide-y divide-slate-100">
-            {users.map((user) => {
-              const userTx = todayTransactions.filter(t => t.userId === user.id);
-              const totalVentas = userTx.reduce((sum, t) => sum + t.total, 0);
-              
-              // Calcular comisiones por producto
-              const comision = userTx.reduce((sum, t) => {
-                const txComission = t.items.reduce((itemSum, item) => {
-                  const p = item.product;
-                  if (p.commissionType === 'fixed') {
-                    return itemSum + ((p.commissionValue || 0) * item.quantity);
-                  } else {
-                    return itemSum + ((p.price * ((p.commissionValue || 0) / 100)) * item.quantity);
-                  }
+            <tbody className="divide-y divide-slate-100">
+              {users.map((user) => {
+                const userTx = todayTransactions.filter(t => t.userId === user.id);
+                const totalVentas = userTx.reduce((sum, t) => sum + t.total, 0);
+                
+                const comision = userTx.reduce((sum, t) => {
+                  const txComission = t.items.reduce((itemSum, item) => {
+                    const p = item.product;
+                    if (p.commissionType === 'fixed') {
+                      return itemSum + ((p.commissionValue || 0) * item.quantity);
+                    } else {
+                      return itemSum + ((p.price * ((p.commissionValue || 0) / 100)) * item.quantity);
+                    }
+                  }, 0);
+                  return sum + txComission;
                 }, 0);
-                return sum + txComission;
-              }, 0);
 
-              const pagoTotalHoy = (user.baseSalary || 0) + comision;
+                const pagoTotalHoy = (user.baseSalary || 0) + comision;
+                const goalProgress = user.salesGoal && user.salesGoal > 0 ? (totalVentas / user.salesGoal) * 100 : 0;
 
                 return (
                   <tr key={user.id} className="hover:bg-slate-50/50 transition-colors group">
@@ -107,9 +112,10 @@ export default function Users() {
                       <div className="flex flex-col gap-1">
                         <span className={cn(
                           "w-fit px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest",
-                          user.role === 'admin' ? "bg-slate-900 text-white" : "bg-blue-100 text-blue-700"
+                          user.role === 'admin' ? "bg-slate-900 text-white" : 
+                          user.role === 'sub_cashier' ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
                         )}>
-                          {user.role}
+                          {user.role === 'sub_cashier' ? 'Ayudante' : user.role === 'cashier' ? 'Cajero' : 'Admin'}
                         </span>
                         {user.branchId && (
                           <span className="text-[7px] font-black text-indigo-500 uppercase flex items-center gap-1">
@@ -119,10 +125,30 @@ export default function Users() {
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 font-black text-slate-900 text-xs">{user.role === 'admin' ? '-' : formatMoney(user.baseSalary || 0)}</td>
+                    <td className="px-6 py-4 font-black text-slate-900 text-xs">
+                      {user.role === 'admin' ? '-' : formatMoney(user.baseSalary || 0)}
+                    </td>
+                    <td className="px-6 py-4">
+                      {user.role !== 'admin' && (
+                        <div className="flex flex-col gap-1 items-center">
+                          <span className="text-[9px] font-black text-slate-400 uppercase">{formatMoney(user.salesGoal || 0)}</span>
+                          <div className="w-24 h-1 bg-slate-100 rounded-full overflow-hidden">
+                            <div 
+                              className={cn(
+                                "h-full transition-all duration-1000",
+                                goalProgress >= 100 ? "bg-emerald-500" : "bg-indigo-500"
+                              )}
+                              style={{ width: `${Math.min(goalProgress, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </td>
                     <td className="px-6 py-4 font-black text-slate-900 text-xs">{formatMoney(totalVentas)}</td>
                     <td className="px-6 py-4 font-black text-emerald-600 text-xs">{formatMoney(comision)}</td>
-                    <td className="px-6 py-4 font-black text-indigo-600 text-xs">{user.role === 'admin' ? '-' : formatMoney(pagoTotalHoy)}</td>
+                    <td className="px-6 py-4 font-black text-indigo-600 text-xs">
+                      {user.role === 'admin' ? '-' : formatMoney(pagoTotalHoy)}
+                    </td>
                     <td className="px-6 py-4 text-right">
                       <button 
                         onClick={() => setAuditingUser(user)}
@@ -156,15 +182,13 @@ export default function Users() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-
+            
             <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
-              {/* Nueva sección: Historial de Pagos de Salario */}
               <div className="space-y-4">
                 <div className="flex items-center gap-2 px-1">
                   <DollarSign className="w-4 h-4 text-indigo-500" />
                   <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Historial de Liquidaciones</h4>
                 </div>
-                
                 {salarySettlements.filter(s => s.userId === auditingUser.id).length === 0 ? (
                   <div className="bg-slate-50 rounded-2xl p-6 text-center border border-slate-100">
                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">No hay liquidaciones registradas</p>
@@ -184,7 +208,6 @@ export default function Users() {
                                 settlement.status === 'cancelled' ? "bg-rose-50 text-rose-600" : 
                                 settlement.status === 'waiting' ? "bg-amber-50 text-amber-600" : "bg-indigo-50 text-indigo-600"
                               )}
-                              title={settlement.status === 'paid' ? 'Poner en Espera' : 'Marcar como Pagado'}
                             >
                               <DollarSign className="w-4 h-4" />
                             </button>
@@ -193,11 +216,7 @@ export default function Users() {
                                 {formatMoney(settlement.total)}
                               </p>
                               <p className="text-[8px] font-bold text-slate-400 uppercase">
-                                {new Date(settlement.date).toLocaleDateString()} • {
-                                  settlement.status === 'paid' ? 'Pagado' : 
-                                  settlement.status === 'cancelled' ? 'Cancelado' : 
-                                  settlement.status === 'waiting' ? 'En Espera' : 'Pendiente'
-                                }
+                                {new Date(settlement.date).toLocaleDateString()} • {settlement.status}
                               </p>
                             </div>
                           </div>
@@ -213,91 +232,44 @@ export default function Users() {
                 )}
               </div>
 
-              <div className="h-px bg-slate-100 mx-1" />
-
               <div className="space-y-4">
                 <div className="flex items-center gap-2 px-1">
                   <Clock className="w-4 h-4 text-indigo-500" />
                   <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Historial de Turnos</h4>
                 </div>
-              {cashSessions.filter(s => s.userId === auditingUser.id).length === 0 ? (
-                <div className="text-center py-20 text-slate-400">
-                  <Clock className="w-12 h-12 mx-auto mb-4 opacity-20" />
-                  <p className="text-[10px] font-black uppercase tracking-widest">No se encontraron turnos registrados</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {cashSessions
-                    .filter(s => s.userId === auditingUser.id)
-                    .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime())
-                    .map(session => {
-                      const sessionTxs = transactions.filter(t => 
-                        t.userId === auditingUser.id && 
-                        t.branchId === session.branchId &&
-                        new Date(t.date) >= new Date(session.openedAt) &&
-                        (!session.closedAt || new Date(t.date) <= new Date(session.closedAt))
-                      );
-
-                      return (
+                {cashSessions.filter(s => s.userId === auditingUser.id).length === 0 ? (
+                  <div className="text-center py-10 bg-slate-50 rounded-2xl border border-slate-100">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">No hay turnos registrados</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {cashSessions
+                      .filter(s => s.userId === auditingUser.id)
+                      .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime())
+                      .map(session => (
                         <div key={session.id} className="border border-slate-100 rounded-2xl overflow-hidden">
                           <div className="bg-slate-50 p-4 flex justify-between items-center">
                             <div>
                               <p className="text-[10px] font-black text-slate-900 uppercase tracking-tighter">Turno #{session.id.slice(-6)}</p>
-                              <div className="flex items-center gap-2 text-[8px] font-black text-slate-400 uppercase">
-                                <MapPin className="w-3 h-3" />
-                                {branches.find(b => b.id === session.branchId)?.name}
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <span className={cn(
-                                "px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest",
-                                session.status === 'open' ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
-                              )}>
-                                {session.status === 'open' ? 'En Curso' : 'Cerrado'}
-                              </span>
-                              <p className="text-[8px] font-bold text-slate-400 mt-1 uppercase">
+                              <p className="text-[8px] font-black text-slate-400 uppercase">
                                 {new Date(session.openedAt).toLocaleDateString()}
                               </p>
                             </div>
-                          </div>
-                          <div className="p-4 space-y-3">
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="bg-indigo-50/30 p-2 rounded-xl">
-                                <p className="text-[7px] font-black text-indigo-400 uppercase tracking-widest">Total Ventas</p>
-                                <p className="text-xs font-black text-indigo-600">{formatMoney(sessionTxs.reduce((s,t)=>s+t.total,0))}</p>
-                              </div>
-                              <div className="bg-emerald-50/30 p-2 rounded-xl">
-                                <p className="text-[7px] font-black text-emerald-400 uppercase tracking-widest">Fondo Inicial</p>
-                                <p className="text-xs font-black text-emerald-600">{formatMoney(session.openingBalance)}</p>
-                              </div>
-                            </div>
-                            
-                            <div className="space-y-2">
-                              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Transacciones ({sessionTxs.length})</p>
-                              {sessionTxs.map(tx => (
-                                <div key={tx.id} className="text-[9px] border-l-2 border-indigo-100 pl-3 py-1">
-                                  <div className="flex justify-between">
-                                    <span className="font-black text-slate-700 uppercase">Ticket {tx.id.slice(-6)}</span>
-                                    <span className="font-bold text-indigo-600">{formatMoney(tx.total)}</span>
-                                  </div>
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {tx.items.map((it, idx) => (
-                                      <span key={idx} className="text-[7px] bg-slate-50 text-slate-400 px-1 rounded">{it.quantity}x {it.product?.name || (typeof (it.product as any) === 'string' ? useStore.getState().products.find(p => p.id === (it.product as any))?.name || it.product : 'Desconocido')}</span>
-                                    ))}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
+                            <span className={cn(
+                              "px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest",
+                              session.status === 'open' ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
+                            )}>
+                              {session.status === 'open' ? 'Abierto' : 'Cerrado'}
+                            </span>
                           </div>
                         </div>
-                      );
-                    })}
-                </div>
-              )}
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
-      </div>
       )}
 
       {showAddModal && (
@@ -309,61 +281,68 @@ export default function Users() {
                 <X className="w-6 h-6" />
               </button>
             </div>
-            
-            <form onSubmit={handleAddSubmit} className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Nombre</label>
-                <input type="text" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" />
+            <form onSubmit={handleAddSubmit} className="p-6 space-y-4 overflow-y-auto custom-scrollbar max-h-[70vh]">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Nombre Completo</label>
+                  <input type="text" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Email / Usuario</label>
+                    <input type="email" required value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Teléfono</label>
+                    <input type="text" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Contraseña</label>
+                  <input type="text" required value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Rol</label>
+                    <select required value={formData.role} onChange={e => {
+                      const role = e.target.value as 'admin'|'cashier'|'sub_cashier';
+                      setFormData({...formData, role, baseSalary: role === 'admin' ? 0 : formData.baseSalary});
+                    }} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold">
+                      <option value="cashier">Cajero</option>
+                      <option value="sub_cashier">Ayudante</option>
+                      <option value="admin">Administrador</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Sucursal</label>
+                    <select required value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold">
+                      <option value="">Cualquier Sucursal</option>
+                      {branches.map(b => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                
+                {formData.role !== 'admin' && (
+                  <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                        <DollarSign className="w-3 h-3" /> Salario (Día)
+                      </label>
+                      <input type="number" required value={formData.baseSalary} onChange={e => setFormData({...formData, baseSalary: parseFloat(e.target.value)})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                        <Target className="w-3 h-3" /> Meta Ventas
+                      </label>
+                      <input type="number" required value={formData.salesGoal} onChange={e => setFormData({...formData, salesGoal: parseFloat(e.target.value)})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold" />
+                    </div>
+                  </div>
+                )}
               </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Email / Usuario</label>
-                  <input type="email" required value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Teléfono</label>
-                  <input type="text" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Contraseña</label>
-                <input type="text" required value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Rol</label>
-                  <select required value={formData.role} onChange={e => {
-                    const role = e.target.value as 'admin'|'cashier';
-                    setFormData({...formData, role, baseSalary: role === 'admin' ? 0 : formData.baseSalary});
-                  }} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold">
-                    <option value="cashier">Cajero / Vendedor</option>
-                    <option value="admin">Administrador</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Sucursal Asignada</label>
-                  <select required value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold">
-                    <option value="">Cualquier Sucursal (Todos los accesos)</option>
-                    {branches.map(b => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {formData.role !== 'admin' && (
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Salario Base (Día)</label>
-                  <input type="number" required value={formData.baseSalary} onChange={e => setFormData({...formData, baseSalary: parseFloat(e.target.value)})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold" />
-                </div>
-              )}
-
-              <p className="text-xs text-slate-500 pt-2 border-t border-slate-100">Las comisiones por venta se configuran individualmente en cada producto (Inventario {'>'} Nuevo Producto).</p>
-
-              <button type="submit" className="w-full mt-6 bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 transition-colors">
+              
+              <button type="submit" className="w-full mt-6 bg-indigo-600 text-white font-black uppercase tracking-widest py-3 rounded-xl hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100 active:scale-95 text-[10px]">
                 Guardar Empleado
               </button>
             </form>

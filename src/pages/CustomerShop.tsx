@@ -24,11 +24,20 @@ export default function CustomerShop() {
     getBaseCurrency,
     inventory,
     branches,
-    catalogConfig
+    catalogConfig,
+    initializeFromSupabase
   } = useStore();
   const baseCurrency = getBaseCurrency();
   const [cart, setCart] = useState<CartItem[]>([]);
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    initializeFromSupabase().finally(() => {
+      setIsLoading(false);
+    });
+  }, [initializeFromSupabase]);
+
   const visibleBranches = useMemo(() => {
     if (!catalogConfig.visibleBranches || catalogConfig.visibleBranches.length === 0) return branches;
     return branches.filter(b => catalogConfig.visibleBranches?.includes(b.id));
@@ -166,6 +175,14 @@ export default function CustomerShop() {
             Nueva Orden
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
       </div>
     );
   }

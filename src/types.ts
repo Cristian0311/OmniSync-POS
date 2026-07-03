@@ -159,12 +159,14 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  role: 'admin' | 'cashier';
+  role: 'admin' | 'cashier' | 'sub_cashier';
   password?: string;
   commissionRate: number; // Legacy global commission (optional)
-  baseSalary: number; // Salario fijo
+  baseSalary: number;
+  salesGoal?: number; // Salario fijo
   phone?: string;
   branchId?: string; // Sucursal asignada
+  supervisorId?: string; // Supervisor (empleado principal)
 }
 
 export interface PendingOrder {
@@ -193,6 +195,7 @@ export interface SalarySettlement {
   userName: string;
   sessionId: string;
   baseSalary: number;
+  salesGoal?: number;
   commissions: number;
   total: number;
   date: string;
@@ -314,4 +317,26 @@ export interface ReceiptConfig {
   printerWidth?: '58mm' | '80mm';
   openDrawer?: boolean;
   useWebSerial?: boolean;
+}
+
+export interface Quote {
+  id: string;
+  branchId: string;
+  userId: string;
+  customerId?: string;
+  date: string;
+  subtotal: number;
+  tax: number;
+  total: number;
+  items: CartItem[];
+  status: 'pending' | 'converted' | 'expired';
+  notes?: string;
+}
+
+export interface TimeShift {
+  id: string;
+  userId: string;
+  clockIn: string;
+  clockOut?: string;
+  notes?: string;
 }
