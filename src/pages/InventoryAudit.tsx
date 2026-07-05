@@ -43,7 +43,7 @@ export default function InventoryAuditPage() {
       }));
 
     const newAudit: InventoryAudit = {
-      id: `AUD-${Date.now()}`,
+      id: crypto.randomUUID(),
       date: new Date().toISOString(),
       branchId: auditBranchId,
       userId: currentUser?.id || 'system',

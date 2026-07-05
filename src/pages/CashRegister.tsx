@@ -34,7 +34,7 @@ export default function CashRegister() {
     const val = parseFloat(openingAmount);
     if (!isNaN(val)) {
       openSession({
-        id: `SESS-${Date.now()}`,
+        id: crypto.randomUUID(),
         branchId: currentBranchId,
         openedAt: new Date().toISOString(),
         openingBalance: val,
@@ -186,7 +186,7 @@ export default function CashRegister() {
 
     // Create Settlement
     useStore.getState().addSalarySettlement({
-      id: `SETL-${Date.now()}`,
+      id: crypto.randomUUID(),
       userId: session.userId,
       userName: user?.name || 'Vendedor',
       sessionId: session.id,

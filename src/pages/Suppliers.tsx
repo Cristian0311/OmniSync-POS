@@ -89,7 +89,7 @@ export default function Suppliers() {
     if (selectedSupplier) {
       updateSupplier(selectedSupplier.id, formData);
     } else {
-      addSupplier({ id: `sup-${Date.now()}`, ...formData } as Supplier);
+      addSupplier({ id: crypto.randomUUID(), ...formData } as Supplier);
     }
     setShowAddModal(false);
     setSelectedSupplier(null);
@@ -121,7 +121,7 @@ export default function Suppliers() {
       });
     } else {
       createSupplierOrder({
-        id: `ORD-${Date.now()}`,
+        id: crypto.randomUUID(),
         supplierId: orderFormData.supplierId,
         branchId: orderFormData.branchId,
         date: new Date().toISOString(),

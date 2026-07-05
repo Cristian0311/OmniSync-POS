@@ -36,7 +36,7 @@ export default function Users() {
     e.preventDefault();
     addUser({
       ...formData,
-      id: `u-${Date.now()}`
+      id: crypto.randomUUID()
     } as User);
     setShowAddModal(false);
     setFormData({ name: "", email: "", password: "", role: "cashier", baseSalary: 0, salesGoal: 0, commissionRate: 0, phone: "", branchId: "" });

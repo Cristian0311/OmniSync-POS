@@ -71,7 +71,7 @@ export default function Settings() {
         updateBranch(editingBranch.id, { name: newBranchName });
         setEditingBranch(null);
       } else {
-        addBranch({ id: `b${Date.now()}`, name: newBranchName });
+        addBranch({ id: crypto.randomUUID(), name: newBranchName });
       }
       setNewBranchName("");
     }
@@ -83,7 +83,7 @@ export default function Settings() {
         updateCategory(editingCategory.id, newCategory);
         setEditingCategory(null);
       } else {
-        addCategory({ id: `c${Date.now()}`, ...newCategory });
+        addCategory({ id: crypto.randomUUID(), ...newCategory });
       }
       setNewCategory({ name: "", department: "" });
     }

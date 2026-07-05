@@ -8,8 +8,8 @@ import { generateId, generateReadableId } from '../lib/utils';
 const INITIAL_USERS: User[] = [];
 
 const INITIAL_FISCAL_CONFIGS: FiscalConfig[] = [
-  { id: 'fc1', type: 'B01', name: 'Crédito Fiscal', prefix: 'B01', current: 1, limit: 1000, active: true },
-  { id: 'fc2', type: 'B02', name: 'Consumo', prefix: 'B02', current: 1, limit: 10000, active: true },
+  { id: crypto.randomUUID(), type: 'B01', name: 'Crédito Fiscal', prefix: 'B01', current: 1, limit: 1000, active: true },
+  { id: crypto.randomUUID(), type: 'B02', name: 'Consumo', prefix: 'B02', current: 1, limit: 10000, active: true },
 ];
 
 const INITIAL_CURRENCIES: Currency[] = [
@@ -19,34 +19,34 @@ const INITIAL_CURRENCIES: Currency[] = [
 ];
 
 const INITIAL_BRANCHES: Branch[] = [
-  { id: 'b1', name: 'Principal' }
+  { id: crypto.randomUUID(), name: 'Principal' }
 ];
 
 const INITIAL_CATEGORIES: Category[] = [
-  { id: 'c1', name: 'Neveras', department: 'Electrodomésticos' },
-  { id: 'c2', name: 'Lavadoras', department: 'Electrodomésticos' },
-  { id: 'c3', name: 'Cocinas', department: 'Electrodomésticos' },
-  { id: 'c4', name: 'Herramientas', department: 'Ferretería' },
-  { id: 'c5', name: 'Tornillería', department: 'Ferretería' },
-  { id: 'c6', name: 'Pinturas', department: 'Ferretería' },
-  { id: 'c7', name: 'Ropa', department: 'Textil' },
-  { id: 'c8', name: 'Sábanas', department: 'Textil' },
-  { id: 'c9', name: 'Zapatos', department: 'Calzado' },
-  { id: 'c10', name: 'Sandalias', department: 'Calzado' },
-  { id: 'c11', name: 'Jabones', department: 'Higiene' },
-  { id: 'c12', name: 'Champús', department: 'Higiene' },
-  { id: 'c13', name: 'Granos', department: 'Alimentos' },
-  { id: 'c14', name: 'Enlatados', department: 'Alimentos' },
-  { id: 'c15', name: 'Refrescos', department: 'Bebidas' },
-  { id: 'c16', name: 'Licores', department: 'Bebidas' },
-  { id: 'c17', name: 'Sillas', department: 'Muebles' },
-  { id: 'c18', name: 'Mesas', department: 'Muebles' },
-  { id: 'c19', name: 'Celulares', department: 'Telefonía' },
-  { id: 'c20', name: 'Accesorios', department: 'Telefonía' },
-  { id: 'c21', name: 'Laptops', department: 'Computación' },
-  { id: 'c22', name: 'Mouse', department: 'Computación' },
-  { id: 'c23', name: 'Juegos de mesa', department: 'Juguetería' },
-  { id: 'c24', name: 'Cuadernos', department: 'Librería' },
+  { id: crypto.randomUUID(), name: 'Neveras', department: 'Electrodomésticos' },
+  { id: crypto.randomUUID(), name: 'Lavadoras', department: 'Electrodomésticos' },
+  { id: crypto.randomUUID(), name: 'Cocinas', department: 'Electrodomésticos' },
+  { id: crypto.randomUUID(), name: 'Herramientas', department: 'Ferretería' },
+  { id: crypto.randomUUID(), name: 'Tornillería', department: 'Ferretería' },
+  { id: crypto.randomUUID(), name: 'Pinturas', department: 'Ferretería' },
+  { id: crypto.randomUUID(), name: 'Ropa', department: 'Textil' },
+  { id: crypto.randomUUID(), name: 'Sábanas', department: 'Textil' },
+  { id: crypto.randomUUID(), name: 'Zapatos', department: 'Calzado' },
+  { id: crypto.randomUUID(), name: 'Sandalias', department: 'Calzado' },
+  { id: crypto.randomUUID(), name: 'Jabones', department: 'Higiene' },
+  { id: crypto.randomUUID(), name: 'Champús', department: 'Higiene' },
+  { id: crypto.randomUUID(), name: 'Granos', department: 'Alimentos' },
+  { id: crypto.randomUUID(), name: 'Enlatados', department: 'Alimentos' },
+  { id: crypto.randomUUID(), name: 'Refrescos', department: 'Bebidas' },
+  { id: crypto.randomUUID(), name: 'Licores', department: 'Bebidas' },
+  { id: crypto.randomUUID(), name: 'Sillas', department: 'Muebles' },
+  { id: crypto.randomUUID(), name: 'Mesas', department: 'Muebles' },
+  { id: crypto.randomUUID(), name: 'Celulares', department: 'Telefonía' },
+  { id: crypto.randomUUID(), name: 'Accesorios', department: 'Telefonía' },
+  { id: crypto.randomUUID(), name: 'Laptops', department: 'Computación' },
+  { id: crypto.randomUUID(), name: 'Mouse', department: 'Computación' },
+  { id: crypto.randomUUID(), name: 'Juegos de mesa', department: 'Juguetería' },
+  { id: crypto.randomUUID(), name: 'Cuadernos', department: 'Librería' },
 ];
 
 // --- Definición del Store ---
@@ -1074,6 +1074,7 @@ export const useStore = create<AppState>()(
       if (newTransaction.payments && newTransaction.payments.length > 0) {
         await supabase.from('transaction_payments').insert(
           newTransaction.payments.map((p: any) => ({
+            id: crypto.randomUUID(),
             transaction_id: newTransaction.id,
             currency_code: p.currencyCode,
             amount: p.amount,
@@ -1088,6 +1089,7 @@ export const useStore = create<AppState>()(
       if (newTransaction.items && newTransaction.items.length > 0) {
         await supabase.from('transaction_items').insert(
           newTransaction.items.map((i: any) => ({
+            id: crypto.randomUUID(),
             transaction_id: newTransaction.id,
             cart_item_id: i.id,
             product_id: i.product.id,

@@ -39,7 +39,7 @@ export default function Customers() {
       });
     } else {
       addCustomer({
-        id: `cust-${Date.now()}`,
+        id: crypto.randomUUID(),
         name: newCustomer.name,
         email: newCustomer.email,
         phone: newCustomer.phone,
