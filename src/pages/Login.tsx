@@ -1,76 +1,98 @@
 import React, { useState } from "react";
-import { Store, LogIn, Lock } from "lucide-react";
+import { Store, LogIn, Lock, Mail, ShieldCheck } from "lucide-react";
 import { useStore } from "../store/useStore";
+import { motion } from "motion/react";
 
 export default function Login() {
   const { login } = useStore();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isHovered, setIsHovered] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     const success = login(email, password);
     if (!success) {
-      setError("Credenciales incorrectas. (Intenta con admin@tienda.com / admin)");
+      setError("Credenciales incorrectas. Verifica tu correo y contraseña.");
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-3xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-500">
-        <div className="bg-indigo-600 p-8 text-center text-white">
-          <div className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <Store className="w-8 h-8 text-white" />
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 selection:bg-indigo-100 selection:text-indigo-900">
+      <motion.div 
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: "easeOut" }}
+        className="max-w-[400px] w-full"
+      >
+        {/* Logo and Header */}
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-12 h-12 bg-indigo-600 rounded-lg shadow-sm mb-4">
+            <Store className="w-6 h-6 text-white" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">Sistema Empresarial</h1>
-          <p className="text-indigo-200 mt-2 text-sm">Inicia sesión para continuar</p>
+          <h1 className="text-2xl font-semibold text-slate-900 mb-1">
+            Iniciar sesión
+          </h1>
+          <p className="text-slate-500 text-sm">Continuar a Sistema POS</p>
         </div>
-        
-        <form onSubmit={handleSubmit} className="p-8 space-y-6">
-          {error && (
-            <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-medium text-center">
-              {error}
+
+        {/* Login Card */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 md:p-8">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {error && (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-red-50 border border-red-100 text-red-600 p-3 rounded-lg text-sm flex items-start gap-2"
+              >
+                <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>{error}</span>
+              </motion.div>
+            )}
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Email</label>
+              <input 
+                type="email" 
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm placeholder:text-slate-400 text-slate-900 shadow-sm"
+                placeholder="usuario@empresa.com"
+              />
             </div>
-          )}
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Correo Electrónico</label>
-            <input 
-              type="email" 
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-              placeholder="admin@tienda.com"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Contraseña</label>
-            <div className="relative">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Contraseña</label>
               <input 
                 type="password" 
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm placeholder:text-slate-400 text-slate-900 shadow-sm"
                 placeholder="••••••••"
               />
-              <Lock className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
             </div>
-          </div>
 
-          <button 
-            type="submit"
-            className="w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 active:scale-[0.98] transition-all"
-          >
-            <LogIn className="w-5 h-5" />
-            Ingresar
-          </button>
-        </form>
-      </div>
+            <button 
+              type="submit"
+              className="w-full py-2.5 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm flex items-center justify-center gap-2 mt-2"
+            >
+              Iniciar sesión
+            </button>
+          </form>
+        </div>
+
+        {/* Branding Footer */}
+        <div className="mt-8 text-center">
+          <p className="text-slate-500 text-xs">
+            Creado por <span className="font-semibold text-slate-900">NEXUS <span className="text-indigo-600">SOFTWARE</span></span>
+          </p>
+        </div>
+      </motion.div>
     </div>
   );
 }
+

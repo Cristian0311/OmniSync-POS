@@ -14,7 +14,7 @@ export default function Inventory() {
   const { 
     products, inventory, branches, addProduct, updateProduct, 
     transferInventory, setInventoryQuantity, deleteProduct, deleteCategory,
-    transfers, categories, batchDeleteProducts, batchUpdateProducts, getBaseCurrency 
+    transfers, categories, batchDeleteProducts, batchUpdateProducts, getBaseCurrency, currencies
   } = useStore();
   const baseCurrency = getBaseCurrency();
 
@@ -217,10 +217,22 @@ export default function Inventory() {
     return filtered;
   }, [products, inventory, searchQuery, selectedBranch, selectedCategory, stockFilter]);
 
-  const formatMoney = (amount: number) => {
-    const formatted = amount.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return `${baseCurrency.symbol} ${formatted}`;
+  const formatMoney = (amount: number, currency = baseCurrency) => {
+    const converted = currency.isBase ? amount : amount / (currency.rateToBase || 1);
+    const formatted = converted.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return `${currency.symbol} ${formatted}`;
   };
+
+  const MultiCurrencyDisplay = ({ amount }: { amount: number }) => (
+    <div className="flex flex-col gap-0.5 mt-0.5">
+      {currencies.map(c => (
+        <div key={c.code} className={cn("flex justify-between items-center text-[9px]", c.isBase ? "font-black text-slate-900" : "font-bold text-slate-500")}>
+          <span>{formatMoney(amount, c)}</span>
+          <span className="text-[7px]">{c.code}</span>
+        </div>
+      ))}
+    </div>
+  );
 
   const stats = useMemo(() => {
     const activeProducts = inventoryView;
@@ -276,23 +288,23 @@ export default function Inventory() {
 
       {/* Summary Cards Lineal - Ultra Compact */}
       <div className="flex flex-wrap gap-2 px-1 overflow-x-auto pb-2 scrollbar-hide">
-        <div className="flex-1 min-w-[110px] bg-white p-2.5 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-0">
+        <div className="flex-1 min-w-[130px] bg-white p-2.5 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-0">
           <span className="text-[7px] font-black uppercase text-slate-400 tracking-widest leading-tight">Tipos de Prod.</span>
           <div className="text-[11px] font-black text-slate-900 leading-tight">{stats.totalProducts.toLocaleString()} tipos</div>
         </div>
-        <div className="flex-1 min-w-[110px] bg-white p-2.5 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-0">
+        <div className="flex-1 min-w-[130px] bg-white p-2.5 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-0">
           <span className="text-[7px] font-black uppercase text-slate-400 tracking-widest leading-tight">Valor Costo</span>
-          <div className="text-[11px] font-black text-slate-900 leading-tight">{formatMoney(stats.totalCostValue)}</div>
+          <MultiCurrencyDisplay amount={stats.totalCostValue} />
         </div>
-        <div className="flex-1 min-w-[110px] bg-white p-2.5 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-0">
+        <div className="flex-1 min-w-[130px] bg-white p-2.5 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-0">
           <span className="text-[7px] font-black uppercase text-slate-400 tracking-widest leading-tight">Valor Venta</span>
-          <div className="text-[11px] font-black text-slate-900 leading-tight">{formatMoney(stats.totalSaleValue)}</div>
+          <MultiCurrencyDisplay amount={stats.totalSaleValue} />
         </div>
-        <div className="flex-1 min-w-[110px] bg-indigo-50 p-2.5 rounded-xl border border-indigo-100 shadow-sm flex flex-col gap-0">
+        <div className="flex-1 min-w-[130px] bg-indigo-50 p-2.5 rounded-xl border border-indigo-100 shadow-sm flex flex-col gap-0">
           <span className="text-[7px] font-black uppercase text-indigo-400 tracking-widest leading-tight">Ganancia Est.</span>
-          <div className="text-[11px] font-black text-indigo-700 leading-tight">{formatMoney(stats.totalProfit)}</div>
+          <MultiCurrencyDisplay amount={stats.totalProfit} />
         </div>
-        <div className="flex-1 min-w-[110px] bg-white p-2.5 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-0">
+        <div className="flex-1 min-w-[130px] bg-white p-2.5 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-0">
           <span className="text-[7px] font-black uppercase text-rose-400 tracking-widest leading-tight">Bajo Stock</span>
           <div className="text-[11px] font-black text-rose-600 leading-tight">{stats.lowStockCount} alertas</div>
         </div>
@@ -504,8 +516,8 @@ export default function Inventory() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="text-[10px] font-black text-slate-900 whitespace-nowrap">CUP {item.price.toLocaleString()}</div>
-                      <div className="text-[8px] text-emerald-600 font-black whitespace-nowrap">GAN: CUP {item.margin.toLocaleString()}</div>
+                      <div className="text-[10px] font-black text-slate-900 whitespace-nowrap">{formatMoney(item.price)}</div>
+                      <div className="text-[8px] text-emerald-600 font-black whitespace-nowrap">GAN: {formatMoney(item.margin)}</div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col gap-1.5">
@@ -645,7 +657,7 @@ export default function Inventory() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Precio Venta</p>
-                      <p className="text-sm font-black text-slate-900">CUP {item.price.toLocaleString()}</p>
+                      <p className="text-sm font-black text-slate-900">{formatMoney(item.price)}</p>
                     </div>
                     <div className="text-right">
                       <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Stock</p>

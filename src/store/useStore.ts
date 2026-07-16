@@ -327,13 +327,31 @@ export const useStore = create<AppState>()(
   },
 
   currencies: INITIAL_CURRENCIES,
-  updateCurrencyRate: (code, newRate) => set((state) => ({
-    currencies: state.currencies.map(c => c.code === code ? { ...c, rateToBase: newRate } : c)
-  })),
+  
+  updateCurrencyRate: async (code, newRate) => {
+    set((state) => ({
+      currencies: state.currencies.map(c => c.code === code ? { ...c, rateToBase: newRate } : c)
+    }));
+    try {
+      await supabase.from('settings').upsert({ id: 'global', currencies: get().currencies });
+    } catch (e) {
+      console.error('Error syncing currencies', e);
+    }
+  },
+
   getBaseCurrency: () => get().currencies.find(c => c.isBase) || get().currencies[0],
   
   storeConfig: { storeName: 'Mi Tienda POS', address: 'Calle Principal 123', phone: '+53 51234567', receiptNotes: '¡Gracias por su compra!' },
-  updateStoreConfig: (config) => set({ storeConfig: config }),
+  
+  updateStoreConfig: async (config) => {
+    set({ storeConfig: config });
+    try {
+      await supabase.from('settings').upsert({ id: 'global', store_config: config });
+    } catch (e) {
+      console.error('Error syncing storeConfig', e);
+    }
+  },
+
 
   catalogConfig: { 
     themeColor: '#4f46e5', 
@@ -342,7 +360,16 @@ export const useStore = create<AppState>()(
     showPrices: true,
     visibleBranches: ['b1']
   },
-  updateCatalogConfig: (config) => set({ catalogConfig: config }),
+  
+  updateCatalogConfig: async (config) => {
+    set({ catalogConfig: config });
+    try {
+      await supabase.from('settings').upsert({ id: 'global', catalog_config: config });
+    } catch (e) {
+      console.error('Error syncing catalogConfig', e);
+    }
+  },
+
 
   branches: INITIAL_BRANCHES,
   currentBranchId: INITIAL_BRANCHES[0].id,
@@ -1785,7 +1812,8 @@ export const useStore = create<AppState>()(
         { data: inventoryAuditItemsData },
         { data: quotesData },
         { data: timeShiftsData },
-        { data: salarySettlementsData }
+        { data: salarySettlementsData },
+        { data: settingsData }
       ] = await Promise.all([
         supabase.from('branches').select('*'),
         supabase.from('categories').select('*'),
@@ -1808,7 +1836,8 @@ export const useStore = create<AppState>()(
         supabase.from('inventory_audit_items').select('*'),
         supabase.from('salary_settlements').select('*'),
         supabase.from("quotes").select("*, quote_items(*)"),
-        supabase.from("time_shifts").select("*")
+        supabase.from("time_shifts").select("*"),
+        supabase.from("settings").select("*")
       ]);
 
       set((state) => ({
@@ -2068,8 +2097,20 @@ export const useStore = create<AppState>()(
         })) : state.salarySettlements,
         isInitialized: true
       }));
+
+      if (settingsData && settingsData.length > 0) {
+        const settings = settingsData[0];
+        set({
+          storeConfig: settings.store_config || get().storeConfig,
+          catalogConfig: settings.catalog_config || get().catalogConfig,
+          receiptConfig: settings.receipt_config || get().receiptConfig,
+          currencies: settings.currencies || get().currencies
+        });
+      }
     } catch (error) {
       console.error('Error fetching from Supabase:', error);
+      // Fallback
+    } finally {
       set({ isInitialized: true });
     }
   }

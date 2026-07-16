@@ -86,6 +86,8 @@ export interface StoreConfig {
   address: string;
   phone: string;
   receiptNotes?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface CatalogConfig {

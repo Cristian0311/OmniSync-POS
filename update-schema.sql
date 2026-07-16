@@ -42,3 +42,14 @@ ALTER TABLE salary_settlements ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow all for inventory_audits" ON inventory_audits FOR ALL USING (true);
 CREATE POLICY "Allow all for inventory_audit_items" ON inventory_audit_items FOR ALL USING (true);
 CREATE POLICY "Allow all for salary_settlements" ON salary_settlements FOR ALL USING (true);
+
+-- Añadir tabla de configuración
+create table if not exists settings (
+  id text primary key,
+  store_config jsonb,
+  catalog_config jsonb,
+  receipt_config jsonb,
+  currencies jsonb
+);
+
+-- Habilitar RLS si es necesario (asumimos que la autenticación está controlada por otro mecanismo o no es estricta para leer en este esquema)

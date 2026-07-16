@@ -57,6 +57,20 @@ export default function Reports() {
     return `${currency.symbol} ${formatted}`;
   };
 
+  const MultiCurrencyTotal = ({ amount, className = "" }: { amount: number, className?: string }) => (
+    <div className={`flex flex-col gap-0.5 mt-1 ${className}`}>
+      {currencies.map(c => {
+        const converted = c.isBase ? amount : amount / (c.rateToBase || 1);
+        return (
+          <div key={c.code} className={cn("flex justify-between items-center text-[10px]", c.isBase ? "font-black text-slate-900" : "font-bold text-slate-500")}>
+            <span>{c.symbol} {converted.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span className="text-[8px]">{c.code}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+
   const aiInsights = React.useMemo(() => {
     const productSales: Record<string, number> = {};
     transactions.forEach(tx => {
@@ -218,33 +232,33 @@ export default function Reports() {
       </header>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
+        <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex items-start gap-3">
           <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
             <DollarSign className="w-3.5 h-3.5" />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest truncate">Ingresos Ventas</p>
-            <h3 className="text-base font-black text-slate-900 truncate">{formatMoney(totalSales)}</h3>
+            <MultiCurrencyTotal amount={totalSales} />
           </div>
         </div>
 
-        <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
+        <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex items-start gap-3">
           <div className="w-7 h-7 rounded-lg bg-rose-50 flex items-center justify-center text-rose-600 shrink-0">
             <ArrowDownRight className="w-3.5 h-3.5" />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest truncate">Gastos / Egresos</p>
-            <h3 className="text-base font-black text-slate-900 truncate">{formatMoney(totalExpenses)}</h3>
+            <MultiCurrencyTotal amount={totalExpenses} />
           </div>
         </div>
         
-        <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
+        <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex items-start gap-3">
           <div className="w-7 h-7 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
             <TrendingUp className="w-3.5 h-3.5" />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest truncate">Flujo Neto</p>
-            <h3 className="text-base font-black text-slate-900 truncate">{formatMoney(netFlow)}</h3>
+            <MultiCurrencyTotal amount={netFlow} />
           </div>
         </div>
 
