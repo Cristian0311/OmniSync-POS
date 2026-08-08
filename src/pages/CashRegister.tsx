@@ -166,22 +166,37 @@ export default function CashRegister() {
     if (!session) return;
     
     // Calculate Commissions
-    const sessionTxs = transactions.filter(
-      t => t.branchId === currentBranchId && t.userId === session.userId && new Date(t.date) >= new Date(session.openedAt)
-    );
+    const user = users.find(u => u.id === session.userId);
+    
+    // Si es empleado, tomamos todas las transacciones de la sucursal durante el turno para dividir la comisión
+    // Si es admin, solo tomamos las suyas
+    const sessionTxs = transactions.filter(t => {
+      const isAfterOpen = new Date(t.date) >= new Date(session.openedAt);
+      if (!isAfterOpen) return false;
+      
+      if (user?.role === 'employee') {
+        return t.branchId === currentBranchId;
+      } else {
+        return t.branchId === currentBranchId && t.userId === session.userId;
+      }
+    });
+
+    const branchEmployees = users.filter(u => u.branchId === currentBranchId && u.role === 'employee').length;
+    const splitFactor = branchEmployees > 0 ? branchEmployees : 1;
 
     let totalCommissions = 0;
     sessionTxs.forEach(tx => {
       tx.items.forEach(item => {
+        let itemComm = 0;
         if (item.product.commissionType === 'fixed') {
-          totalCommissions += item.product.commissionValue * item.quantity;
+          itemComm = item.product.commissionValue * item.quantity;
         } else {
-          totalCommissions += (item.product.price * item.product.commissionValue) * item.quantity;
+          itemComm = (item.product.price * (item.product.commissionValue / 100)) * item.quantity;
         }
+        totalCommissions += user?.role === 'employee' ? (itemComm / splitFactor) : itemComm;
       });
     });
 
-    const user = users.find(u => u.id === session.userId);
     const baseSalary = user?.baseSalary || 0;
 
     // Create Settlement

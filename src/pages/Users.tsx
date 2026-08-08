@@ -15,7 +15,7 @@ export default function Users() {
     name: "",
     email: "",
     password: "",
-    role: "cashier",
+    role: "employee",
     baseSalary: 0,
     salesGoal: 0,
     commissionRate: 0,
@@ -39,7 +39,7 @@ export default function Users() {
       id: crypto.randomUUID()
     } as User);
     setShowAddModal(false);
-    setFormData({ name: "", email: "", password: "", role: "cashier", baseSalary: 0, salesGoal: 0, commissionRate: 0, phone: "", branchId: "" });
+    setFormData({ name: "", email: "", password: "", role: "employee", baseSalary: 0, salesGoal: 0, commissionRate: 0, phone: "", branchId: "" });
   };
 
   return (
@@ -80,14 +80,25 @@ export default function Users() {
                 const userTx = todayTransactions.filter(t => t.userId === user.id);
                 const totalVentas = userTx.reduce((sum, t) => sum + t.total, 0);
                 
-                const comision = userTx.reduce((sum, t) => {
+                const branchTx = user.role === 'employee' && user.branchId 
+                  ? todayTransactions.filter(t => t.branchId === user.branchId)
+                  : userTx;
+
+                const comision = branchTx.reduce((sum, t) => {
+                  const branchEmployees = users.filter(u => u.branchId === t.branchId && u.role === 'employee').length;
+                  const splitFactor = branchEmployees > 0 ? branchEmployees : 1;
+
                   const txComission = t.items.reduce((itemSum, item) => {
                     const p = item.product;
+                    let itemComm = 0;
                     if (p.commissionType === 'fixed') {
-                      return itemSum + ((p.commissionValue || 0) * item.quantity);
+                      itemComm = (p.commissionValue || 0) * item.quantity;
                     } else {
-                      return itemSum + ((p.price * ((p.commissionValue || 0) / 100)) * item.quantity);
+                      itemComm = (p.price * ((p.commissionValue || 0) / 100)) * item.quantity;
                     }
+                    // Si el usuario es empleado, obtiene su parte de la comisión de la sucursal
+                    // Si es admin, obtiene su comisión completa de sus propias ventas
+                    return itemSum + (user.role === 'employee' ? (itemComm / splitFactor) : itemComm);
                   }, 0);
                   return sum + txComission;
                 }, 0);
@@ -112,10 +123,9 @@ export default function Users() {
                       <div className="flex flex-col gap-1">
                         <span className={cn(
                           "w-fit px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest",
-                          user.role === 'admin' ? "bg-slate-900 text-white" : 
-                          user.role === 'sub_cashier' ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
+                          user.role === 'admin' ? "bg-slate-900 text-white" : "bg-blue-100 text-blue-700"
                         )}>
-                          {user.role === 'sub_cashier' ? 'Ayudante' : user.role === 'cashier' ? 'Cajero' : 'Admin'}
+                          {user.role === 'employee' ? 'Empleado' : 'Admin'}
                         </span>
                         {user.branchId && (
                           <span className="text-[7px] font-black text-indigo-500 uppercase flex items-center gap-1">
@@ -126,10 +136,9 @@ export default function Users() {
                       </div>
                     </td>
                     <td className="px-6 py-4 font-black text-slate-900 text-xs">
-                      {user.role === 'admin' ? '-' : formatMoney(user.baseSalary || 0)}
+                      {formatMoney(user.baseSalary || 0)}
                     </td>
                     <td className="px-6 py-4">
-                      {user.role !== 'admin' && (
                         <div className="flex flex-col gap-1 items-center">
                           <span className="text-[9px] font-black text-slate-400 uppercase">{formatMoney(user.salesGoal || 0)}</span>
                           <div className="w-24 h-1 bg-slate-100 rounded-full overflow-hidden">
@@ -142,12 +151,11 @@ export default function Users() {
                             />
                           </div>
                         </div>
-                      )}
                     </td>
                     <td className="px-6 py-4 font-black text-slate-900 text-xs">{formatMoney(totalVentas)}</td>
                     <td className="px-6 py-4 font-black text-emerald-600 text-xs">{formatMoney(comision)}</td>
                     <td className="px-6 py-4 font-black text-indigo-600 text-xs">
-                      {user.role === 'admin' ? '-' : formatMoney(pagoTotalHoy)}
+                      {formatMoney(pagoTotalHoy)}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <button 
@@ -305,18 +313,18 @@ export default function Users() {
                   <div>
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Rol</label>
                     <select required value={formData.role} onChange={e => {
-                      const role = e.target.value as 'admin'|'cashier'|'sub_cashier';
-                      setFormData({...formData, role, baseSalary: role === 'admin' ? 0 : formData.baseSalary});
+                      const role = e.target.value as 'admin'|'employee';
+                      setFormData({...formData, role});
                     }} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold">
-                      <option value="cashier">Cajero</option>
-                      <option value="sub_cashier">Ayudante</option>
+                      <option value="employee">Empleado</option>
                       <option value="admin">Administrador</option>
                     </select>
                   </div>
                   <div>
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Sucursal</label>
-                    <select required value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold">
-                      <option value="">Cualquier Sucursal</option>
+                    <select required={formData.role === 'employee'} value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold">
+                      {formData.role === 'admin' && <option value="">Todas las sucursales</option>}
+                      {formData.role === 'employee' && <option value="">Seleccione una sucursal</option>}
                       {branches.map(b => (
                         <option key={b.id} value={b.id}>{b.name}</option>
                       ))}
@@ -324,11 +332,10 @@ export default function Users() {
                   </div>
                 </div>
                 
-                {formData.role !== 'admin' && (
-                  <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-100">
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
-                        <DollarSign className="w-3 h-3" /> Salario (Día)
+                <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                      <DollarSign className="w-3 h-3" /> Salario (Día)
                       </label>
                       <input type="number" required value={formData.baseSalary} onChange={e => setFormData({...formData, baseSalary: parseFloat(e.target.value)})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold" />
                     </div>
@@ -339,7 +346,6 @@ export default function Users() {
                       <input type="number" required value={formData.salesGoal} onChange={e => setFormData({...formData, salesGoal: parseFloat(e.target.value)})} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold" />
                     </div>
                   </div>
-                )}
               </div>
               
               <button type="submit" className="w-full mt-6 bg-indigo-600 text-white font-black uppercase tracking-widest py-3 rounded-xl hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100 active:scale-95 text-[10px]">

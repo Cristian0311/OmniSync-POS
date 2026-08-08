@@ -161,7 +161,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  role: 'admin' | 'cashier' | 'sub_cashier';
+  role: 'admin' | 'employee';
   password?: string;
   commissionRate: number; // Legacy global commission (optional)
   baseSalary: number;
