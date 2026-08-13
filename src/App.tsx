@@ -71,9 +71,9 @@ export default function App() {
     <Router>
       <Routes>
         <Route path="/shop" element={<CustomerShop />} />
+        <Route path="/register" element={<RegisterAdmin />} />
         
         <Route path="/*" element={
-          needsAdminRegistration ? <RegisterAdmin /> :
           !currentUser ? <Login /> : (
             <Layout>
               <Routes>

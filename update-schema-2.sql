@@ -1,10 +1,26 @@
+-- Fix users table if missing columns
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sales_goal numeric default 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS status text not null default 'active';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at timestamp with time zone default timezone('utc'::text, now()) not null;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS supervisor_id text REFERENCES users(id);
-ALTER TABLE branches ADD COLUMN IF NOT EXISTS phone text;
 
+-- Fix inventory_levels if missing variant tracking
 ALTER TABLE inventory_levels ADD COLUMN IF NOT EXISTS variant_label text;
 ALTER TABLE inventory_levels ADD COLUMN IF NOT EXISTS min_quantity integer DEFAULT 5;
-ALTER TABLE inventory_levels ADD UNIQUE (product_id, branch_id, variant_label);
+-- We need to drop existing unique constraints on inventory_levels if they exist and recreate
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'inventory_levels_product_branch_variant_key') THEN
+    ALTER TABLE inventory_levels ADD CONSTRAINT inventory_levels_product_branch_variant_key UNIQUE (product_id, branch_id, variant_label);
+  END IF;
+END $$;
 
+-- Fix branches table
+ALTER TABLE branches ADD COLUMN IF NOT EXISTS phone text;
+
+-- Add new tables
 CREATE TABLE IF NOT EXISTS inventory_audits (
   id text primary key,
   date timestamp with time zone not null,
@@ -40,21 +56,11 @@ CREATE TABLE IF NOT EXISTS salary_settlements (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
-ALTER TABLE inventory_audits ENABLE ROW LEVEL SECURITY;
-ALTER TABLE inventory_audit_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE salary_settlements ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Allow all for inventory_audits" ON inventory_audits FOR ALL USING (true);
-CREATE POLICY "Allow all for inventory_audit_items" ON inventory_audit_items FOR ALL USING (true);
-CREATE POLICY "Allow all for salary_settlements" ON salary_settlements FOR ALL USING (true);
-
--- Añadir tabla de configuración
-create table if not exists settings (
+-- Configs
+CREATE TABLE IF NOT EXISTS settings (
   id text primary key,
   store_config jsonb,
   catalog_config jsonb,
   receipt_config jsonb,
   currencies jsonb
 );
-
--- Habilitar RLS si es necesario (asumimos que la autenticación está controlada por otro mecanismo o no es estricta para leer en este esquema)

@@ -285,7 +285,8 @@ export const useStore = create<AppState>()(
         sales_goal: user.salesGoal || 0,
         phone: user.phone || null,
         branch_id: user.branchId || null,
-        supervisor_id: user.supervisorId || null
+        supervisor_id: user.supervisorId || null,
+        status: 'active'
       }]);
     } catch (error) {
       console.error('Error adding user to Supabase:', error);
@@ -346,7 +347,7 @@ export const useStore = create<AppState>()(
   updateStoreConfig: async (config) => {
     set({ storeConfig: config });
     try {
-      await supabase.from('settings').upsert({ id: 'global', store_config: config });
+      await supabase.from('settings').upsert({ id: 'global', store_config: config }).throwOnError();
     } catch (e) {
       console.error('Error syncing storeConfig', e);
     }
@@ -364,7 +365,7 @@ export const useStore = create<AppState>()(
   updateCatalogConfig: async (config) => {
     set({ catalogConfig: config });
     try {
-      await supabase.from('settings').upsert({ id: 'global', catalog_config: config });
+      await supabase.from('settings').upsert({ id: 'global', catalog_config: config }).throwOnError();
     } catch (e) {
       console.error('Error syncing catalogConfig', e);
     }
@@ -380,7 +381,8 @@ export const useStore = create<AppState>()(
       await supabase.from('branches').insert([{
         id: branch.id,
         name: branch.name,
-        address: branch.address
+        address: branch.address,
+        phone: branch.phone
       }]);
     } catch (error) {
       console.error('Error adding branch:', error);
@@ -394,6 +396,7 @@ export const useStore = create<AppState>()(
       const updateData: any = {};
       if (branch.name !== undefined) updateData.name = branch.name;
       if (branch.address !== undefined) updateData.address = branch.address;
+      if (branch.phone !== undefined) updateData.phone = branch.phone;
       
       if (Object.keys(updateData).length > 0) {
         await supabase.from('branches').update(updateData).eq('id', id);
@@ -487,7 +490,7 @@ export const useStore = create<AppState>()(
 
     // Sync to Supabase
     try {
-      await supabase.from('products').insert([{
+      const { error } = await supabase.from('products').insert([{
         id: product.id,
         name: product.name,
         sku: product.sku,
@@ -495,7 +498,7 @@ export const useStore = create<AppState>()(
         cost_price: product.costPrice,
         price: product.price,
         margin: product.margin,
-        category_id: product.categoryId !== 'General' ? product.categoryId : null,
+        category_id: product.categoryId && product.categoryId !== 'General' ? product.categoryId : null,
         color: product.color,
         commission_type: product.commissionType,
         commission_value: product.commissionValue,
@@ -512,9 +515,12 @@ export const useStore = create<AppState>()(
         image: product.image || null
       }]);
 
+      if (error) throw error;
+
       if (newInventoryEntries.length > 0) {
         await supabase.from('inventory_levels').insert(
           newInventoryEntries.map(i => ({
+            id: crypto.randomUUID(),
             product_id: i.productId,
             branch_id: i.branchId,
             variant_label: i.variantLabel || null,
@@ -539,7 +545,7 @@ export const useStore = create<AppState>()(
       if (product.costPrice !== undefined) updateData.cost_price = product.costPrice;
       if (product.price !== undefined) updateData.price = product.price;
       if (product.margin !== undefined) updateData.margin = product.margin;
-      if (product.categoryId !== undefined) updateData.category_id = product.categoryId !== 'General' ? product.categoryId : null;
+      if (product.categoryId !== undefined) updateData.category_id = product.categoryId && product.categoryId !== 'General' ? product.categoryId : null;
       if (product.color !== undefined) updateData.color = product.color;
       if (product.commissionType !== undefined) updateData.commission_type = product.commissionType;
       if (product.commissionValue !== undefined) updateData.commission_value = product.commissionValue;
@@ -605,6 +611,7 @@ export const useStore = create<AppState>()(
         // Update Supabase
         await Promise.all([
           supabase.from('inventory_levels').upsert({
+            id: crypto.randomUUID(),
             product_id: productId,
             branch_id: fromBranchId,
             variant_label: variantLabel || null,
@@ -612,6 +619,7 @@ export const useStore = create<AppState>()(
             min_quantity: 5
           }, { onConflict: 'product_id, branch_id, variant_label' }),
           supabase.from('inventory_levels').upsert({
+            id: crypto.randomUUID(),
             product_id: productId,
             branch_id: toBranchId,
             variant_label: variantLabel || null,
@@ -694,6 +702,7 @@ export const useStore = create<AppState>()(
         // Update Supabase
         await Promise.all(updates.map(update => 
           supabase.from('inventory_levels').upsert({
+            id: crypto.randomUUID(),
             product_id: productId,
             branch_id: update.branchId,
             variant_label: update.variantLabel || null,
@@ -750,7 +759,7 @@ export const useStore = create<AppState>()(
       if (updates.costPrice !== undefined) updateData.cost_price = updates.costPrice;
       if (updates.price !== undefined) updateData.price = updates.price;
       if (updates.margin !== undefined) updateData.margin = updates.margin;
-      if (updates.categoryId !== undefined) updateData.category_id = updates.categoryId !== 'General' ? updates.categoryId : null;
+      if (updates.categoryId !== undefined) updateData.category_id = updates.categoryId && updates.categoryId !== 'General' ? updates.categoryId : null;
       if (updates.color !== undefined) updateData.color = updates.color;
       if (updates.commissionType !== undefined) updateData.commission_type = updates.commissionType;
       if (updates.commissionValue !== undefined) updateData.commission_value = updates.commissionValue;
@@ -800,6 +809,7 @@ export const useStore = create<AppState>()(
 
     try {
       await supabase.from('inventory_levels').upsert({
+        id: crypto.randomUUID(),
         product_id: productId,
         branch_id: branchId,
         variant_label: variantLabel || null,
@@ -830,6 +840,7 @@ export const useStore = create<AppState>()(
 
     try {
       await supabase.from('inventory_levels').upsert({
+        id: crypto.randomUUID(),
         product_id: productId,
         branch_id: branchId,
         variant_label: variantLabel || null,
@@ -956,7 +967,7 @@ export const useStore = create<AppState>()(
         variant_label: item.variantLabel || null
       }));
       if (quoteItems.length > 0) {
-        await supabase.from("quote_items").insert(quoteItems);
+        await supabase.from("quote_items").insert(quoteItems).throwOnError();
       }
     } catch (e) { console.error("Error saving quote", e); }
   },
@@ -1121,6 +1132,9 @@ export const useStore = create<AppState>()(
             cart_item_id: i.id,
             product_id: i.product.id,
             quantity: i.quantity,
+            price: i.product.price || 0,
+            cost: i.product.costPrice || 0,
+            tax: 0,
             serial_number: i.serialNumber || null,
             warranty_code: i.warrantyCode || null,
             selected_size: i.selectedSize || null,
@@ -1140,6 +1154,7 @@ export const useStore = create<AppState>()(
       if (modifiedInventory.length > 0) {
         await supabase.from('inventory_levels').upsert(
           modifiedInventory.map(i => ({
+            id: crypto.randomUUID(),
             product_id: i.productId,
             branch_id: i.branchId,
             variant_label: i.variantLabel || null,
@@ -1252,6 +1267,7 @@ export const useStore = create<AppState>()(
         
         if (modifiedInventory) {
           await supabase.from('inventory_levels').upsert({
+            id: crypto.randomUUID(),
             product_id: modifiedInventory.productId,
             branch_id: modifiedInventory.branchId,
             variant_label: modifiedInventory.variantLabel || null,
@@ -1423,6 +1439,7 @@ export const useStore = create<AppState>()(
       if (o.items && o.items.length > 0) {
         await supabase.from('supplier_order_items').insert(
           o.items.map((i: any) => ({
+            id: crypto.randomUUID(),
             order_id: o.id,
             product_id: i.productId,
             product_name: i.productName,
@@ -1496,6 +1513,7 @@ export const useStore = create<AppState>()(
       if (a.items && a.items.length > 0) {
         await supabase.from('inventory_audit_items').insert(
           a.items.map((i: any) => ({
+            id: crypto.randomUUID(),
             audit_id: a.id,
             product_id: i.productId,
             product_name: i.productName,
@@ -1539,6 +1557,7 @@ export const useStore = create<AppState>()(
         await supabase.from('inventory_audit_items').delete().eq('audit_id', id);
         await supabase.from('inventory_audit_items').insert(
           items.map((i: any) => ({
+            id: crypto.randomUUID(),
             audit_id: id,
             product_id: i.productId,
             product_name: i.productName,
@@ -1846,7 +1865,7 @@ export const useStore = create<AppState>()(
           id: b.id,
           name: b.name,
           address: b.address || '',
-          phone: '', 
+          phone: b.phone || '', 
         })) : state.branches,
         categories: categoriesData?.length ? categoriesData.map(c => ({
           id: c.id,
@@ -1925,9 +1944,25 @@ export const useStore = create<AppState>()(
             bankCardId: p.bank_card_id || undefined
           })) : [],
           items: t.transaction_items ? t.transaction_items.map((i: any) => {
-            const product = state.products.find(p => p.id === i.product_id) || productsData?.map(p => ({
+            let product = state.products.find(p => p.id === i.product_id) || productsData?.map(p => ({
               id: p.id, name: p.name, sku: p.sku, price: p.price, costPrice: p.cost_price, margin: p.margin, categoryId: p.category_id, color: p.color, commissionType: p.commission_type, commissionValue: p.commission_value
             })).find(p => p.id === i.product_id); // Fallback to raw data mapping if not fully loaded yet in state
+            
+            if (!product) {
+              product = {
+                id: i.product_id,
+                name: 'Producto Eliminado',
+                sku: 'N/A',
+                price: i.price || 0,
+                costPrice: i.cost || 0,
+                margin: 0,
+                categoryId: '',
+                color: 'bg-slate-100',
+                commissionType: 'percentage',
+                commissionValue: 0
+              };
+            }
+
             return {
               id: i.cart_item_id || i.id,
               product: product as any, // Mapped locally
