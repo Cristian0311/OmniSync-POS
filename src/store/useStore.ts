@@ -272,12 +272,18 @@ export const useStore = create<AppState>()(
     });
   },
   addUser: async (user) => {
+    // Check if user already exists in local state to avoid UI duplication
+    const exists = get().users.find(u => u.email.toLowerCase() === user.email.toLowerCase());
+    if (exists) {
+      return get().updateUser(exists.id, user);
+    }
+
     set((state) => ({ users: [...state.users, user] }));
     try {
-      await supabase.from('users').insert([{
+      const { error } = await supabase.from('users').upsert([{
         id: user.id,
         name: user.name,
-        email: user.email,
+        email: user.email.toLowerCase().trim(),
         role: user.role,
         password: user.password || null,
         commission_rate: user.commissionRate,
@@ -287,9 +293,11 @@ export const useStore = create<AppState>()(
         branch_id: user.branchId || null,
         supervisor_id: user.supervisorId || null,
         status: 'active'
-      }]);
+      }], { onConflict: 'email' });
+
+      if (error) throw error;
     } catch (error) {
-      console.error('Error adding user to Supabase:', error);
+      console.error('Error adding/updating user in Supabase:', error);
     }
   },
   updateUser: async (id, user) => {
@@ -587,12 +595,12 @@ export const useStore = create<AppState>()(
     set((state) => {
       const newInventory = [...state.inventory];
       
-      const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && i.variantLabel === variantLabel);
+      const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === (variantLabel || ''));
       if (sourceIdx !== -1 && newInventory[sourceIdx].quantity >= quantity) {
         newSourceQty = newInventory[sourceIdx].quantity - quantity;
         newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newSourceQty };
         
-        const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && i.variantLabel === variantLabel);
+        const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && (i.variantLabel || '') === (variantLabel || ''));
         if (targetIdx !== -1) {
           newTargetQty = newInventory[targetIdx].quantity + quantity;
           newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newTargetQty };
@@ -664,7 +672,7 @@ export const useStore = create<AppState>()(
       // Check if we have enough stock for all variants
       for (const v of variants) {
         if (v.quantity <= 0) continue;
-        const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && i.variantLabel === v.variantLabel);
+        const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === (v.variantLabel || ''));
         if (sourceIdx === -1 || newInventory[sourceIdx].quantity < v.quantity) {
           allValid = false;
           break;
@@ -675,13 +683,13 @@ export const useStore = create<AppState>()(
         for (const v of variants) {
           if (v.quantity <= 0) continue;
           totalQuantity += v.quantity;
-          const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && i.variantLabel === v.variantLabel);
+          const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === (v.variantLabel || ''));
           const newSourceQty = newInventory[sourceIdx].quantity - v.quantity;
           newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newSourceQty };
           
           updates.push({ branchId: fromBranchId, variantLabel: v.variantLabel, quantity: newSourceQty });
 
-          const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && i.variantLabel === v.variantLabel);
+          const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && (i.variantLabel || '') === (v.variantLabel || ''));
           if (targetIdx !== -1) {
             const newTargetQty = newInventory[targetIdx].quantity + v.quantity;
             newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newTargetQty };
@@ -787,7 +795,7 @@ export const useStore = create<AppState>()(
     
     set((state) => {
       const newInventory = [...state.inventory];
-      const idx = newInventory.findIndex(i => i.productId === productId && i.branchId === branchId && i.variantLabel === variantLabel);
+      const idx = newInventory.findIndex(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
       if (idx !== -1) {
         newQty = Math.max(0, newInventory[idx].quantity + delta);
         if (minQuantity !== undefined) newMinQty = minQuantity;
@@ -824,7 +832,7 @@ export const useStore = create<AppState>()(
     let newMinQty = minQuantity ?? 5;
     set((state) => {
       const newInventory = [...state.inventory];
-      const idx = newInventory.findIndex(i => i.productId === productId && i.branchId === branchId && i.variantLabel === variantLabel);
+      const idx = newInventory.findIndex(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
       if (idx !== -1) {
         if (minQuantity === undefined) newMinQty = newInventory[idx].minQuantity;
         newInventory[idx] = { 
@@ -893,7 +901,7 @@ export const useStore = create<AppState>()(
       !item.serialNumber &&
       item.selectedSize === attributes?.size &&
       item.selectedColor === attributes?.color &&
-      item.variantLabel === (attributes?.variantLabel || attributes?.size || attributes?.color)
+      (item.variantLabel || '') === ((attributes?.variantLabel || attributes?.size || attributes?.color) || '')
     );
     
     if (existing) {
@@ -1065,7 +1073,7 @@ export const useStore = create<AppState>()(
           const idx = updatedInventory.findIndex(i => 
             i.productId === item.product.id && 
             i.branchId === transaction.branchId &&
-            i.variantLabel === item.variantLabel
+            (i.variantLabel || '') === (item.variantLabel || '')
           );
           if (idx !== -1) {
             updatedInventory[idx] = { 
@@ -1148,7 +1156,7 @@ export const useStore = create<AppState>()(
       // A more robust way would be to just upsert the ones that changed
       // but for now we can rely on adjustInventory or just upsert the modified rows
       const modifiedInventory = updatedInventory.filter(ui => 
-        transaction.items.some(ti => ti.product.id === ui.productId && ti.variantLabel === ui.variantLabel)
+        transaction.items.some(ti => ti.product.id === ui.productId && (ti.variantLabel || '') === (ui.variantLabel || ''))
         || transaction.items.some(ti => ti.product.isKit && ti.product.kitComponents?.some(kc => kc.productId === ui.productId))
       );
       if (modifiedInventory.length > 0) {

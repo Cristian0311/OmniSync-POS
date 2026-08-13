@@ -214,7 +214,7 @@ export default function Transfers() {
                       <div className="max-h-48 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
                         {/* We merge sizes and colors for this view as variants */}
                         {Array.from(new Set([...(selectedProduct.availableSizes || []), ...(selectedProduct.availableColors || [])])).map(variant => {
-                          const currentStock = inventory.find(i => i.productId === selectedProduct.id && i.branchId === formData.fromBranchId && i.variantLabel === variant)?.quantity || 0;
+                          const currentStock = inventory.find(i => i.productId === selectedProduct.id && i.branchId === formData.fromBranchId && (i.variantLabel || '') === (variant || ''))?.quantity || 0;
                           return (
                             <div key={variant} className="flex justify-between items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
                               <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight ml-2">{variant} <span className="text-slate-400 ml-1 font-bold">(Stock: {currentStock})</span></span>

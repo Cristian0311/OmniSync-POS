@@ -1167,7 +1167,7 @@ export default function Inventory() {
                         const level = inventory.find(i => 
                           i.productId === managingStockProduct.id && 
                           i.branchId === branch.id && 
-                          i.variantLabel === variant
+                          (i.variantLabel || '') === (variant || '')
                         ) || { quantity: 0, minQuantity: 5 };
 
                         return (

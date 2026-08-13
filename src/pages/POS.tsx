@@ -124,7 +124,7 @@ export default function POS() {
 
   const getProductStock = (productId: string, variantLabel?: string) => {
     if (variantLabel) {
-      const variantStock = inventory.find(i => i.productId === productId && i.branchId === currentBranchId && i.variantLabel === variantLabel);
+      const variantStock = inventory.find(i => i.productId === productId && i.branchId === currentBranchId && (i.variantLabel || '') === (variantLabel || ''));
       return variantStock ? variantStock.quantity : 0;
     }
     // Si no hay variante, sumamos todo el stock del producto en la sucursal
@@ -135,7 +135,7 @@ export default function POS() {
 
   const getCartQuantity = (productId: string, variantLabel?: string) => {
     return cart
-      .filter(item => item.product.id === productId && item.variantLabel === variantLabel)
+      .filter(item => item.product.id === productId && (item.variantLabel || '') === (variantLabel || ''))
       .reduce((sum, item) => sum + item.quantity, 0);
   };
 
