@@ -97,8 +97,11 @@ interface AppState {
   deleteProduct: (id: string) => void;
   batchDeleteProducts: (ids: string[]) => void;
   batchUpdateProducts: (ids: string[], updates: Partial<Product>) => void;
-  transferInventory: (productId: string, fromBranchId: string, toBranchId: string, quantity: number, variantLabel?: string) => Promise<boolean>;
-  transferInventoryBatch: (productId: string, fromBranchId: string, toBranchId: string, variants: { variantLabel: string; quantity: number }[]) => Promise<boolean>;
+  fetchProductStockRealtime: (productId: string) => Promise<InventoryLevel[]>;
+  transferInventory: (productId: string, fromBranchId: string, toBranchId: string, quantity: number, variantLabel?: string) => Promise<{ success: boolean; error?: string } | boolean>;
+  transferInventoryBatch: (productId: string, fromBranchId: string, toBranchId: string, variants: { variantLabel: string; quantity: number }[]) => Promise<{ success: boolean; error?: string }>;
+  reconcileProductStock: (productId: string, corrections: { branchId: string; variantLabel?: string; quantity: number; minQuantity?: number }[]) => Promise<{ success: boolean; error?: string }>;
+  repairOrphanedInventoryLevels: () => Promise<{ repaired: number; message: string }>;
   adjustInventory: (productId: string, branchId: string, delta: number, variantLabel?: string, minQuantity?: number) => void;
   setInventoryQuantity: (productId: string, branchId: string, quantity: number, variantLabel?: string, minQuantity?: number) => void;
   
@@ -590,165 +593,314 @@ export const useStore = create<AppState>()(
       console.error('Error deleting product from Supabase:', error);
     }
   },
-  transferInventory: async (productId, fromBranchId, toBranchId, quantity, variantLabel) => {
-    let success = false;
-    let sourceItem: any = null;
-    let targetItem: any = null;
-    
-    set((state) => {
-      const newInventory = [...state.inventory];
+  fetchProductStockRealtime: async (productId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('inventory_levels')
+        .select('*')
+        .eq('product_id', productId);
       
-      const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === (variantLabel || ''));
-      if (sourceIdx !== -1 && newInventory[sourceIdx].quantity >= quantity) {
-        const newSourceQty = newInventory[sourceIdx].quantity - quantity;
-        newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newSourceQty };
-        sourceItem = newInventory[sourceIdx];
-        
-        const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && (i.variantLabel || '') === (variantLabel || ''));
-        if (targetIdx !== -1) {
-          const newTargetQty = newInventory[targetIdx].quantity + quantity;
-          newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newTargetQty };
-          targetItem = newInventory[targetIdx];
-        } else {
-          targetItem = { id: crypto.randomUUID(), productId, branchId: toBranchId, quantity, minQuantity: 5, variantLabel };
-          newInventory.push(targetItem);
-        }
-        success = true;
+      if (error) {
+        console.error('Error fetching real-time product stock from Supabase:', error);
+        return get().inventory.filter(i => i.productId === productId);
       }
-      
-      return { inventory: newInventory };
-    });
 
-    if (success && sourceItem && targetItem) {
-      try {
-        // Update Supabase
-        await Promise.all([
-          supabase.from('inventory_levels').upsert({
-            id: sourceItem.id || crypto.randomUUID(),
-            product_id: sourceItem.productId,
-            branch_id: sourceItem.branchId,
-            variant_label: sourceItem.variantLabel || null,
-            quantity: sourceItem.quantity,
-            min_quantity: sourceItem.minQuantity || 5
-          }),
-          supabase.from('inventory_levels').upsert({
-            id: targetItem.id || crypto.randomUUID(),
-            product_id: targetItem.productId,
-            branch_id: targetItem.branchId,
-            variant_label: targetItem.variantLabel || null,
-            quantity: targetItem.quantity,
-            min_quantity: targetItem.minQuantity || 5
-          })
-        ]);
+      if (data) {
+        const mappedLevels: InventoryLevel[] = data.map((i: any) => ({
+          id: i.id,
+          productId: i.product_id,
+          branchId: i.branch_id,
+          variantLabel: i.variant_label || undefined,
+          quantity: Number(i.quantity) || 0,
+          minQuantity: Number(i.min_quantity) || 5
+        }));
 
-        const product = get().products.find(p => p.id === productId);
-        const fromBranch = get().branches.find(b => b.id === fromBranchId);
-        const toBranch = get().branches.find(b => b.id === toBranchId);
-        
-        get().addTransfer({
-          id: crypto.randomUUID(),
-          productId,
-          productName: product?.name || 'Producto',
-          fromBranchId,
-          fromBranchName: fromBranch?.name || 'Sucursal',
-          toBranchId,
-          toBranchName: toBranch?.name || 'Sucursal',
-          quantity,
-          date: new Date().toISOString(),
-          userId: get().currentUser?.id || 'system',
-          status: 'completed',
-          variantLabel
+        set(state => {
+          const otherInventory = state.inventory.filter(i => i.productId !== productId);
+          return { inventory: [...otherInventory, ...mappedLevels] };
         });
-      } catch (error) {
-        console.error('Error in transferInventory sync:', error);
+
+        return mappedLevels;
       }
+    } catch (e) {
+      console.error('Exception fetching product stock:', e);
     }
-    return success;
+    return get().inventory.filter(i => i.productId === productId);
   },
+
+  transferInventory: async (productId, fromBranchId, toBranchId, quantity, variantLabel) => {
+    const res = await get().transferInventoryBatch(
+      productId,
+      fromBranchId,
+      toBranchId,
+      [{ variantLabel: variantLabel || '', quantity }]
+    );
+    return res.success;
+  },
+
   transferInventoryBatch: async (productId, fromBranchId, toBranchId, variants) => {
-    let success = false;
-    let totalQuantity = 0;
-    const upsertItems: any[] = [];
-    
-    set((state) => {
-      const newInventory = [...state.inventory];
-      let allValid = true;
+    if (!productId || !fromBranchId || !toBranchId) {
+      return { success: false, error: 'Información incompleta para realizar la transferencia.' };
+    }
+    if (fromBranchId === toBranchId) {
+      return { success: false, error: 'La sucursal de origen y destino no pueden ser la misma.' };
+    }
+    const activeVariants = variants.filter(v => v.quantity > 0);
+    if (activeVariants.length === 0) {
+      return { success: false, error: 'Debes indicar una cantidad mayor a 0 para transferir.' };
+    }
 
-      // Check if we have enough stock for all variants
-      for (const v of variants) {
-        if (v.quantity <= 0) continue;
-        const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === (v.variantLabel || ''));
-        if (sourceIdx === -1 || newInventory[sourceIdx].quantity < v.quantity) {
-          allValid = false;
-          break;
-        }
-      }
-
-      if (allValid && variants.length > 0) {
-        for (const v of variants) {
-          if (v.quantity <= 0) continue;
-          totalQuantity += v.quantity;
-          const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === (v.variantLabel || ''));
-          const newSourceQty = newInventory[sourceIdx].quantity - v.quantity;
-          newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newSourceQty };
-          
-          upsertItems.push(newInventory[sourceIdx]);
-
-          const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && (i.variantLabel || '') === (v.variantLabel || ''));
-          if (targetIdx !== -1) {
-            const newTargetQty = newInventory[targetIdx].quantity + v.quantity;
-            newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newTargetQty };
-            upsertItems.push(newInventory[targetIdx]);
-          } else {
-            const newItem = { id: crypto.randomUUID(), productId, branchId: toBranchId, quantity: v.quantity, minQuantity: 5, variantLabel: v.variantLabel };
-            newInventory.push(newItem);
-            upsertItems.push(newItem);
-          }
-        }
-        success = true;
-      }
+    // 1. Pull latest real-time stock from Supabase directly to prevent desyncs
+    let currentServerLevels: InventoryLevel[] = [];
+    try {
+      const { data: freshDbData, error: fetchErr } = await supabase
+        .from('inventory_levels')
+        .select('*')
+        .eq('product_id', productId);
       
-      return success ? { inventory: newInventory } : {};
-    });
-
-    if (success) {
-      try {
-        // Update Supabase
-        await Promise.all(upsertItems.map(item => 
-          supabase.from('inventory_levels').upsert({
-            id: item.id || crypto.randomUUID(),
-            product_id: item.productId,
-            branch_id: item.branchId,
-            variant_label: item.variantLabel || null,
-            quantity: item.quantity,
-            min_quantity: item.minQuantity
-          })
-        ));
-
-        const product = get().products.find(p => p.id === productId);
-        const fromBranch = get().branches.find(b => b.id === fromBranchId);
-        const toBranch = get().branches.find(b => b.id === toBranchId);
-        
-        get().addTransfer({
-          id: crypto.randomUUID(),
-          productId,
-          productName: product?.name || 'Producto',
-          fromBranchId,
-          fromBranchName: fromBranch?.name || 'Sucursal',
-          toBranchId,
-          toBranchName: toBranch?.name || 'Sucursal',
-          quantity: totalQuantity,
-          variants: variants,
-          date: new Date().toISOString(),
-          userId: get().currentUser?.id || 'system',
-          status: 'completed',
-          variantLabel: variants.length === 1 ? variants[0].variantLabel : 'Múltiples Variantes'
+      if (!fetchErr && freshDbData) {
+        currentServerLevels = freshDbData.map((i: any) => ({
+          id: i.id,
+          productId: i.product_id,
+          branchId: i.branch_id,
+          variantLabel: i.variant_label || undefined,
+          quantity: Number(i.quantity) || 0,
+          minQuantity: Number(i.min_quantity) || 5
+        }));
+        // Update local store with fresh server data
+        set(state => {
+          const other = state.inventory.filter(i => i.productId !== productId);
+          return { inventory: [...other, ...currentServerLevels] };
         });
-      } catch (error) {
-        console.error('Error in transferInventoryBatch sync:', error);
+      } else {
+        currentServerLevels = get().inventory.filter(i => i.productId === productId);
+      }
+    } catch (e) {
+      currentServerLevels = get().inventory.filter(i => i.productId === productId);
+    }
+
+    // 2. Strict verification against current stock in source branch
+    for (const v of activeVariants) {
+      const vLabel = v.variantLabel || '';
+      const sourceLevel = currentServerLevels.find(
+        i => i.branchId === fromBranchId && (i.variantLabel || '') === vLabel
+      );
+      const availableQty = sourceLevel ? sourceLevel.quantity : 0;
+      if (availableQty < v.quantity) {
+        const variantDesc = vLabel ? ` (Variante: "${vLabel}")` : '';
+        return {
+          success: false,
+          error: `Stock insuficiente en la sucursal de origen${variantDesc}. Stock disponible: ${availableQty} uds, intentas transferir: ${v.quantity} uds.`
+        };
       }
     }
-    return success;
+
+    // 3. Snapshot previous inventory for rollback on error
+    const previousInventory = [...get().inventory];
+
+    // 4. Calculate new levels
+    let totalQuantity = 0;
+    const upsertPayloads: any[] = [];
+    const newInventory = [...get().inventory];
+
+    for (const v of activeVariants) {
+      totalQuantity += v.quantity;
+      const vLabel = v.variantLabel || '';
+
+      // Source branch decrement
+      const sourceIdx = newInventory.findIndex(
+        i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === vLabel
+      );
+      if (sourceIdx !== -1) {
+        const newSourceQty = Math.max(0, newInventory[sourceIdx].quantity - v.quantity);
+        newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newSourceQty };
+        upsertPayloads.push({
+          id: newInventory[sourceIdx].id || crypto.randomUUID(),
+          product_id: productId,
+          branch_id: fromBranchId,
+          variant_label: vLabel || null,
+          quantity: newSourceQty,
+          min_quantity: newInventory[sourceIdx].minQuantity || 5
+        });
+      }
+
+      // Target branch increment or create
+      const targetIdx = newInventory.findIndex(
+        i => i.productId === productId && i.branchId === toBranchId && (i.variantLabel || '') === vLabel
+      );
+      if (targetIdx !== -1) {
+        const newTargetQty = newInventory[targetIdx].quantity + v.quantity;
+        newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newTargetQty };
+        upsertPayloads.push({
+          id: newInventory[targetIdx].id || crypto.randomUUID(),
+          product_id: productId,
+          branch_id: toBranchId,
+          variant_label: vLabel || null,
+          quantity: newTargetQty,
+          min_quantity: newInventory[targetIdx].minQuantity || 5
+        });
+      } else {
+        const newTargetId = crypto.randomUUID();
+        const newTargetItem: InventoryLevel = {
+          id: newTargetId,
+          productId,
+          branchId: toBranchId,
+          variantLabel: vLabel || undefined,
+          quantity: v.quantity,
+          minQuantity: 5
+        };
+        newInventory.push(newTargetItem);
+        upsertPayloads.push({
+          id: newTargetId,
+          product_id: productId,
+          branch_id: toBranchId,
+          variant_label: vLabel || null,
+          quantity: v.quantity,
+          min_quantity: 5
+        });
+      }
+    }
+
+    // 5. Optimistic store update
+    set({ inventory: newInventory });
+
+    // 6. Supabase Transaction & Audit Log
+    try {
+      const { error: upsertErr } = await supabase
+        .from('inventory_levels')
+        .upsert(upsertPayloads, { onConflict: 'id' });
+
+      if (upsertErr) {
+        console.error('Supabase inventory_levels upsert error:', upsertErr);
+        // Rollback state
+        set({ inventory: previousInventory });
+        return { success: false, error: `Error al actualizar inventario en Supabase: ${upsertErr.message}` };
+      }
+
+      // Add transfer record
+      const product = get().products.find(p => p.id === productId);
+      const fromBranch = get().branches.find(b => b.id === fromBranchId);
+      const toBranch = get().branches.find(b => b.id === toBranchId);
+      const transferId = crypto.randomUUID();
+      const variantSummary = activeVariants.length === 1 
+        ? (activeVariants[0].variantLabel || 'Producto Base') 
+        : activeVariants.map(v => `${v.variantLabel || 'Base'}: ${v.quantity}`).join(', ');
+
+      const transferRecord: InventoryTransfer = {
+        id: transferId,
+        productId,
+        productName: product?.name || 'Producto',
+        fromBranchId,
+        fromBranchName: fromBranch?.name || 'Sucursal Origen',
+        toBranchId,
+        toBranchName: toBranch?.name || 'Sucursal Destino',
+        quantity: totalQuantity,
+        variants: activeVariants,
+        date: new Date().toISOString(),
+        userId: get().currentUser?.id || 'system',
+        status: 'completed',
+        variantLabel: variantSummary
+      };
+
+      await get().addTransfer(transferRecord);
+      return { success: true };
+    } catch (err: any) {
+      console.error('Exception during transferInventoryBatch:', err);
+      set({ inventory: previousInventory });
+      return { success: false, error: err.message || 'Error inesperado durante la transferencia.' };
+    }
+  },
+
+  reconcileProductStock: async (productId, corrections) => {
+    try {
+      const upsertItems: any[] = [];
+      const newInventory = [...get().inventory];
+
+      for (const item of corrections) {
+        const vLabel = item.variantLabel || '';
+        const idx = newInventory.findIndex(
+          i => i.productId === productId && i.branchId === item.branchId && (i.variantLabel || '') === vLabel
+        );
+
+        if (idx !== -1) {
+          newInventory[idx] = {
+            ...newInventory[idx],
+            quantity: Math.max(0, item.quantity),
+            minQuantity: item.minQuantity ?? newInventory[idx].minQuantity ?? 5
+          };
+          upsertItems.push({
+            id: newInventory[idx].id || crypto.randomUUID(),
+            product_id: productId,
+            branch_id: item.branchId,
+            variant_label: vLabel || null,
+            quantity: Math.max(0, item.quantity),
+            min_quantity: newInventory[idx].minQuantity || 5
+          });
+        } else {
+          const newId = crypto.randomUUID();
+          const newItem: InventoryLevel = {
+            id: newId,
+            productId,
+            branchId: item.branchId,
+            variantLabel: vLabel || undefined,
+            quantity: Math.max(0, item.quantity),
+            minQuantity: item.minQuantity ?? 5
+          };
+          newInventory.push(newItem);
+          upsertItems.push({
+            id: newId,
+            product_id: productId,
+            branch_id: item.branchId,
+            variant_label: vLabel || null,
+            quantity: Math.max(0, item.quantity),
+            min_quantity: item.minQuantity ?? 5
+          });
+        }
+      }
+
+      set({ inventory: newInventory });
+
+      if (upsertItems.length > 0) {
+        const { error } = await supabase.from('inventory_levels').upsert(upsertItems, { onConflict: 'id' });
+        if (error) {
+          console.error('Error reconciling inventory levels in Supabase:', error);
+          return { success: false, error: error.message };
+        }
+      }
+
+      return { success: true };
+    } catch (e: any) {
+      console.error('Exception reconciling product stock:', e);
+      return { success: false, error: e.message };
+    }
+  },
+
+  repairOrphanedInventoryLevels: async () => {
+    try {
+      const defaultBranchId = get().branches[0]?.id;
+      if (!defaultBranchId) return { repaired: 0, message: 'No hay sucursales configuradas.' };
+
+      const { data: orphans, error } = await supabase
+        .from('inventory_levels')
+        .select('*')
+        .or('branch_id.is.null,branch_id.eq.""');
+
+      if (error || !orphans || orphans.length === 0) {
+        return { repaired: 0, message: 'No se encontraron registros huérfanos en Supabase.' };
+      }
+
+      const updates = orphans.map(o => ({
+        ...o,
+        branch_id: defaultBranchId
+      }));
+
+      await supabase.from('inventory_levels').upsert(updates);
+      await get().initializeFromSupabase();
+
+      return { repaired: orphans.length, message: `Se repararon y vincularon ${orphans.length} registros huérfanos al almacén principal.` };
+    } catch (e: any) {
+      return { repaired: 0, message: `Error reparando huérfanos: ${e.message}` };
+    }
   },
   batchDeleteProducts: async (ids) => {
     set((state) => ({
@@ -1712,7 +1864,7 @@ export const useStore = create<AppState>()(
       transfers: [transfer, ...state.transfers]
     }));
     try {
-      await supabase.from('inventory_transfers').insert([{
+      const payload: any = {
         id: transfer.id,
         product_id: transfer.productId,
         product_name: transfer.productName,
@@ -1722,11 +1874,19 @@ export const useStore = create<AppState>()(
         to_branch_name: transfer.toBranchName,
         variant_label: transfer.variantLabel || null,
         quantity: transfer.quantity,
-        variants: transfer.variants || null,
-        date: transfer.date,
-        user_id: transfer.userId,
-        status: transfer.status
-      }]);
+        date: transfer.date || new Date().toISOString(),
+        status: transfer.status || 'completed'
+      };
+
+      // Ensure user_id is a valid UUID format before sending to postgres uuid column
+      if (transfer.userId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(transfer.userId)) {
+        payload.user_id = transfer.userId;
+      }
+
+      const { error } = await supabase.from('inventory_transfers').insert([payload]);
+      if (error) {
+        console.error('Error adding inventory transfer to Supabase:', error);
+      }
     } catch (error) {
       console.error('Error adding inventory transfer to Supabase:', error);
     }
@@ -2201,4 +2361,77 @@ export const useStore = create<AppState>()(
   name: 'pos-store-storage',
 }
 ));
+
+// Expose diagnostic commands to global window for console auditing
+if (typeof window !== 'undefined') {
+  (window as any).__diagnoseProductStock = async (query: string) => {
+    const store = useStore.getState();
+    const cleanQ = (query || '').toLowerCase().trim();
+    const product = store.products.find(p => 
+      p.id.toLowerCase() === cleanQ || 
+      p.name.toLowerCase().includes(cleanQ) || 
+      (p.sku && p.sku.toLowerCase() === cleanQ)
+    );
+
+    if (!product) {
+      console.warn(`[DIAGNÓSTICO] Producto no encontrado con query: "${query}"`);
+      return;
+    }
+
+    console.group(`🔍 DIAGNÓSTICO DE STOCK: ${product.name} (SKU: ${product.sku || 'N/A'}, ID: ${product.id})`);
+    console.log('🔄 Consultando base de datos Supabase en tiempo real...');
+
+    try {
+      const { data: dbLevels, error } = await supabase
+        .from('inventory_levels')
+        .select('*')
+        .eq('product_id', product.id);
+
+      if (error) {
+        console.error('❌ Error al consultar Supabase:', error);
+      } else {
+        const branches = store.branches;
+        const localLevels = store.inventory.filter(i => i.productId === product.id);
+
+        const rows = branches.map(b => {
+          const dbForBranch = (dbLevels || []).filter(l => l.branch_id === b.id);
+          const localForBranch = localLevels.filter(l => l.branchId === b.id);
+
+          const dbQtyTotal = dbForBranch.reduce((acc, curr) => acc + (Number(curr.quantity) || 0), 0);
+          const localQtyTotal = localForBranch.reduce((acc, curr) => acc + (Number(curr.quantity) || 0), 0);
+
+          const desync = dbQtyTotal !== localQtyTotal;
+          const variantsDb = dbForBranch.map(l => `${l.variant_label || 'Base'}: ${l.quantity}`).join(' | ');
+
+          return {
+            'Sucursal': b.name,
+            'ID Sucursal': b.id,
+            'Stock Supabase (DB)': dbQtyTotal,
+            'Stock Memoria (App)': localQtyTotal,
+            'Variantes DB': variantsDb || 'Sin registros',
+            'Estado': desync ? '⚠️ DESINCRONIZADO' : (dbQtyTotal > 0 ? '✅ En Stock' : '⚪ Agotado')
+          };
+        });
+
+        console.table(rows);
+      }
+    } catch (e) {
+      console.error('Error durante diagnóstico:', e);
+    }
+    console.groupEnd();
+  };
+
+  (window as any).__listAllBranchesInventory = async (productId?: string) => {
+    if (productId) {
+      await (window as any).__diagnoseProductStock(productId);
+    } else {
+      const store = useStore.getState();
+      console.table(store.branches.map(b => ({
+        id: b.id,
+        name: b.name,
+        totalItemsInBranch: store.inventory.filter(i => i.branchId === b.id).reduce((s, i) => s + i.quantity, 0)
+      })));
+    }
+  };
+}
 
