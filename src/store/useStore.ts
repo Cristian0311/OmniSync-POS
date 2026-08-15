@@ -386,12 +386,13 @@ export const useStore = create<AppState>()(
   addBranch: async (branch) => {
     set((state) => ({ branches: [...state.branches, branch] }));
     try {
-      await supabase.from('branches').insert([{
+      const { error } = await supabase.from('branches').insert([{
         id: branch.id,
         name: branch.name,
         address: branch.address,
         phone: branch.phone
       }]);
+      if (error) throw error;
     } catch (error) {
       console.error('Error adding branch:', error);
     }
@@ -407,7 +408,8 @@ export const useStore = create<AppState>()(
       if (branch.phone !== undefined) updateData.phone = branch.phone;
       
       if (Object.keys(updateData).length > 0) {
-        await supabase.from('branches').update(updateData).eq('id', id);
+        const { error } = await supabase.from('branches').update(updateData).eq('id', id);
+      if (error) throw error;
       }
     } catch (error) {
       console.error('Error updating branch:', error);
@@ -429,7 +431,8 @@ export const useStore = create<AppState>()(
     });
     if (proceed) {
       try {
-        await supabase.from('branches').delete().eq('id', id);
+        const { error } = await supabase.from('branches').delete().eq('id', id);
+      if (error) throw error;
       } catch (error) {
         console.error('Error deleting branch:', error);
       }

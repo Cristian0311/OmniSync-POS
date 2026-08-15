@@ -107,11 +107,12 @@ export default function Inventory() {
       alert("Producto actualizado correctamente.");
     } else {
       const { initialQuantity, initialBranchId, initialVariant, initialVariantQuantities, ...productData } = formData;
+      const finalBranchId = initialBranchId || (branches.length > 0 ? branches[0].id : "");
       const newProduct: Product = {
         ...productData as Product,
         id: generateId('PRD'),
       };
-      addProduct(newProduct, initialQuantity, initialBranchId, initialVariant, initialVariantQuantities);
+      addProduct(newProduct, initialQuantity, finalBranchId, initialVariant, initialVariantQuantities);
     }
     setShowAddModal(false);
     setEditingProduct(null);

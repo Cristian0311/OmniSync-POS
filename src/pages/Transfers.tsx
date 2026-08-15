@@ -16,11 +16,15 @@ export default function Transfers() {
   const [variantQuantities, setVariantQuantities] = useState<{ [key: string]: number }>({});
   const [error, setError] = useState("");
 
+  const effectiveFromBranchId = formData.fromBranchId || (branches.length > 0 ? branches[0].id : '');
+
   const handleTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
-    if (formData.fromBranchId === formData.toBranchId) {
+    const targetToBranchId = formData.toBranchId || (branches.length > 0 ? branches[0].id : '');
+
+    if (effectiveFromBranchId === targetToBranchId) {
       setError("La sucursal de origen y destino no pueden ser la misma.");
       return;
     }
@@ -39,8 +43,8 @@ export default function Transfers() {
     const variantsPayload = variantsToTransfer.map(([v, q]) => ({ variantLabel: v, quantity: q as number }));
     const success = await transferInventoryBatch(
       formData.productId,
-      formData.fromBranchId,
-      formData.toBranchId,
+      effectiveFromBranchId,
+      targetToBranchId,
       variantsPayload
     );
 
@@ -197,7 +201,7 @@ export default function Transfers() {
                       <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Origen</label>
                       <select 
                         required
-                        value={formData.fromBranchId}
+                        value={effectiveFromBranchId}
                         onChange={e => setFormData({ ...formData, fromBranchId: e.target.value })}
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-[11px] font-black uppercase"
                       >
@@ -240,7 +244,7 @@ export default function Transfers() {
                       <div className="max-h-48 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
                         {/* We merge sizes and colors for this view as variants */}
                         {Array.from(new Set([...(selectedProduct.availableSizes || []), ...(selectedProduct.availableColors || [])])).map(variant => {
-                          const currentStock = inventory.find(i => i.productId === selectedProduct.id && i.branchId === formData.fromBranchId && (i.variantLabel || '') === (variant || ''))?.quantity || 0;
+                          const currentStock = inventory.find(i => i.productId === selectedProduct.id && i.branchId === effectiveFromBranchId && (i.variantLabel || '') === (variant || ''))?.quantity || 0;
                           return (
                             <div key={variant} className="flex justify-between items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
                               <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight ml-2">{variant} <span className="text-slate-400 ml-1 font-bold">(Stock: {currentStock})</span></span>
@@ -265,13 +269,13 @@ export default function Transfers() {
                         <input 
                           type="number" 
                           min="1"
-                          max={inventory.find(i => i.productId === selectedProduct.id && i.branchId === formData.fromBranchId && (i.variantLabel || '') === '')?.quantity || 0}
+                          max={inventory.find(i => i.productId === selectedProduct.id && i.branchId === effectiveFromBranchId && (i.variantLabel || '') === '')?.quantity || 0}
                           required
                           value={variantQuantities[''] || ''}
                           onChange={e => setVariantQuantities({ ...variantQuantities, '': parseInt(e.target.value) || 0 })}
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-xl font-black text-slate-900"
                         />
-                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-400 uppercase">Stock actual: {inventory.find(i => i.productId === selectedProduct.id && i.branchId === formData.fromBranchId && (i.variantLabel || '') === '')?.quantity || 0}</span>
+                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-400 uppercase">Stock actual: {inventory.find(i => i.productId === selectedProduct.id && i.branchId === effectiveFromBranchId && (i.variantLabel || '') === '')?.quantity || 0}</span>
                       </div>
                     </div>
                   )}
