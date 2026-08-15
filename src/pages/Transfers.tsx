@@ -192,6 +192,32 @@ export default function Transfers() {
 
               <form onSubmit={handleTransfer} className="space-y-5">
                 <div className="grid grid-cols-1 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Origen</label>
+                      <select 
+                        required
+                        value={formData.fromBranchId}
+                        onChange={e => setFormData({ ...formData, fromBranchId: e.target.value })}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-[11px] font-black uppercase"
+                      >
+                        {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Destino</label>
+                      <select 
+                        required
+                        value={formData.toBranchId}
+                        onChange={e => setFormData({ ...formData, toBranchId: e.target.value })}
+                        className="w-full px-4 py-3 bg-indigo-50 border border-indigo-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-[11px] font-black uppercase text-indigo-900"
+                      >
+                        <option value="">Seleccionar...</option>
+                        {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
                   <div>
                     <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Producto</label>
                     <select 
@@ -239,41 +265,16 @@ export default function Transfers() {
                         <input 
                           type="number" 
                           min="1"
+                          max={inventory.find(i => i.productId === selectedProduct.id && i.branchId === formData.fromBranchId && (i.variantLabel || '') === '')?.quantity || 0}
                           required
                           value={variantQuantities[''] || ''}
                           onChange={e => setVariantQuantities({ ...variantQuantities, '': parseInt(e.target.value) || 0 })}
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-xl font-black text-slate-900"
                         />
-                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-400 uppercase">Stock actual: {inventory.find(i => i.productId === selectedProduct.id && i.branchId === formData.fromBranchId && !i.variantLabel)?.quantity || 0}</span>
+                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-400 uppercase">Stock actual: {inventory.find(i => i.productId === selectedProduct.id && i.branchId === formData.fromBranchId && (i.variantLabel || '') === '')?.quantity || 0}</span>
                       </div>
                     </div>
                   )}
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Origen</label>
-                      <select 
-                        required
-                        value={formData.fromBranchId}
-                        onChange={e => setFormData({ ...formData, fromBranchId: e.target.value })}
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-[11px] font-black uppercase"
-                      >
-                        {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Destino</label>
-                      <select 
-                        required
-                        value={formData.toBranchId}
-                        onChange={e => setFormData({ ...formData, toBranchId: e.target.value })}
-                        className="w-full px-4 py-3 bg-indigo-50 border border-indigo-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-[11px] font-black uppercase text-indigo-900"
-                      >
-                        <option value="">Seleccionar...</option>
-                        {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                      </select>
-                    </div>
-                  </div>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-3 pt-4">

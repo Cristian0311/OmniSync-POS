@@ -56,6 +56,7 @@ export interface Product {
 }
 
 export interface InventoryLevel {
+  id?: string;
   productId: string;
   branchId: string;
   variantLabel?: string; // e.g., 'Talla 42', 'M', 'Rojo'

@@ -483,11 +483,11 @@ export const useStore = create<AppState>()(
     if (initialVariantQuantities && Object.keys(initialVariantQuantities).length > 0) {
       Object.entries(initialVariantQuantities).forEach(([vLabel, qty]) => {
         if (qty > 0) {
-          newInventoryEntries.push({ productId: product.id, branchId: targetBranch, quantity: qty, minQuantity: 5, variantLabel: vLabel });
+          newInventoryEntries.push({ id: crypto.randomUUID(), productId: product.id, branchId: targetBranch, quantity: qty, minQuantity: 5, variantLabel: vLabel });
         }
       });
     } else if (initialQuantity && initialQuantity > 0) {
-      newInventoryEntries.push({ productId: product.id, branchId: targetBranch, quantity: initialQuantity, minQuantity: 5, variantLabel });
+      newInventoryEntries.push({ id: crypto.randomUUID(), productId: product.id, branchId: targetBranch, quantity: initialQuantity, minQuantity: 5, variantLabel });
     }
 
     // Optimistic update
@@ -528,7 +528,7 @@ export const useStore = create<AppState>()(
       if (newInventoryEntries.length > 0) {
         await supabase.from('inventory_levels').insert(
           newInventoryEntries.map(i => ({
-            id: crypto.randomUUID(),
+            id: i.id,
             product_id: i.productId,
             branch_id: i.branchId,
             variant_label: i.variantLabel || null,
@@ -589,24 +589,26 @@ export const useStore = create<AppState>()(
   },
   transferInventory: async (productId, fromBranchId, toBranchId, quantity, variantLabel) => {
     let success = false;
-    let newSourceQty = 0;
-    let newTargetQty = 0;
+    let sourceItem: any = null;
+    let targetItem: any = null;
     
     set((state) => {
       const newInventory = [...state.inventory];
       
       const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === (variantLabel || ''));
       if (sourceIdx !== -1 && newInventory[sourceIdx].quantity >= quantity) {
-        newSourceQty = newInventory[sourceIdx].quantity - quantity;
+        const newSourceQty = newInventory[sourceIdx].quantity - quantity;
         newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newSourceQty };
+        sourceItem = newInventory[sourceIdx];
         
         const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && (i.variantLabel || '') === (variantLabel || ''));
         if (targetIdx !== -1) {
-          newTargetQty = newInventory[targetIdx].quantity + quantity;
+          const newTargetQty = newInventory[targetIdx].quantity + quantity;
           newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newTargetQty };
+          targetItem = newInventory[targetIdx];
         } else {
-          newTargetQty = quantity;
-          newInventory.push({ productId, branchId: toBranchId, quantity, minQuantity: 5, variantLabel });
+          targetItem = { id: crypto.randomUUID(), productId, branchId: toBranchId, quantity, minQuantity: 5, variantLabel };
+          newInventory.push(targetItem);
         }
         success = true;
       }
@@ -614,26 +616,26 @@ export const useStore = create<AppState>()(
       return { inventory: newInventory };
     });
 
-    if (success) {
+    if (success && sourceItem && targetItem) {
       try {
         // Update Supabase
         await Promise.all([
           supabase.from('inventory_levels').upsert({
-            id: crypto.randomUUID(),
-            product_id: productId,
-            branch_id: fromBranchId,
-            variant_label: variantLabel || null,
-            quantity: newSourceQty,
-            min_quantity: 5
-          }, { onConflict: 'product_id, branch_id, variant_label' }),
+            id: sourceItem.id || crypto.randomUUID(),
+            product_id: sourceItem.productId,
+            branch_id: sourceItem.branchId,
+            variant_label: sourceItem.variantLabel || null,
+            quantity: sourceItem.quantity,
+            min_quantity: sourceItem.minQuantity || 5
+          }),
           supabase.from('inventory_levels').upsert({
-            id: crypto.randomUUID(),
-            product_id: productId,
-            branch_id: toBranchId,
-            variant_label: variantLabel || null,
-            quantity: newTargetQty,
-            min_quantity: 5
-          }, { onConflict: 'product_id, branch_id, variant_label' })
+            id: targetItem.id || crypto.randomUUID(),
+            product_id: targetItem.productId,
+            branch_id: targetItem.branchId,
+            variant_label: targetItem.variantLabel || null,
+            quantity: targetItem.quantity,
+            min_quantity: targetItem.minQuantity || 5
+          })
         ]);
 
         const product = get().products.find(p => p.id === productId);
@@ -663,7 +665,7 @@ export const useStore = create<AppState>()(
   transferInventoryBatch: async (productId, fromBranchId, toBranchId, variants) => {
     let success = false;
     let totalQuantity = 0;
-    const updates: { branchId: string; variantLabel: string; quantity: number }[] = [];
+    const upsertItems: any[] = [];
     
     set((state) => {
       const newInventory = [...state.inventory];
@@ -687,16 +689,17 @@ export const useStore = create<AppState>()(
           const newSourceQty = newInventory[sourceIdx].quantity - v.quantity;
           newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: newSourceQty };
           
-          updates.push({ branchId: fromBranchId, variantLabel: v.variantLabel, quantity: newSourceQty });
+          upsertItems.push(newInventory[sourceIdx]);
 
           const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && (i.variantLabel || '') === (v.variantLabel || ''));
           if (targetIdx !== -1) {
             const newTargetQty = newInventory[targetIdx].quantity + v.quantity;
             newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newTargetQty };
-            updates.push({ branchId: toBranchId, variantLabel: v.variantLabel, quantity: newTargetQty });
+            upsertItems.push(newInventory[targetIdx]);
           } else {
-            newInventory.push({ productId, branchId: toBranchId, quantity: v.quantity, minQuantity: 5, variantLabel: v.variantLabel });
-            updates.push({ branchId: toBranchId, variantLabel: v.variantLabel, quantity: v.quantity });
+            const newItem = { id: crypto.randomUUID(), productId, branchId: toBranchId, quantity: v.quantity, minQuantity: 5, variantLabel: v.variantLabel };
+            newInventory.push(newItem);
+            upsertItems.push(newItem);
           }
         }
         success = true;
@@ -708,15 +711,15 @@ export const useStore = create<AppState>()(
     if (success) {
       try {
         // Update Supabase
-        await Promise.all(updates.map(update => 
+        await Promise.all(upsertItems.map(item => 
           supabase.from('inventory_levels').upsert({
-            id: crypto.randomUUID(),
-            product_id: productId,
-            branch_id: update.branchId,
-            variant_label: update.variantLabel || null,
-            quantity: update.quantity,
-            min_quantity: 5
-          }, { onConflict: 'product_id, branch_id, variant_label' })
+            id: item.id || crypto.randomUUID(),
+            product_id: item.productId,
+            branch_id: item.branchId,
+            variant_label: item.variantLabel || null,
+            quantity: item.quantity,
+            min_quantity: item.minQuantity
+          })
         ));
 
         const product = get().products.find(p => p.id === productId);
@@ -790,73 +793,78 @@ export const useStore = create<AppState>()(
     }
   },
   adjustInventory: async (productId, branchId, delta, variantLabel, minQuantity) => {
-    let newQty = 0;
-    let newMinQty = minQuantity ?? 5;
+    let updatedItem: any = null;
     
     set((state) => {
       const newInventory = [...state.inventory];
       const idx = newInventory.findIndex(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
       if (idx !== -1) {
-        newQty = Math.max(0, newInventory[idx].quantity + delta);
-        if (minQuantity !== undefined) newMinQty = minQuantity;
-        else newMinQty = newInventory[idx].minQuantity;
+        const newQty = Math.max(0, newInventory[idx].quantity + delta);
+        const newMinQty = minQuantity !== undefined ? minQuantity : newInventory[idx].minQuantity;
         
         newInventory[idx] = { 
           ...newInventory[idx], 
           quantity: newQty,
           minQuantity: newMinQty
         };
+        updatedItem = newInventory[idx];
       } else if (delta > 0) {
-        newQty = delta;
-        newInventory.push({ productId, branchId, quantity: delta, minQuantity: newMinQty, variantLabel });
+        updatedItem = { id: crypto.randomUUID(), productId, branchId, quantity: delta, minQuantity: minQuantity ?? 5, variantLabel };
+        newInventory.push(updatedItem);
       } else {
         return state;
       }
       return { inventory: newInventory };
     });
 
-    try {
-      await supabase.from('inventory_levels').upsert({
-        id: crypto.randomUUID(),
-        product_id: productId,
-        branch_id: branchId,
-        variant_label: variantLabel || null,
-        quantity: newQty,
-        min_quantity: newMinQty
-      }, { onConflict: 'product_id, branch_id, variant_label' });
-    } catch (error) {
-      console.error('Error adjusting inventory in Supabase:', error);
+    if (updatedItem) {
+      try {
+        await supabase.from('inventory_levels').upsert({
+          id: updatedItem.id || crypto.randomUUID(),
+          product_id: updatedItem.productId,
+          branch_id: updatedItem.branchId,
+          variant_label: updatedItem.variantLabel || null,
+          quantity: updatedItem.quantity,
+          min_quantity: updatedItem.minQuantity || 5
+        });
+      } catch (error) {
+        console.error('Error adjusting inventory in Supabase:', error);
+      }
     }
   },
   setInventoryQuantity: async (productId, branchId, quantity, variantLabel, minQuantity) => {
-    let newMinQty = minQuantity ?? 5;
+    let updatedItem: any = null;
     set((state) => {
       const newInventory = [...state.inventory];
       const idx = newInventory.findIndex(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
       if (idx !== -1) {
-        if (minQuantity === undefined) newMinQty = newInventory[idx].minQuantity;
+        const newMinQty = minQuantity !== undefined ? minQuantity : newInventory[idx].minQuantity;
         newInventory[idx] = { 
           ...newInventory[idx], 
           quantity: Math.max(0, quantity),
           minQuantity: newMinQty
         };
+        updatedItem = newInventory[idx];
       } else {
-        newInventory.push({ productId, branchId, quantity: Math.max(0, quantity), minQuantity: newMinQty, variantLabel });
+        updatedItem = { id: crypto.randomUUID(), productId, branchId, quantity: Math.max(0, quantity), minQuantity: minQuantity ?? 5, variantLabel };
+        newInventory.push(updatedItem);
       }
       return { inventory: newInventory };
     });
 
-    try {
-      await supabase.from('inventory_levels').upsert({
-        id: crypto.randomUUID(),
-        product_id: productId,
-        branch_id: branchId,
-        variant_label: variantLabel || null,
-        quantity: Math.max(0, quantity),
-        min_quantity: newMinQty
-      }, { onConflict: 'product_id, branch_id, variant_label' });
-    } catch (error) {
-      console.error('Error setting inventory quantity in Supabase:', error);
+    if (updatedItem) {
+      try {
+        await supabase.from('inventory_levels').upsert({
+          id: updatedItem.id || crypto.randomUUID(),
+          product_id: updatedItem.productId,
+          branch_id: updatedItem.branchId,
+          variant_label: updatedItem.variantLabel || null,
+          quantity: updatedItem.quantity,
+          min_quantity: updatedItem.minQuantity || 5
+        });
+      } catch (error) {
+        console.error('Error setting inventory quantity in Supabase:', error);
+      }
     }
   },
   
@@ -1100,8 +1108,11 @@ export const useStore = create<AppState>()(
     });
 
     try {
-      // Sync Transaction
-      await supabase.from('transactions').insert([{
+      // Parallelize all sync operations for speed and reliable saving
+      const syncPromises = [];
+
+      // 1. Transaction
+      syncPromises.push(supabase.from('transactions').insert([{
         id: newTransaction.id,
         branch_id: newTransaction.branchId,
         user_id: newTransaction.userId,
@@ -1114,11 +1125,11 @@ export const useStore = create<AppState>()(
         ncf: newTransaction.ncf || null,
         ncf_type: newTransaction.ncfType || null,
         change_given: newTransaction.changeGiven || 0
-      }]);
+      }]));
 
-      // Sync Payments
+      // 2. Payments
       if (newTransaction.payments && newTransaction.payments.length > 0) {
-        await supabase.from('transaction_payments').insert(
+        syncPromises.push(supabase.from('transaction_payments').insert(
           newTransaction.payments.map((p: any) => ({
             id: crypto.randomUUID(),
             transaction_id: newTransaction.id,
@@ -1128,12 +1139,12 @@ export const useStore = create<AppState>()(
             method: p.method,
             bank_card_id: p.bankCardId || null
           }))
-        );
+        ));
       }
 
-      // Sync Items
+      // 3. Items
       if (newTransaction.items && newTransaction.items.length > 0) {
-        await supabase.from('transaction_items').insert(
+        syncPromises.push(supabase.from('transaction_items').insert(
           newTransaction.items.map((i: any) => ({
             id: crypto.randomUUID(),
             transaction_id: newTransaction.id,
@@ -1149,18 +1160,16 @@ export const useStore = create<AppState>()(
             selected_color: i.selectedColor || null,
             variant_label: i.variantLabel || null
           }))
-        );
+        ));
       }
 
-      // Sync Inventory (Upsert)
-      // A more robust way would be to just upsert the ones that changed
-      // but for now we can rely on adjustInventory or just upsert the modified rows
+      // 4. Inventory (Upsert)
       const modifiedInventory = updatedInventory.filter(ui => 
         transaction.items.some(ti => ti.product.id === ui.productId && (ti.variantLabel || '') === (ui.variantLabel || ''))
         || transaction.items.some(ti => ti.product.isKit && ti.product.kitComponents?.some(kc => kc.productId === ui.productId))
       );
       if (modifiedInventory.length > 0) {
-        await supabase.from('inventory_levels').upsert(
+        syncPromises.push(supabase.from('inventory_levels').upsert(
           modifiedInventory.map(i => ({
             id: crypto.randomUUID(),
             product_id: i.productId,
@@ -1170,9 +1179,32 @@ export const useStore = create<AppState>()(
             min_quantity: i.minQuantity
           })), 
           { onConflict: 'product_id, branch_id, variant_label' }
-        );
+        ));
       }
 
+      // 5. Warranties
+      if (newWarranties.length > 0) {
+        syncPromises.push(supabase.from('warranties').insert(
+          newWarranties.map(w => ({
+            id: w.id,
+            product_id: w.productId,
+            product_name: w.productName,
+            transaction_id: w.transactionId,
+            customer_id: w.customerId || null,
+            customer_name: w.customerName || null,
+            purchase_date: w.purchaseDate,
+            expiry_date: w.expiryDate,
+            serial_number: w.serialNumber || null,
+            status: w.status
+          }))
+        ));
+      }
+
+      const results = await Promise.all(syncPromises);
+      const errors = results.filter(r => r.error);
+      if (errors.length > 0) {
+        console.error('Some transaction sync components failed:', errors.map(e => e.error));
+      }
     } catch (error) {
       console.error('Error syncing transaction to Supabase:', error);
     }
@@ -1432,7 +1464,8 @@ export const useStore = create<AppState>()(
   createSupplierOrder: async (o) => {
     set(state => ({ supplierOrders: [o, ...state.supplierOrders] }));
     try {
-      await supabase.from('supplier_orders').insert([{
+      const syncPromises = [];
+      syncPromises.push(supabase.from("supplier_orders").insert([{
         id: o.id,
         supplier_id: o.supplierId,
         date: o.date,
@@ -1442,23 +1475,24 @@ export const useStore = create<AppState>()(
         branch_id: o.branchId,
         transport_details: o.transportDetails || null,
         transport_cost: o.transportCost || 0
-      }]);
+      }]));
 
       if (o.items && o.items.length > 0) {
-        await supabase.from('supplier_order_items').insert(
+        syncPromises.push(supabase.from("supplier_order_items").insert(
           o.items.map((i: any) => ({
             id: crypto.randomUUID(),
             order_id: o.id,
             product_id: i.productId,
             product_name: i.productName,
-            variant_label: i.variantLabel || null,
+            variant_label: i.variant_label || null,
             quantity: i.quantity,
             cost: i.cost
           }))
-        );
+        ));
       }
+      await Promise.all(syncPromises);
     } catch (error) {
-      console.error('Error adding supplier order:', error);
+      console.error("Error adding supplier order:", error);
     }
   },
   updateSupplierOrder: async (id, o) => {
@@ -1816,6 +1850,7 @@ export const useStore = create<AppState>()(
   },
 
   initializeFromSupabase: async () => {
+    if (get().isInitialized && get().products.length > 0) return;
     try {
       const [
         { data: branchesData },
@@ -1905,6 +1940,7 @@ export const useStore = create<AppState>()(
           image: p.image
         })) : state.products,
         inventory: inventoryData?.length ? inventoryData.map(i => ({
+          id: i.id,
           productId: i.product_id,
           branchId: i.branch_id,
           variantLabel: i.variant_label,

@@ -1,15 +1,16 @@
 import React, { useState } from "react";
-import { Shield, UserPlus, DollarSign, X, Eye, Calculator, Package, Clock, MapPin, Target } from "lucide-react";
+import { Shield, UserPlus, DollarSign, X, Eye, Calculator, Package, Clock, MapPin, Target, Edit2, Trash2 } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { User, CashRegisterSession, Transaction } from "../types";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { cn } from "../lib/utils";
 
 export default function Users() {
-  const { users, transactions, getBaseCurrency, addUser, cashSessions, branches, currencies, salarySettlements, updateSalarySettlement } = useStore();
+  const { users, transactions, getBaseCurrency, addUser, updateUser, deleteUser, cashSessions, branches, currencies, salarySettlements, updateSalarySettlement } = useStore();
   const baseCurrency = getBaseCurrency();
   const [showAddModal, setShowAddModal] = useState(false);
   const [auditingUser, setAuditingUser] = useState<User | null>(null);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
 
   const [formData, setFormData] = useState<Partial<User>>({
     name: "",
@@ -34,12 +35,35 @@ export default function Users() {
 
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    addUser({
-      ...formData,
-      id: crypto.randomUUID()
-    } as User);
+    if (editingUser) {
+      updateUser(editingUser.id, formData);
+    } else {
+      addUser({
+        ...formData,
+        id: crypto.randomUUID()
+      } as User);
+    }
     setShowAddModal(false);
+    setEditingUser(null);
     setFormData({ name: "", email: "", password: "", role: "employee", baseSalary: 0, salesGoal: 0, commissionRate: 0, phone: "", branchId: "" });
+  };
+
+  const openAddModal = () => {
+    setEditingUser(null);
+    setFormData({ name: "", email: "", password: "", role: "employee", baseSalary: 0, salesGoal: 0, commissionRate: 0, phone: "", branchId: "" });
+    setShowAddModal(true);
+  };
+
+  const handleEditUser = (user: User) => {
+    setEditingUser(user);
+    setFormData(user);
+    setShowAddModal(true);
+  };
+
+  const handleDeleteUser = (id: string) => {
+    if (window.confirm("¿Está seguro de eliminar este empleado? Esta acción no se puede deshacer.")) {
+      deleteUser(id);
+    }
   };
 
   return (
@@ -52,7 +76,7 @@ export default function Users() {
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Accesos y Comisiones</p>
         </div>
         <button 
-          onClick={() => setShowAddModal(true)} 
+          onClick={openAddModal} 
           className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95"
         >
           <UserPlus className="w-4 h-4" />
@@ -72,7 +96,7 @@ export default function Users() {
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Ventas Hoy</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Comisión Hoy</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Pago Total</th>
-                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Auditoría</th>
+                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -158,12 +182,31 @@ export default function Users() {
                       {formatMoney(pagoTotalHoy)}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <button 
-                        onClick={() => setAuditingUser(user)}
-                        className="p-2 bg-slate-50 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all border border-slate-100 shadow-sm"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button 
+                          onClick={() => setAuditingUser(user)}
+                          title="Auditoría"
+                          className="p-2 bg-slate-50 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all border border-slate-100 shadow-sm"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => handleEditUser(user)}
+                          title="Editar"
+                          className="p-2 bg-slate-50 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all border border-slate-100 shadow-sm"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        {user.role !== 'admin' && (
+                          <button 
+                            onClick={() => handleDeleteUser(user.id)}
+                            title="Eliminar"
+                            className="p-2 bg-slate-50 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-slate-100 shadow-sm"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -284,8 +327,11 @@ export default function Users() {
         <div className="fixed inset-0 bg-slate-900/50 z-50 flex justify-center items-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-md flex flex-col shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="flex justify-between items-center p-6 border-b border-slate-100">
-              <h2 className="text-xl font-bold text-slate-900">Nuevo Empleado</h2>
-              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-slate-600">
+              <h2 className="text-xl font-bold text-slate-900">{editingUser ? 'Editar Empleado' : 'Nuevo Empleado'}</h2>
+              <button onClick={() => {
+                setShowAddModal(false);
+                setEditingUser(null);
+              }} className="text-slate-400 hover:text-slate-600">
                 <X className="w-6 h-6" />
               </button>
             </div>
@@ -349,7 +395,7 @@ export default function Users() {
               </div>
               
               <button type="submit" className="w-full mt-6 bg-indigo-600 text-white font-black uppercase tracking-widest py-3 rounded-xl hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100 active:scale-95 text-[10px]">
-                Guardar Empleado
+                {editingUser ? 'Actualizar Empleado' : 'Guardar Empleado'}
               </button>
             </form>
           </div>
