@@ -2021,7 +2021,6 @@ export const useStore = create<AppState>()(
   },
 
   initializeFromSupabase: async () => {
-    if (get().isInitialized && get().products.length > 0) return;
     try {
       const [
         { data: branchesData },
@@ -2081,6 +2080,7 @@ export const useStore = create<AppState>()(
           address: b.address || '',
           phone: b.phone || '', 
         })) : state.branches,
+        currentBranchId: (branchesData?.length ? branchesData : state.branches).some((b: any) => b.id === state.currentBranchId) ? state.currentBranchId : ((branchesData?.length ? branchesData[0]?.id : state.branches[0]?.id) || state.currentBranchId),
         categories: categoriesData?.length ? categoriesData.map(c => ({
           id: c.id,
           name: c.name,
