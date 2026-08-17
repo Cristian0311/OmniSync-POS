@@ -103,7 +103,8 @@ export interface CatalogConfig {
 export interface Transaction {
   id: string;
   branchId: string;
-  userId: string;
+  userId: string; // The user who processed the transaction
+  sellerEmployeeIds?: string[]; // IDs of employees involved in the sale for commission splitting
   date: string;
   subtotal: number; // In base currency (CUP)
   tax: number; // In base currency
@@ -146,7 +147,8 @@ export interface CashRegisterSession {
   closingBalances?: Payment[];
   expectedBalance?: number;
   status: 'open' | 'closed';
-  userId: string;
+  userId: string; // The user who opened it
+  workingEmployeeIds?: string[]; // IDs of employees working this session
   movements?: CashMovement[];
 }
 

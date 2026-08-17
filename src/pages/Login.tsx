@@ -9,13 +9,19 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isHovered, setIsHovered] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    const success = login(email, password);
-    if (!success) {
-      setError("Credenciales incorrectas. Verifica tu correo y contraseña.");
+    setIsLoading(true);
+    try {
+      const success = await login(email, password);
+      if (!success) {
+        setError("Credenciales incorrectas. Verifica tu correo y contraseña.");
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -78,9 +84,17 @@ export default function Login() {
 
             <button 
               type="submit"
-              className="w-full py-2.5 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm flex items-center justify-center gap-2 mt-2"
+              disabled={isLoading}
+              className="w-full py-2.5 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm flex items-center justify-center gap-2 mt-2 disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              Iniciar sesión
+              {isLoading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                  <span>Sincronizando datos...</span>
+                </>
+              ) : (
+                "Iniciar sesión"
+              )}
             </button>
             <div className="text-center mt-4 text-sm text-slate-500">
               ¿No tienes cuenta?{" "}

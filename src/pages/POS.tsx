@@ -48,8 +48,8 @@ export default function POS() {
 
   const currentSession = getCurrentSession(currentBranchId, currentUser?.id || 'u1');
   
-  // Checkout Modal State
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [selectedSellerIds, setSelectedSellerIds] = useState<string[]>([]);
   
   type PaymentLine = { id: string, code: string, amount: number, method: 'cash' | 'transfer', bankCardId?: string };
   const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([]);
@@ -331,6 +331,11 @@ export default function POS() {
     // No pre-llenamos el monto, dejamos que el usuario lo haga manual
     setPaymentLines([]);
     setActivePaymentLineId(null);
+    if (currentSession?.workingEmployeeIds && currentSession.workingEmployeeIds.length > 0) {
+      setSelectedSellerIds(currentSession.workingEmployeeIds);
+    } else {
+      setSelectedSellerIds([currentUser?.id || 'u1']);
+    }
     setShowCheckoutModal(true);
   };
 
@@ -464,6 +469,7 @@ export default function POS() {
       id: generateId('TKT'),
       branchId: currentBranchId,
       userId: currentUser?.id || 'u1',
+      sellerEmployeeIds: selectedSellerIds.length > 0 ? selectedSellerIds : [currentUser?.id || 'u1'],
       date: new Date().toISOString(),
       subtotal: subtotalBase,
       tax: taxBase,
@@ -798,9 +804,37 @@ export default function POS() {
               )}
             </div>
 
-            <div className="p-5 bg-slate-50 border-t border-slate-100">
+            <div className="p-5 bg-slate-50 border-t border-slate-100 space-y-4">
+              <div className="space-y-2">
+                <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                  Empleados en esta Venta (Comisión)
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {useStore.getState().users.filter(u => u.branchId === currentBranchId || u.role === 'admin').map(staff => (
+                    <button
+                      key={staff.id}
+                      onClick={() => {
+                        if (selectedSellerIds.includes(staff.id)) {
+                          setSelectedSellerIds(selectedSellerIds.filter(id => id !== staff.id));
+                        } else {
+                          setSelectedSellerIds([...selectedSellerIds, staff.id]);
+                        }
+                      }}
+                      className={cn(
+                        "px-3 py-1.5 rounded-xl text-[9px] font-black uppercase transition-all border",
+                        selectedSellerIds.includes(staff.id) 
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm" 
+                          : "bg-white text-slate-500 border-slate-200 hover:border-indigo-300"
+                      )}
+                    >
+                      {staff.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <button 
-                disabled={remainingBase > 0 || paymentLines.some(l => l.method === 'transfer' && !l.bankCardId)}
+                disabled={remainingBase > 0 || paymentLines.some(l => l.method === 'transfer' && !l.bankCardId) || selectedSellerIds.length === 0}
                 onClick={handleCheckout}
                 className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-base uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 disabled:opacity-30 disabled:grayscale disabled:shadow-none active:scale-95"
               >

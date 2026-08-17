@@ -61,7 +61,7 @@ interface AppState {
   // Auth
   users: User[];
   currentUser: User | null;
-  login: (email: string, pass: string) => boolean;
+  login: (email: string, pass: string) => Promise<boolean>;
   logout: () => void;
   clearAllData: () => Promise<void>;
   addUser: (user: User) => void;
@@ -213,13 +213,21 @@ export const useStore = create<AppState>()(
 
   users: INITIAL_USERS,
   currentUser: null,
-  login: (email, pass) => {
+  login: async (email, pass) => {
     const user = get().users.find(u => u.email === email && u.password === pass);
     if (user) {
       set({ currentUser: user });
       if (user.branchId) {
         set({ currentBranchId: user.branchId });
       }
+      
+      // Auto-sync from DB after successful login
+      try {
+        await get().initializeFromSupabase();
+      } catch (err) {
+        console.error('Error fetching fresh data on login:', err);
+      }
+      
       return true;
     }
     return false;

@@ -16,6 +16,12 @@ export default function CashRegister() {
   [salarySettlements]);
 
   const [openingAmount, setOpeningAmount] = useState("");
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>(currentUser ? [currentUser.id] : []);
+  
+  const branchStaff = useMemo(() => {
+    return users.filter(u => u.branchId === currentBranchId);
+  }, [users, currentBranchId]);
+
   const [closingBalances, setClosingBalances] = useState<{ [key: string]: number }>({});
   const [showDiscrepancyModal, setShowDiscrepancyModal] = useState(false);
   const [finalBalancesToClose, setFinalBalancesToClose] = useState<Payment[]>([]);
@@ -39,7 +45,8 @@ export default function CashRegister() {
         openedAt: new Date().toISOString(),
         openingBalance: val,
         status: 'open',
-        userId: currentUser?.id || 'u1'
+        userId: currentUser?.id || 'u1',
+        workingEmployeeIds: selectedEmployeeIds.length > 0 ? selectedEmployeeIds : [currentUser?.id || 'u1']
       });
       setOpeningAmount("");
     }
@@ -165,51 +172,62 @@ export default function CashRegister() {
   const processClose = (balances: Payment[]) => {
     if (!session) return;
     
-    // Calculate Commissions
-    const user = users.find(u => u.id === session.userId);
-    
-    // Si es empleado, tomamos todas las transacciones de la sucursal durante el turno para dividir la comisión
-    // Si es admin, solo tomamos las suyas
+    // Todas las transacciones de la sucursal durante el turno
     const sessionTxs = transactions.filter(t => {
       const isAfterOpen = new Date(t.date) >= new Date(session.openedAt);
       if (!isAfterOpen) return false;
-      
-      if (user?.role === 'employee') {
-        return t.branchId === currentBranchId;
-      } else {
-        return t.branchId === currentBranchId && t.userId === session.userId;
-      }
+      return t.branchId === currentBranchId;
     });
 
-    const branchEmployees = users.filter(u => u.branchId === currentBranchId && u.role === 'employee').length;
-    const splitFactor = branchEmployees > 0 ? branchEmployees : 1;
+    const employeeCommissions: Record<string, number> = {};
 
-    let totalCommissions = 0;
     sessionTxs.forEach(tx => {
+      const sellers = tx.sellerEmployeeIds && tx.sellerEmployeeIds.length > 0 ? tx.sellerEmployeeIds : [tx.userId];
+      const splitFactor = sellers.length;
+
       tx.items.forEach(item => {
         let itemComm = 0;
         if (item.product.commissionType === 'fixed') {
-          itemComm = item.product.commissionValue * item.quantity;
+          itemComm = (item.product.commissionValue || 0) * item.quantity;
         } else {
-          itemComm = (item.product.price * (item.product.commissionValue / 100)) * item.quantity;
+          itemComm = (item.product.price * ((item.product.commissionValue || 0) / 100)) * item.quantity;
         }
-        totalCommissions += user?.role === 'employee' ? (itemComm / splitFactor) : itemComm;
+        
+        const splitComm = itemComm / splitFactor;
+        
+        sellers.forEach(sellerId => {
+          if (!employeeCommissions[sellerId]) employeeCommissions[sellerId] = 0;
+          employeeCommissions[sellerId] += splitComm;
+        });
       });
     });
 
-    const baseSalary = user?.baseSalary || 0;
+    // Determinar quién recibe pago (los que trabajaron en el turno o ganaron comisión)
+    const employeesToSettle = new Set<string>();
+    if (session.workingEmployeeIds) {
+      session.workingEmployeeIds.forEach(id => employeesToSettle.add(id));
+    }
+    Object.keys(employeeCommissions).forEach(id => employeesToSettle.add(id));
+    
+    if (employeesToSettle.size === 0) employeesToSettle.add(session.userId);
 
-    // Create Settlement
-    useStore.getState().addSalarySettlement({
-      id: crypto.randomUUID(),
-      userId: session.userId,
-      userName: user?.name || 'Vendedor',
-      sessionId: session.id,
-      baseSalary,
-      commissions: totalCommissions,
-      total: baseSalary + totalCommissions,
-      date: new Date().toISOString(),
-      status: 'pending'
+    employeesToSettle.forEach(empId => {
+      const emp = users.find(u => u.id === empId);
+      if (!emp) return;
+      const baseSalary = emp.baseSalary || 0;
+      const comm = employeeCommissions[empId] || 0;
+      
+      useStore.getState().addSalarySettlement({
+        id: crypto.randomUUID(),
+        userId: empId,
+        userName: emp.name || 'Usuario',
+        sessionId: session.id,
+        baseSalary,
+        commissions: comm,
+        total: baseSalary + comm,
+        date: new Date().toISOString(),
+        status: 'pending'
+      });
     });
 
     closeSession(session.id, balances);
@@ -279,7 +297,7 @@ export default function CashRegister() {
           <form onSubmit={handleOpen} className="space-y-3">
             <div className="text-left bg-slate-50 p-4 rounded-2xl border border-slate-100">
               <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Fondo Inicial ({baseCurrency.code})</label>
-              <div className="relative">
+              <div className="relative mb-4">
                 <span className="absolute left-0 top-1/2 -translate-y-1/2 text-base font-black text-slate-300">$</span>
                 <input 
                   type="number" 
@@ -292,6 +310,37 @@ export default function CashRegister() {
                   className="w-full pl-6 pr-4 py-0.5 text-2xl bg-transparent border-none focus:ring-0 outline-none font-black text-slate-900 placeholder:text-slate-200"
                   placeholder="0.00"
                 />
+              </div>
+
+              <div className="space-y-2 mt-4 pt-4 border-t border-slate-200">
+                <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                  Empleados en este turno
+                </label>
+                <div className="flex flex-col gap-2 max-h-32 overflow-y-auto custom-scrollbar pr-1">
+                  {branchStaff.map(staff => (
+                    <label key={staff.id} className="flex items-center gap-2 p-2 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-indigo-300 transition-colors">
+                      <input 
+                        type="checkbox" 
+                        className="rounded text-indigo-600 focus:ring-indigo-500 bg-slate-100 border-slate-300 w-4 h-4"
+                        checked={selectedEmployeeIds.includes(staff.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedEmployeeIds([...selectedEmployeeIds, staff.id]);
+                          } else {
+                            setSelectedEmployeeIds(selectedEmployeeIds.filter(id => id !== staff.id));
+                          }
+                        }}
+                      />
+                      <span className="text-[10px] font-black text-slate-700 uppercase">{staff.name}</span>
+                      <span className="ml-auto text-[8px] font-bold text-slate-400 uppercase bg-slate-50 px-2 py-0.5 rounded-md">
+                        {staff.role}
+                      </span>
+                    </label>
+                  ))}
+                  {branchStaff.length === 0 && (
+                    <p className="text-[10px] text-slate-400 font-bold text-center py-2">No hay empleados asignados a esta sucursal.</p>
+                  )}
+                </div>
               </div>
             </div>
             <button 
