@@ -6,7 +6,7 @@ import { InfoTooltip } from "../components/InfoTooltip";
 import { cn } from "../lib/utils";
 
 export default function CashRegister() {
-  const { branches, currentBranchId, getCurrentSession, openSession, closeSession, getBaseCurrency, currencies, currentUser, transactions, users, salarySettlements, updateSalarySettlement } = useStore();
+  const { branches, currentBranchId, setCurrentBranch, getCurrentSession, openSession, closeSession, getBaseCurrency, currencies, currentUser, transactions, users, salarySettlements, updateSalarySettlement } = useStore();
   const session = getCurrentSession(currentBranchId, currentUser?.id || 'u1');
   const baseCurrency = getBaseCurrency();
   const currentBranch = branches.find(b => b.id === currentBranchId);
@@ -19,7 +19,7 @@ export default function CashRegister() {
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>(currentUser ? [currentUser.id] : []);
   
   const branchStaff = useMemo(() => {
-    return users.filter(u => u.branchId === currentBranchId);
+    return users.filter(u => u.branchId === currentBranchId || u.role === 'admin');
   }, [users, currentBranchId]);
 
   const [closingBalances, setClosingBalances] = useState<{ [key: string]: number }>({});
@@ -290,7 +290,19 @@ export default function CashRegister() {
 
           <div className="my-6 p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100/50">
             <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest mb-1">Sucursal Activa</p>
-            <p className="text-sm font-black text-indigo-900 uppercase">{currentBranch?.name}</p>
+            {currentUser?.role === 'admin' ? (
+              <select
+                value={currentBranchId}
+                onChange={(e) => setCurrentBranch(e.target.value)}
+                className="w-full bg-white border border-indigo-200 text-indigo-900 rounded-xl px-3 py-2 text-sm font-black uppercase outline-none focus:ring-2 focus:ring-indigo-500 mt-1 mb-2"
+              >
+                {branches.map(b => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-sm font-black text-indigo-900 uppercase">{currentBranch?.name}</p>
+            )}
             <p className="text-[10px] font-bold text-indigo-500 uppercase mt-1">Usuario: {currentUser?.name || 'Vendedor'}</p>
           </div>
           
