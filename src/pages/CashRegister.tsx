@@ -213,7 +213,9 @@ export default function CashRegister() {
 
     employeesToSettle.forEach(empId => {
       const emp = users.find(u => u.id === empId);
-      if (!emp) return;
+      // Skip if not found, or if it's an admin
+      if (!emp || emp.role === 'admin') return;
+
       const baseSalary = emp.baseSalary || 0;
       const comm = employeeCommissions[empId] || 0;
       

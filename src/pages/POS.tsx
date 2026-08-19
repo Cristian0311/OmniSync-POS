@@ -10,6 +10,7 @@ import { InfoTooltip } from "../components/InfoTooltip";
 export default function POS() {
   const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, inventory, addCustomer, bankCards, addBankTransaction, addQuote, customers, quotes } = useStore();
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
+  const [searchQuery, setSearchQuery] = useState("");
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
   const [showCameraScanner, setShowCameraScanner] = useState(false);
@@ -90,6 +91,15 @@ export default function POS() {
   // Barcode scanner moved lower
 
   const filteredProducts = products.filter(p => {
+    // Filtrar por búsqueda
+    const query = searchQuery.toLowerCase().trim();
+    if (query) {
+      const matchesSearch = p.name.toLowerCase().includes(query) || 
+                            p.sku?.toLowerCase().includes(query) || 
+                            p.barcode?.toLowerCase().includes(query);
+      if (!matchesSearch) return false;
+    }
+
     // Filtrar por categoría
     const matchesCategory = activeCategoryId === "Todos" || p.categoryId === activeCategoryId;
     if (!matchesCategory) return false;
@@ -99,7 +109,7 @@ export default function POS() {
       .filter(i => i.productId === p.id && i.branchId === currentBranchId)
       .reduce((sum, curr) => sum + curr.quantity, 0);
     return branchStockTotal > 0;
-  });
+  }).sort((a, b) => a.name.localeCompare(b.name));
 
   const subtotalBase = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
   const taxBase = 0; // Configurable tax if needed
@@ -795,7 +805,7 @@ export default function POS() {
                       >
                         <option value="">Seleccionar Cuenta...</option>
                         {bankCards.filter(c => c.currency === paymentLines.find(l => l.id === activePaymentLineId)?.code).map(card => (
-                          <option key={card.id} value={card.id}>{card.name} - Saldo: ${card.balance}</option>
+                          <option key={card.id} value={card.id}>{card.name} {card.lastFour ? `(*${card.lastFour})` : ''} - {card.bank} - Saldo: ${card.balance} {card.currency}</option>
                         ))}
                       </select>
                     </div>
@@ -966,6 +976,8 @@ export default function POS() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4" />
                 <input 
                   type="text" 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Producto o barras..." 
                   className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:ring-1 focus:ring-indigo-200 outline-none transition-all text-xs font-medium"
                 />
@@ -1052,7 +1064,7 @@ export default function POS() {
                 className="flex flex-col items-center p-2 rounded-2xl border border-slate-100 hover:border-indigo-100 hover:shadow-md transition-all active:scale-95 bg-white relative overflow-hidden group shadow-sm"
               >
                 {/* Warranty Pill Top-Right */}
-                {product.warrantyDays && (
+                {(product.warrantyDays ?? 0) > 0 && (
                   <div className="absolute top-1.5 right-1.5 bg-emerald-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded-full shadow-sm z-20 uppercase tracking-tighter">
                     {product.warrantyDays} días
                   </div>
