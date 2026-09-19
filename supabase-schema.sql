@@ -196,6 +196,7 @@ create table if not exists cash_sessions (
   expected_balance numeric,
   status text not null,
   user_id text references users(id),
+  worker_name text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 

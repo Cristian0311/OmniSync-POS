@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { InfoTooltip } from "../components/InfoTooltip";
-import { Branch, Category } from "../types";
+import { Branch, Category, User } from "../types";
+import { cn } from "../lib/utils";
 
 export default function Settings() {
   const { 
@@ -11,6 +12,7 @@ export default function Settings() {
     branches, addBranch, updateBranch, deleteBranch,
     categories, addCategory, updateCategory, deleteCategory,
     receiptConfig, updateReceiptConfig,
+    users, updateUser, addUser, deleteUser,
     getBaseCurrency, clearAllData
   } = useStore();
 
@@ -22,29 +24,45 @@ export default function Settings() {
 
   const [config, setConfig] = useState(storeConfig);
   const [ticketConfig, setTicketConfig] = useState(receiptConfig);
+  const employees = users.filter(u => u.role === 'employee');
+  const [employeeSalaries, setEmployeeSalaries] = useState<{ [id: string]: number }>({});
+  
+  // Sync employee salaries when users are loaded
+  useEffect(() => {
+    if (users.length > 0) {
+      setEmployeeSalaries(prev => {
+        const next = { ...prev };
+        users.forEach(u => {
+          if (!(u.id in next)) {
+            next[u.id] = u.baseSalary || 0;
+          }
+        });
+        return next;
+      });
+    }
+  }, [users]);
+
   const [newBranchName, setNewBranchName] = useState("");
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
 
   const [newCategory, setNewCategory] = useState({ name: "", department: "" });
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [showConfirmCache, setShowConfirmCache] = useState(false);
+  const [showConfirmReset, setShowConfirmReset] = useState(false);
+  const [resetInput, setResetInput] = useState("");
 
   const handleClearData = async () => {
-    const confirmMessage = "¿ESTÁS SEGURO QUE DESEAS ELIMINAR TODOS LOS DATOS?\n\nEsta acción borrará todo el inventario, transacciones, clientes, empleados y configuraciones. El software se reiniciará por completo.\n\nEscribe 'ELIMINAR' para confirmar.";
-    const userPrompt = window.prompt(confirmMessage);
+    if (resetInput !== 'ELIMINAR') return;
     
-    if (userPrompt === 'ELIMINAR') {
-      setIsLoading(true);
-      try {
-        await clearAllData();
-        window.location.reload();
-      } catch (e) {
-        alert("Ocurrió un error al eliminar los datos.");
-      } finally {
-        setIsLoading(false);
-      }
-    } else if (userPrompt !== null) {
-      alert("Operación cancelada. El texto ingresado no coincide.");
+    setIsLoading(true);
+    try {
+      await clearAllData();
+      window.location.reload();
+    } catch (e) {
+      console.error("Error al eliminar los datos:", e);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -63,6 +81,12 @@ export default function Settings() {
   const handleSaveTicket = () => {
     updateReceiptConfig(ticketConfig);
     alert("Configuración de ticket guardada.");
+  };
+
+  const handleSaveEmployeeSalary = (userId: string) => {
+    const salary = employeeSalaries[userId];
+    updateUser(userId, { baseSalary: salary });
+    alert("Salario actualizado correctamente.");
   };
 
   const handleAddBranch = () => {
@@ -245,72 +269,6 @@ export default function Settings() {
         </div>
 
         
-        {/* Información de la Tienda */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4 lg:col-span-3">
-          <div className="flex items-center gap-3 border-b border-slate-50 pb-3">
-            <div className="bg-blue-50 p-2 rounded-lg text-blue-600">
-              <Building2 className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Información de la Tienda Física</h3>
-              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Datos generales y ubicación</p>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Nombre de la Tienda</label>
-              <input type="text" value={config.storeName || ''} onChange={e => setConfig({...config, storeName: e.target.value})} className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100" />
-            </div>
-            <div>
-              <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Teléfono Principal</label>
-              <input type="text" value={config.phone || ''} onChange={e => setConfig({...config, phone: e.target.value})} className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100" />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Dirección</label>
-              <input type="text" value={config.address || ''} onChange={e => setConfig({...config, address: e.target.value})} className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100" />
-            </div>
-            <div className="md:col-span-2 flex items-center justify-between bg-slate-50 p-4 rounded-xl border border-slate-100">
-              <div>
-                <h4 className="text-xs font-bold text-slate-900">Ubicación GPS (Catálogo)</h4>
-                <p className="text-[10px] text-slate-500 mt-1">
-                  {config.latitude && config.longitude ? `Coordenadas: ${config.latitude}, ${config.longitude}` : 'No se ha detectado ubicación.'}
-                </p>
-              </div>
-              <button 
-                onClick={() => {
-                  if (navigator.geolocation) {
-                    navigator.geolocation.getCurrentPosition(
-                      (position) => {
-                        setConfig({...config, latitude: position.coords.latitude, longitude: position.coords.longitude});
-                      },
-                      (error) => {
-                        alert("Error al obtener ubicación: " + error.message);
-                      }
-                    );
-                  } else {
-                    alert("Geolocalización no soportada en este navegador.");
-                  }
-                }}
-                className="px-4 py-2 bg-white border border-slate-200 text-indigo-600 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-50 transition-colors shadow-sm active:scale-95 flex items-center gap-2"
-              >
-                <Store className="w-4 h-4" />
-                Detectar Mi Ubicación
-              </button>
-            </div>
-          </div>
-          
-          <div className="pt-4 border-t border-slate-50">
-            <button 
-              onClick={handleSaveConfig}
-              className="w-full sm:w-auto px-8 py-3 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 active:scale-95 flex items-center justify-center gap-2"
-            >
-              <Save className="w-3.5 h-3.5" />
-              Guardar Información de la Tienda
-            </button>
-          </div>
-        </div>
-
         {/* Configuración de Ticket / Recibo */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4 lg:col-span-3">
           <div className="flex items-center gap-3 border-b border-slate-50 pb-3">
@@ -318,15 +276,31 @@ export default function Settings() {
               <Plus className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Configuración de Ticket</h3>
-              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Personaliza lo que ve el cliente</p>
+              <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Configuración de Ticket e Información del Negocio</h3>
+              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Datos que aparecerán en el recibo del cliente</p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-4">
-              <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1">Configuración Hardware</h4>
+              <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1">Configuración Hardware e Impresión</h4>
               <div className="space-y-3">
+                <label className="flex items-center justify-between cursor-pointer group">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-slate-600 uppercase group-hover:text-slate-900 transition-colors">Impresión Automática</span>
+                    <span className="text-[7px] text-slate-400 font-medium">Imprimir ticket al confirmar cobro sin preguntar.</span>
+                  </div>
+                  <div className="relative inline-flex items-center ml-2">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer"
+                      checked={ticketConfig.autoPrint ?? false}
+                      onChange={e => setTicketConfig({...ticketConfig, autoPrint: e.target.checked})}
+                    />
+                    <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </div>
+                </label>
+
                 <label className="flex items-center justify-between cursor-pointer group">
                   <span className="text-[10px] font-bold text-slate-600 uppercase group-hover:text-slate-900 transition-colors">Abrir Gaveta</span>
                   <div className="relative inline-flex items-center">
@@ -343,7 +317,7 @@ export default function Settings() {
                 <label className="flex items-center justify-between cursor-pointer group">
                   <div>
                     <span className="text-[10px] font-bold text-slate-600 uppercase group-hover:text-slate-900 transition-colors block">Impresión Nativa (WebSerial)</span>
-                    <span className="text-[7px] text-slate-400 font-medium">Imprime en segundo plano sin ventana del navegador. Requiere Chrome/Edge.</span>
+                    <span className="text-[7px] text-slate-400 font-medium">Conexión USB/Bluetooth directa.</span>
                   </div>
                   <div className="relative inline-flex items-center ml-2 shrink-0">
                     <input 
@@ -362,19 +336,20 @@ export default function Settings() {
                       try {
                         const { connectPrinter } = await import('../lib/escpos');
                         await connectPrinter();
-                        alert('Impresora conectada correctamente.');
+                        alert('Impresora vinculada correctamente.');
                       } catch (error: any) {
-                        alert(error.message);
+                        alert("Error: " + error.message);
                       }
                     }}
-                    className="w-full py-2 bg-indigo-50 text-indigo-700 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors"
+                    className="w-full py-2 bg-indigo-50 text-indigo-700 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors flex items-center justify-center gap-2"
                   >
-                    Vincular Impresora USB
+                    <RefreshCw className="w-3 h-3" />
+                    Detectar Impresora (USB/BT)
                   </button>
                 )}
 
                 <div>
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Tamaño Papel (Térmica)</label>
+                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Tamaño Papel</label>
                   <select 
                     value={ticketConfig.printerWidth || '80mm'}
                     onChange={e => setTicketConfig({...ticketConfig, printerWidth: e.target.value as '58mm' | '80mm'})}
@@ -392,7 +367,6 @@ export default function Settings() {
                   { key: 'showLogo', label: 'Mostrar Logo / Nombre' },
                   { key: 'showAddress', label: 'Mostrar Dirección' },
                   { key: 'showPhone', label: 'Mostrar Teléfono' },
-                  { key: 'showNCF', label: 'Mostrar CI o Pasaporte' },
                   { key: 'showFooter', label: 'Mostrar Pie de Página' },
                 ].map(item => (
                   <label key={item.key} className="flex items-center justify-between cursor-pointer group">
@@ -412,27 +386,28 @@ export default function Settings() {
             </div>
 
             <div className="space-y-4 col-span-1 md:col-span-2">
-              <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1">Contenido Personalizado</h4>
+              <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1">Información que saldrá al imprimir el Ticket</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Nombre en Ticket</label>
+                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Nombre Comercial</label>
                   <input type="text" value={ticketConfig.businessName} onChange={e => setTicketConfig({...ticketConfig, businessName: e.target.value})} className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100" />
                 </div>
                 <div>
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Teléfono en Ticket</label>
+                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Teléfono de Contacto</label>
                   <input type="text" value={ticketConfig.businessPhone} onChange={e => setTicketConfig({...ticketConfig, businessPhone: e.target.value})} className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100" />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Dirección en Ticket</label>
+                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Dirección Física</label>
                   <input type="text" value={ticketConfig.businessAddress} onChange={e => setTicketConfig({...ticketConfig, businessAddress: e.target.value})} className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100" />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Texto de Pie de Página (Footer)</label>
+                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Texto al Final del Recibo</label>
                   <textarea 
                     value={ticketConfig.footerText} 
                     onChange={e => setTicketConfig({...ticketConfig, footerText: e.target.value})}
                     rows={2}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100 resize-none"
+                    placeholder="Ej: ¡Gracias por su compra! Vuelva pronto."
                   ></textarea>
                 </div>
               </div>
@@ -445,11 +420,128 @@ export default function Settings() {
               className="w-full sm:w-auto px-8 py-3 bg-indigo-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-800 transition-all shadow-xl shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
             >
               <Save className="w-3.5 h-3.5" />
-              Guardar Configuración de Ticket
+              Guardar Configuración y Datos del Negocio
             </button>
           </div>
         </div>
       </div>
+
+      {true && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4 lg:col-span-3">
+          <div className="flex items-center gap-3 border-b border-slate-50 pb-3">
+            <div className="bg-emerald-50 p-2 rounded-lg text-emerald-600">
+              <Users className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Gestión de Empleados</h3>
+              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Salarios y Asignación de Sucursales</p>
+            </div>
+          </div>
+          
+          {users.length === 0 ? (
+            <div className="p-4 bg-slate-50 rounded-xl text-center text-sm font-bold text-slate-500">
+              Cargando usuarios o no hay trabajadores registrados...
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-[10px] font-black text-slate-900 uppercase">Salario Base por Trabajador</h4>
+                    <p className="text-[8px] font-bold text-slate-400 uppercase">Fondo base asignado a cada usuario por turno</p>
+                  </div>
+                  <div className="bg-indigo-100 text-indigo-700 text-[7px] font-black px-2 py-0.5 rounded-full uppercase">
+                    {users.length} Usuarios
+                  </div>
+                </div>
+
+                <div className="space-y-2 max-h-52 overflow-y-auto custom-scrollbar pr-1">
+                  {users.map(u => (
+                    <div key={u.id} className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center justify-between gap-2 shadow-sm">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-[10px] font-black text-slate-900 uppercase truncate">{u.name}</p>
+                          <span className="text-[7px] font-black uppercase bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">
+                            {u.role}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="relative w-28">
+                          <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
+                            <span className="text-slate-400 text-[9px] font-bold">$</span>
+                          </div>
+                          <input 
+                            type="number" 
+                            min="0"
+                            step="0.01"
+                            value={employeeSalaries[u.id] ?? (u.baseSalary || 0)}
+                            onChange={e => setEmployeeSalaries({ ...employeeSalaries, [u.id]: Number(e.target.value) })}
+                            className="w-full pl-5 pr-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-bold outline-none focus:ring-1 focus:ring-indigo-300" 
+                          />
+                        </div>
+                        <button 
+                          onClick={() => handleSaveEmployeeSalary(u.id)}
+                          className="p-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all shadow-sm active:scale-95"
+                          title="Guardar Salario"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-[10px] font-black text-slate-900 uppercase">Permisos de Sucursal</h4>
+                    <p className="text-[8px] font-bold text-slate-400 uppercase">Sucursales donde pueden operar</p>
+                  </div>
+                </div>
+                <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar">
+                  {employees.map(emp => (
+                    <div key={emp.id} className="bg-white p-2 border border-slate-200 rounded-lg">
+                      <p className="text-[9px] font-black text-slate-900 mb-1">{emp.name}</p>
+                      <div className="flex flex-wrap gap-2">
+                        {branches.map(branch => {
+                          const isAllowed = emp.allowedBranches?.includes(branch.id) ?? true;
+                          return (
+                            <label key={branch.id} className="flex items-center gap-1 cursor-pointer">
+                              <input 
+                                type="checkbox" 
+                                checked={isAllowed}
+                                onChange={(e) => {
+                                  const allowed = emp.allowedBranches ?? branches.map(b => b.id);
+                                  const newAllowed = e.target.checked 
+                                    ? [...allowed, branch.id]
+                                    : allowed.filter(id => id !== branch.id);
+                                  updateUser(emp.id, { allowedBranches: newAllowed });
+                                }}
+                                className="rounded text-indigo-600 focus:ring-indigo-500 w-3 h-3"
+                              />
+                              <span className="text-[8px] font-bold text-slate-600 uppercase">{branch.name}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          
+          <div className="bg-amber-50 border border-amber-100 p-3 rounded-xl flex gap-3">
+            <InfoTooltip text="Configura aquí el pago base y los accesos. El sistema sumará automáticamente las comisiones de productos vendidas durante el turno para darte el Gran Total de Nómina." />
+            <p className="text-[9px] text-amber-700 font-medium leading-relaxed">
+              <strong>Instrucciones:</strong> El total que verás en Reportes será (Monto Base + Comisiones). Luego puedes repartir ese total entre tus trabajadores según tu criterio. Los empleados solo podrán abrir caja en las sucursales asignadas.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Zona Peligrosa */}
       <div className="bg-white rounded-2xl shadow-sm border border-red-100 p-5 space-y-4">
@@ -463,25 +555,95 @@ export default function Settings() {
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-red-50/50 p-4 rounded-xl border border-red-100">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100 mb-4">
           <div>
-            <h4 className="text-sm font-bold text-slate-900">Restablecer Sistema por Completo</h4>
+            <h4 className="text-sm font-bold text-slate-900">Limpiar Caché Local</h4>
             <p className="text-xs text-slate-600 mt-1">
-              Esto eliminará <strong>todos</strong> los datos de la base de datos (inventario, ventas, clientes, usuarios) y te cerrará la sesión. Se requerirá registrar de nuevo a un administrador.
+              Úsalo si la aplicación se comporta de forma extraña o si la sincronización está atascada.
             </p>
           </div>
-          <button
-            onClick={handleClearData}
-            disabled={isLoading}
-            className="w-full sm:w-auto shrink-0 px-6 py-3 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition-all shadow-lg shadow-red-200 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isLoading ? (
-              <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-white"></div>
+          <div className="flex gap-2">
+            {showConfirmCache ? (
+              <>
+                <button
+                  onClick={() => setShowConfirmCache(false)}
+                  className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-300 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => {
+                    localStorage.clear();
+                    window.location.reload();
+                  }}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 active:scale-95"
+                >
+                  Confirmar Limpieza
+                </button>
+              </>
             ) : (
-              <Trash2 className="w-3.5 h-3.5" />
+              <button
+                onClick={() => setShowConfirmCache(true)}
+                className="w-full sm:w-auto shrink-0 px-6 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 active:scale-95 flex items-center justify-center gap-2"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Limpiar Caché Local
+              </button>
             )}
-            {isLoading ? 'Eliminando...' : 'Eliminar Todo y Reiniciar'}
-          </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-red-50/50 p-4 rounded-xl border border-red-100">
+          <div className="flex-1">
+            <h4 className="text-sm font-bold text-slate-900">Restablecer Sistema por Completo</h4>
+            <p className="text-xs text-slate-600 mt-1">
+              Esto eliminará <strong>todos</strong> los datos de la base de datos (inventario, ventas, clientes, usuarios) y te cerrará la sesión.
+            </p>
+            {showConfirmReset && (
+              <div className="mt-3 p-3 bg-white rounded-lg border border-red-200 animate-in fade-in slide-in-from-top-2">
+                <p className="text-[10px] font-black text-red-600 uppercase mb-2">Escribe "ELIMINAR" para confirmar:</p>
+                <input 
+                  type="text"
+                  value={resetInput}
+                  onChange={e => setResetInput(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-1 focus:ring-red-100 uppercase"
+                  placeholder="Escribe aquí..."
+                />
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            {showConfirmReset ? (
+              <>
+                <button
+                  onClick={() => {
+                    setShowConfirmReset(false);
+                    setResetInput("");
+                  }}
+                  className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-300 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleClearData}
+                  disabled={isLoading || resetInput !== 'ELIMINAR'}
+                  className="px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition-all shadow-lg shadow-red-200 active:scale-95 disabled:opacity-30 flex items-center gap-2"
+                >
+                  {isLoading ? <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div> : <Trash2 className="w-3 h-3" />}
+                  Confirmar Borrado
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setShowConfirmReset(true)}
+                disabled={isLoading}
+                className="w-full sm:w-auto shrink-0 px-6 py-3 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition-all shadow-lg shadow-red-200 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Eliminar Todo y Reiniciar
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

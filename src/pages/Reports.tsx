@@ -1,11 +1,22 @@
-import React, { useState } from "react";
-import { BarChart, LineChart, PieChart, TrendingUp, DollarSign, Calendar, Calculator, Package, User, MapPin, Eye, X, ShieldCheck, ArrowUpRight, ArrowDownRight, History, Brain, AlertCircle, FileSpreadsheet, Download } from "lucide-react";
+import React, { useState, useMemo } from "react";
+import { 
+  TrendingUp, DollarSign, Calendar, Calculator, Package, User, 
+  X, ArrowDownRight, History, Download, Printer, CheckCircle2, 
+  Clock, AlertCircle
+} from "lucide-react";
 import { useStore } from "../store/useStore";
 import { cn } from "../lib/utils";
 import { InfoTooltip } from "../components/InfoTooltip";
+import { supabase } from "../lib/supabase";
 
 export default function Reports() {
-  const { transactions, getBaseCurrency, cashSessions, users, branches, currencies, warranties, returns, supplierOrders, products, inventory, bankTransactions, bankCards, customers } = useStore();
+  const { 
+    transactions, getBaseCurrency, cashSessions, users, branches, 
+    currencies, warranties, returns, supplierOrders, products, 
+    inventory, bankTransactions, bankCards, customers, categories,
+    salarySettlements, addSalarySettlement, updateSalarySettlement,
+    addSyncTask
+  } = useStore();
   const baseCurrency = getBaseCurrency();
 
   const totalSales = transactions.reduce((sum, t) => sum + t.total, 0);
@@ -43,8 +54,6 @@ export default function Reports() {
   const totalBankDeposits = bankPaymentsReceived + bankOtherDeposits;
   const totalBankWithdrawals = bankSupplierPayments + bankOtherWithdrawals;
 
-  // netFlow should be Sales + Other Incomes - Total Expenses
-  // Since totalSales already includes transfer payments, we only add OTHER deposits to avoid duplication
   const totalIncomes = totalCashIncomes + bankOtherDeposits;
   const totalExpenses = totalCashExpenses + totalBankWithdrawals;
   const netFlow = totalSales + totalIncomes - totalExpenses;
@@ -71,80 +80,6 @@ export default function Reports() {
     </div>
   );
 
-  const aiInsights = React.useMemo(() => {
-    const productSales: Record<string, number> = {};
-    transactions.forEach(tx => {
-      tx.items.forEach(item => {
-        const pid = typeof item.product === 'string' ? item.product : item.product?.id;
-        if (pid) {
-          productSales[pid] = (productSales[pid] || 0) + item.quantity;
-        }
-      });
-    });
-
-    const sortedProducts = products
-      .filter(p => productSales[p.id])
-      .map(p => {
-        const totalStock = inventory.filter(i => i.productId === p.id).reduce((sum, curr) => sum + curr.quantity, 0);
-        return {
-          product: p,
-          sales: productSales[p.id],
-          stock: totalStock
-        };
-      })
-      .sort((a, b) => b.sales - a.sales);
-
-    if (sortedProducts.length === 0) {
-      return {
-        forecasts: [],
-        anomalies: [],
-        suggestion: "Registra más ventas para que la IA pueda generar sugerencias precisas."
-      };
-    }
-
-    const forecasts = sortedProducts.slice(0, 3).map((item, idx) => {
-      const isTrendingUp = item.sales > item.stock;
-      return {
-        name: item.product.name,
-        prediction: isTrendingUp ? `+${Math.floor(Math.random() * 15 + 10)}%` : `-${Math.floor(Math.random() * 10 + 2)}%`,
-        confidence: Math.floor(Math.random() * 15 + 80),
-        status: isTrendingUp ? 'up' as const : 'down' as const
-      };
-    });
-
-    const topProduct = sortedProducts[0];
-    const suggestion = `La IA sugiere asegurar el inventario de "${topProduct.product.name}", ya que lidera las ventas con ${topProduct.sales} unidades vendidas.`;
-
-    const anomalies = [];
-    
-    const atRisk = sortedProducts.find(p => p.sales > 0 && p.stock <= p.sales * 0.2);
-    if (atRisk) {
-      anomalies.push({
-        title: "Riesgo de Quiebre de Stock",
-        severity: "critical",
-        description: `El producto "${atRisk.product.name}" tiene alta demanda pero su stock actual (${atRisk.stock}) es críticamente bajo en comparación con sus ventas históricas.`
-      });
-    }
-
-    if (returns.length > 0) {
-      anomalies.push({
-        title: "Devoluciones Detectadas",
-        severity: "warning",
-        description: `Se han registrado ${returns.length} devoluciones. Revisa el historial de garantías para identificar productos defectuosos.`
-      });
-    }
-
-    if (anomalies.length === 0) {
-      anomalies.push({
-        title: "Todo en orden",
-        severity: "info",
-        description: "No se han detectado anomalías críticas en el comportamiento de ventas o inventario."
-      });
-    }
-
-    return { forecasts, suggestion, anomalies };
-  }, [transactions, products, inventory, returns]);
-
   const getProductName = (itemProduct: any) => {
     if (!itemProduct) return 'Desconocido';
     if (typeof itemProduct === 'string') {
@@ -154,8 +89,259 @@ export default function Reports() {
     return itemProduct.name || 'Desconocido';
   };
 
-  const [activeTab, setActiveTab] = useState<'sessions' | 'sales' | 'details' | 'warranties' | 'movements' | 'pandl' | 'forecast'>('pandl');
+  const [activeTab, setActiveTab] = useState<'sales' | 'payroll' | 'sessions' | 'products'>('sales');
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
+  const [sessionFilter, setSessionFilter] = useState<'all' | 'today' | 'custom'>('all');
+  const [selectedFilterDate, setSelectedFilterDate] = useState<string>('');
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>('all');
+  const [printSessionId, setPrintSessionId] = useState<string | null>(null);
+
+  // Chronological mapping so all sessions (historical and new) have consistent Turno-1, Turno-2, etc.
+  const sessionTurnMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const sorted = [...cashSessions].sort(
+      (a, b) => new Date(a.openedAt || a.closedAt || '').getTime() - new Date(b.openedAt || b.closedAt || '').getTime()
+    );
+    sorted.forEach((s, idx) => {
+      if (s.id.startsWith('Turno-')) {
+        map.set(s.id, s.id);
+      } else {
+        map.set(s.id, `Turno-${idx + 1}`);
+      }
+    });
+    return map;
+  }, [cashSessions]);
+
+  const closedSessions = useMemo(() => {
+    return [...cashSessions]
+      .filter(s => s.status === 'closed')
+      .sort((a, b) => new Date(b.closingDate || b.closedAt || b.openedAt || '').getTime() - new Date(a.closingDate || a.closedAt || a.openedAt || '').getTime());
+  }, [cashSessions]);
+
+  const filteredClosedSessions = useMemo(() => {
+    return closedSessions.filter(s => {
+      if (selectedBranchFilter !== 'all' && s.branchId !== selectedBranchFilter) {
+        return false;
+      }
+      const dateObj = new Date(s.closingDate || s.closedAt || s.openedAt);
+      if (selectedFilterDate) {
+        return dateObj.toISOString().split('T')[0] === selectedFilterDate;
+      }
+      if (sessionFilter === 'today') {
+        return dateObj.toLocaleDateString() === new Date().toLocaleDateString();
+      }
+      return true;
+    });
+  }, [closedSessions, sessionFilter, selectedFilterDate, selectedBranchFilter]);
+
+  // Complete payroll settlements per closed session
+  const payrollList = useMemo(() => {
+    const settlementMap = new Map<string, typeof salarySettlements[0]>();
+    (salarySettlements || []).forEach(st => {
+      settlementMap.set(st.sessionId, st);
+    });
+
+    return closedSessions.map(session => {
+      const turnLabel = sessionTurnMap.get(session.id) || session.id;
+      const sessionTx = transactions.filter(t => 
+        t.sessionId 
+          ? t.sessionId === session.id
+          : (t.branchId === session.branchId && 
+             new Date(t.date).getTime() >= new Date(session.openedAt).getTime() && 
+             (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
+      );
+
+      const totalSales = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
+      const totalItems = sessionTx.reduce((sum, tx) => sum + tx.items.reduce((s, i) => s + i.quantity, 0), 0);
+
+      const existing = settlementMap.get(session.id);
+      const emp = users.find(u => u.id === session.userId || u.name === session.workerName);
+      const workerName = session.workerName || existing?.userName || emp?.name || 'Vendedor';
+
+      // Calculate commissions if not in existing settlement
+      let commissions = existing ? existing.commissions : 0;
+      if (!existing) {
+        commissions = sessionTx.reduce((sum, tx) => {
+          return sum + tx.items.reduce((s, item) => {
+            const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
+            const prod = products.find(p => p.id === prodId);
+            if (!prod) return s;
+            const commValue = prod.commissionType === 'percentage'
+              ? (prod.price * (prod.commissionValue || 0) / 100)
+              : (prod.commissionValue || 0);
+            return s + (commValue * item.quantity);
+          }, 0);
+        }, 0);
+      }
+
+      const baseSalary = existing ? existing.baseSalary : (emp?.baseSalary || 0);
+      const totalSalary = existing ? existing.total : (baseSalary + commissions);
+      const status = existing ? existing.status : 'pending';
+      const date = existing?.date || session.closingDate || session.closedAt || session.openedAt;
+
+      return {
+        settlementId: existing?.id,
+        sessionId: session.id,
+        turnLabel,
+        date,
+        workerName,
+        userId: session.userId,
+        branchId: session.branchId,
+        baseSalary,
+        commissions,
+        totalSalary,
+        totalSales,
+        totalItems,
+        status: status as 'pending' | 'paid',
+        sessionTx
+      };
+    });
+  }, [closedSessions, salarySettlements, transactions, users, products, sessionTurnMap]);
+
+  const filteredPayrollList = useMemo(() => {
+    return payrollList.filter(item => {
+      if (selectedBranchFilter !== 'all' && item.branchId !== selectedBranchFilter) {
+        return false;
+      }
+      const dateObj = new Date(item.date);
+      if (selectedFilterDate) {
+        return dateObj.toISOString().split('T')[0] === selectedFilterDate;
+      }
+      if (sessionFilter === 'today') {
+        return dateObj.toLocaleDateString() === new Date().toLocaleDateString();
+      }
+      return true;
+    });
+  }, [payrollList, selectedBranchFilter, selectedFilterDate, sessionFilter]);
+
+  const filteredCashSessions = useMemo(() => {
+    return cashSessions.filter(s => {
+      if (selectedBranchFilter !== 'all' && s.branchId !== selectedBranchFilter) {
+        return false;
+      }
+      const dateObj = new Date(s.closingDate || s.closedAt || s.openedAt);
+      if (selectedFilterDate) {
+        return dateObj.toISOString().split('T')[0] === selectedFilterDate;
+      }
+      if (sessionFilter === 'today') {
+        return dateObj.toLocaleDateString() === new Date().toLocaleDateString();
+      }
+      return true;
+    });
+  }, [cashSessions, selectedBranchFilter, selectedFilterDate, sessionFilter]);
+
+  // Aggregated payroll totals per worker
+  const aggregatedPayrollByWorker = useMemo(() => {
+    const map = new Map<string, {
+      userId: string;
+      workerName: string;
+      shiftsCount: number;
+      totalSales: number;
+      totalBaseSalary: number;
+      totalCommissions: number;
+      totalSalary: number;
+      pendingSalary: number;
+      paidSalary: number;
+    }>();
+
+    filteredPayrollList.forEach(item => {
+      const key = item.workerName;
+      if (!map.has(key)) {
+        map.set(key, {
+          userId: item.userId,
+          workerName: item.workerName,
+          shiftsCount: 0,
+          totalSales: 0,
+          totalBaseSalary: 0,
+          totalCommissions: 0,
+          totalSalary: 0,
+          pendingSalary: 0,
+          paidSalary: 0
+        });
+      }
+      const agg = map.get(key)!;
+      agg.shiftsCount += 1;
+      agg.totalSales += item.totalSales;
+      agg.totalBaseSalary += item.baseSalary;
+      agg.totalCommissions += item.commissions;
+      agg.totalSalary += item.totalSalary;
+      if (item.status === 'paid') {
+        agg.paidSalary += item.totalSalary;
+      } else {
+        agg.pendingSalary += item.totalSalary;
+      }
+    });
+
+    return Array.from(map.values());
+  }, [filteredPayrollList]);
+
+  // Toggle payment status handler
+  const handleTogglePayment = async (item: typeof payrollList[0]) => {
+    const nextStatus: 'pending' | 'paid' = item.status === 'paid' ? 'pending' : 'paid';
+    if (item.settlementId) {
+      updateSalarySettlement(item.settlementId, { status: nextStatus });
+      try {
+        await supabase.from('salary_settlements').update({ status: nextStatus }).eq('id', item.settlementId);
+      } catch (e) {
+        console.error("Error updating settlement in Supabase:", e);
+        addSyncTask({
+          action: 'UPDATE',
+          table: 'salary_settlements',
+          data: { id: item.settlementId, status: nextStatus }
+        });
+      }
+    } else {
+      const newSettlement: import("../types").SalarySettlement = {
+        id: crypto.randomUUID(),
+        sessionId: item.sessionId,
+        userId: item.userId || '',
+        userName: item.workerName,
+        baseSalary: item.baseSalary,
+        commissions: item.commissions,
+        total: item.totalSalary,
+        date: item.date,
+        status: nextStatus
+      };
+      addSalarySettlement(newSettlement);
+      try {
+        await supabase.from('salary_settlements').insert([{
+          id: newSettlement.id,
+          session_id: newSettlement.sessionId,
+          user_id: newSettlement.userId,
+          user_name: newSettlement.userName,
+          base_salary: newSettlement.baseSalary,
+          commissions: newSettlement.commissions,
+          total: newSettlement.total,
+          date: newSettlement.date,
+          status: newSettlement.status
+        }]);
+      } catch (e) {
+        console.error("Error inserting settlement in Supabase:", e);
+        addSyncTask({
+          action: 'INSERT',
+          table: 'salary_settlements',
+          data: {
+            id: newSettlement.id,
+            session_id: newSettlement.sessionId,
+            user_id: newSettlement.userId,
+            user_name: newSettlement.userName,
+            base_salary: newSettlement.baseSalary,
+            commissions: newSettlement.commissions,
+            total: newSettlement.total,
+            date: newSettlement.date,
+            status: newSettlement.status
+          }
+        });
+      }
+    }
+  };
+
+  const handlePrintShiftTicket = (sessionId: string) => {
+    setPrintSessionId(sessionId);
+    setTimeout(() => {
+      window.print();
+    }, 150);
+  };
 
   const exportSalesCSV = () => {
     const headers = ["Fecha", "ID Ticket", "Cliente", "Cajero", "Total", "Monedas"];
@@ -184,18 +370,24 @@ export default function Reports() {
     document.body.removeChild(link);
   };
 
+  // Find printable shift data
+  const printSession = cashSessions.find(s => s.id === printSessionId);
+  const printPayrollItem = printSession ? payrollList.find(p => p.sessionId === printSession.id) : null;
+  const printBranch = printSession ? branches.find(b => b.id === printSession.branchId) : null;
+
   return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-[1400px] mx-auto">
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-[1400px] mx-auto pb-12">
+      {/* Header */}
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
         <div className="px-2">
           <h2 className="text-base font-black text-slate-900 tracking-tighter flex items-center gap-2 uppercase">
             Panel de Reportes
-            <InfoTooltip text="Panel integral de métricas. Visualiza tus ventas, flujos de caja e insights generados por IA sobre tu inventario." position="bottom" />
+            <InfoTooltip text="Panel integral de reportes comerciales, registro de ventas por turno, nómina y liquidación diaria del personal." position="bottom" />
           </h2>
-          <p className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] mt-0.5">Control Financiero Operativo</p>
+          <p className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] mt-0.5">Control Financiero, Ventas y Nómina Operativa</p>
         </div>
         
-        {/* Navigation Bar Top */}
+        {/* Navigation Tabs */}
         <div className="flex flex-wrap items-center gap-2">
           <button 
             onClick={exportSalesCSV}
@@ -204,33 +396,34 @@ export default function Reports() {
             <Download className="w-3.5 h-3.5" />
             Exportar CSV
           </button>
-          <div className="w-px h-6 bg-slate-200 mx-1" />
+          <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
           {[
-            { id: 'pandl', label: 'P&L', group: 'finance' },
-            { id: 'sales', label: 'Ventas', group: 'finance' },
-            { id: 'sessions', label: 'Cierres', group: 'finance' },
-            { id: 'movements', label: 'Movimientos', group: 'finance' },
-            { id: 'details', label: 'Turnos', group: 'ops' },
-            { id: 'warranties', label: 'Garantías', group: 'ops' },
-            { id: 'forecast', label: 'IA', group: 'ai' },
-          ].map(tab => (
-            <button 
-              key={tab.id} 
-              onClick={() => setActiveTab(tab.id as any)} 
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
-                activeTab === tab.id 
-                  ? tab.group === 'ai' ? "bg-emerald-600 text-white shadow-md shadow-emerald-100" 
-                    : "bg-indigo-600 text-white shadow-md shadow-indigo-100"
-                  : "bg-slate-50 text-slate-500 hover:bg-slate-100"
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
+            { id: 'sales', label: 'Registro de Ventas por Turno', icon: TrendingUp },
+            { id: 'payroll', label: 'Nómina y Liquidación Diaria', icon: Calculator },
+            { id: 'sessions', label: 'Historial de Cajas', icon: History },
+            { id: 'products', label: 'Productos Vendidos', icon: Package }
+          ].map(tab => {
+            const Icon = tab.icon;
+            return (
+              <button 
+                key={tab.id} 
+                onClick={() => setActiveTab(tab.id as any)} 
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5",
+                  activeTab === tab.id 
+                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-100" 
+                    : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+                )}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
       </header>
 
+      {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex items-start gap-3">
           <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
@@ -267,23 +460,26 @@ export default function Reports() {
             <Package className="w-3.5 h-3.5" />
           </div>
           <div className="min-w-0">
-            <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest truncate">Transacciones</p>
+            <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest truncate">Transacciones Totales</p>
             <h3 className="text-base font-black text-slate-900 truncate">{txCount}</h3>
           </div>
         </div>
       </div>
 
+      {/* Currency Breakdown */}
       <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
-        <h3 className="text-[8px] font-black text-slate-400 uppercase tracking-[0.3em] mb-3 px-1">Desglose Divisas</h3>
+        <h3 className="text-[8px] font-black text-slate-400 uppercase tracking-[0.3em] mb-3 px-1">Desglose por Divisas</h3>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
           {currencies.map(c => {
             const cashTotal = transactions.reduce((sum, tx) => {
               const payment = tx.payments.find(p => p.currencyCode === c.code && p.method === 'cash');
-              return sum + (payment?.amount || 0);
+              const change = tx.changePayments?.find(cp => cp.currencyCode === c.code && cp.method === 'cash');
+              return sum + (payment?.amount || 0) - (change?.amount || 0);
             }, 0);
             const transferTotal = transactions.reduce((sum, tx) => {
               const payment = tx.payments.find(p => p.currencyCode === c.code && p.method === 'transfer');
-              return sum + (payment?.amount || 0);
+              const change = tx.changePayments?.find(cp => cp.currencyCode === c.code && cp.method === 'transfer');
+              return sum + (payment?.amount || 0) - (change?.amount || 0);
             }, 0);
 
             if (cashTotal === 0 && transferTotal === 0) return null;
@@ -314,51 +510,499 @@ export default function Reports() {
         </div>
       </div>
 
+      {/* Global Filter Toolbar: Sucursales, Periodo, Fecha */}
+      <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200/80 rounded-xl px-2.5 py-1.5">
+            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Sucursal:</span>
+            <select
+              value={selectedBranchFilter}
+              onChange={(e) => setSelectedBranchFilter(e.target.value)}
+              className="bg-transparent text-[10px] font-black text-slate-800 uppercase outline-none cursor-pointer"
+            >
+              <option value="all">Todas las Sucursales ({branches.length})</option>
+              {branches.map(b => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200/80 rounded-xl p-1">
+            <button
+              onClick={() => { setSessionFilter('all'); setSelectedFilterDate(''); }}
+              className={cn(
+                "px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
+                sessionFilter === 'all' && !selectedFilterDate ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-200/60"
+              )}
+            >
+              Todos ({closedSessions.length})
+            </button>
+            <button
+              onClick={() => { setSessionFilter('today'); setSelectedFilterDate(''); }}
+              className={cn(
+                "px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
+                sessionFilter === 'today' ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-200/60"
+              )}
+            >
+              Hoy
+            </button>
+            <div className="flex items-center gap-1 px-2 py-0.5 border-l border-slate-200">
+              <Calendar className="w-3 h-3 text-slate-400" />
+              <input 
+                type="date" 
+                value={selectedFilterDate}
+                onChange={(e) => {
+                  setSelectedFilterDate(e.target.value);
+                  setSessionFilter('custom');
+                }}
+                className="bg-transparent text-[10px] font-bold text-slate-700 outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1.5 text-[8px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            Sync en tiempo real
+          </span>
+        </div>
+      </div>
+
+      {/* TAB 1: REGISTRO DE VENTAS POR TURNO */}
+      {activeTab === 'sales' && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="p-3.5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50/50">
+            <div>
+              <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-indigo-600" />
+                Registro de Ventas por Turnos Cerrados
+              </h3>
+              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+                Ventas consecutivas lineales por turno y fecha de cierre
+              </p>
+            </div>
+            <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider">
+              {filteredClosedSessions.length} turnos encontrados
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/80 border-b border-slate-100 text-[8px] font-black text-slate-400 uppercase tracking-[0.15em]">
+                  <th className="px-3 py-2.5">Turno</th>
+                  <th className="px-3 py-2.5">Fecha y Hora Cierre</th>
+                  <th className="px-3 py-2.5">Vendedor / Sucursal</th>
+                  <th className="px-3 py-2.5 text-center">Productos</th>
+                  <th className="px-3 py-2.5 text-right">Venta Total</th>
+                  <th className="px-3 py-2.5 text-right">Salario Liquidado</th>
+                  <th className="px-3 py-2.5 text-center">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredClosedSessions.map(session => {
+                  const sessionTx = transactions.filter(t => 
+                    t.sessionId 
+                      ? t.sessionId === session.id
+                      : (t.branchId === session.branchId && 
+                         new Date(t.date).getTime() >= new Date(session.openedAt).getTime() && 
+                         (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
+                  );
+                  const totalSalesInSession = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
+                  const totalItems = sessionTx.reduce((sum, tx) => sum + tx.items.reduce((s, i) => s + i.quantity, 0), 0);
+                  const sequentialTurn = sessionTurnMap.get(session.id) || session.id;
+                  const dateToDisplay = new Date(session.closingDate || session.closedAt || session.openedAt);
+                  const pItem = filteredPayrollList.find(p => p.sessionId === session.id);
+                  const branchName = branches.find(b => b.id === session.branchId)?.name || 'Sucursal Principal';
+                  const workerName = session.workerName || users.find(u => u.id === session.userId)?.name || 'Vendedor';
+                  
+                  return (
+                    <tr key={session.id} className="hover:bg-slate-50/60 transition-colors">
+                      {/* Turno lineal */}
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-100 tracking-wider">
+                          {sequentialTurn}
+                        </span>
+                      </td>
+
+                      {/* Fecha y hora en una sola línea */}
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-800">
+                          <span>{dateToDisplay.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                          <span className="text-[9px] font-medium text-slate-400">{dateToDisplay.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      </td>
+
+                      {/* Vendedor y Sucursal en una sola línea */}
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-black text-slate-900 uppercase">{workerName}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200/50">
+                            {branchName}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Productos */}
+                      <td className="px-3 py-2 text-center whitespace-nowrap">
+                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[9px] font-black uppercase border border-slate-200/50">
+                          {totalItems} prods
+                        </span>
+                      </td>
+
+                      {/* Venta Total */}
+                      <td className="px-3 py-2 text-right font-black text-slate-900 text-xs sm:text-sm tracking-tight whitespace-nowrap">
+                        {formatMoney(totalSalesInSession)}
+                      </td>
+
+                      {/* Salario Liquidado */}
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        <span className="text-[11px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
+                          {formatMoney(pItem?.totalSalary || 0)}
+                        </span>
+                      </td>
+
+                      {/* Acciones */}
+                      <td className="px-3 py-2 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button 
+                            onClick={() => setExpandedSession(session.id)}
+                            className="bg-indigo-600 text-white px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 shadow-sm"
+                          >
+                            Detalle
+                          </button>
+                          <button
+                            onClick={() => handlePrintShiftTicket(session.id)}
+                            title="Imprimir Comprobante Térmico"
+                            className="p-1.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all active:scale-95 border border-slate-200"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {filteredClosedSessions.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-10 text-center text-slate-400">
+                      <AlertCircle className="w-7 h-7 mx-auto mb-1.5 opacity-40" />
+                      <p className="font-black uppercase text-[10px] tracking-wider">No se encontraron turnos cerrados para el filtro seleccionado.</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: NÓMINA Y LIQUIDACIÓN DIARIA */}
+      {activeTab === 'payroll' && (
+        <div className="space-y-4">
+          {/* Payroll KPI Header */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
+              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Total Nómina Liquidada</span>
+              <p className="text-base font-black text-indigo-600 mt-0.5">
+                {formatMoney(filteredPayrollList.reduce((sum, item) => sum + item.totalSalary, 0))}
+              </p>
+            </div>
+            <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
+              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Total Comisiones</span>
+              <p className="text-base font-black text-emerald-600 mt-0.5">
+                {formatMoney(filteredPayrollList.reduce((sum, item) => sum + item.commissions, 0))}
+              </p>
+            </div>
+            <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
+              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Total Salarios Base</span>
+              <p className="text-base font-black text-slate-900 mt-0.5">
+                {formatMoney(filteredPayrollList.reduce((sum, item) => sum + item.baseSalary, 0))}
+              </p>
+            </div>
+            <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
+              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Turnos Computados</span>
+              <p className="text-base font-black text-slate-900 mt-0.5">
+                {filteredPayrollList.length} Turnos
+              </p>
+            </div>
+          </div>
+
+          {/* Liquidación por Turno Cerrado Table */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="p-3.5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-indigo-50/20">
+              <div>
+                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                  <Calculator className="w-4 h-4 text-indigo-600" />
+                  Liquidación Diaria de Salarios por Turno Cerrado
+                </h3>
+                <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+                  Fecha de salario, turno lineal consecutivo, ventas, comisiones y liquidación exacta
+                </p>
+              </div>
+              <span className="text-[9px] font-black text-indigo-600 uppercase tracking-wider">
+                {filteredPayrollList.length} liquidaciones
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/80 border-b border-slate-100 text-[8px] font-black text-slate-400 uppercase tracking-[0.15em]">
+                    <th className="px-3 py-2.5">Turno</th>
+                    <th className="px-3 py-2.5">Fecha Salario</th>
+                    <th className="px-3 py-2.5">Trabajador / Sucursal</th>
+                    <th className="px-3 py-2.5 text-right">Ventas Turno</th>
+                    <th className="px-3 py-2.5 text-right">Salario Base</th>
+                    <th className="px-3 py-2.5 text-right">Comisión Prods</th>
+                    <th className="px-3 py-2.5 text-right">Salario Total</th>
+                    <th className="px-3 py-2.5 text-center">Estado Pago</th>
+                    <th className="px-3 py-2.5 text-center">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredPayrollList.map(item => {
+                    const dateObj = new Date(item.date);
+                    const branchName = branches.find(b => b.id === item.branchId)?.name || 'Sucursal Principal';
+                    return (
+                      <tr key={item.sessionId} className="hover:bg-slate-50/60 transition-colors">
+                        {/* Turno lineal */}
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-100 tracking-wider">
+                            {item.turnLabel}
+                          </span>
+                        </td>
+
+                        {/* Fecha del salario y hora lineal */}
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-800">
+                            <span>{dateObj.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                            <span className="text-[9px] font-medium text-slate-400">{dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                        </td>
+
+                        {/* Trabajador y Sucursal lineal */}
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] font-black text-slate-900 uppercase">{item.workerName}</span>
+                            <span className="text-[8px] font-bold text-slate-400 uppercase bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200/50">
+                              {branchName}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Ventas Turno lineal */}
+                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1 text-[10px]">
+                            <span className="font-black text-slate-900">{formatMoney(item.totalSales)}</span>
+                            <span className="text-[8px] font-bold text-slate-400">({item.totalItems}p)</span>
+                          </div>
+                        </td>
+
+                        {/* Salario Base */}
+                        <td className="px-3 py-2 text-right text-[10px] font-bold text-slate-700 whitespace-nowrap">
+                          {formatMoney(item.baseSalary)}
+                        </td>
+
+                        {/* Comisión Productos */}
+                        <td className="px-3 py-2 text-right text-[10px] font-bold text-emerald-600 whitespace-nowrap">
+                          +{formatMoney(item.commissions)}
+                        </td>
+
+                        {/* Total Salario a Liquidar */}
+                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                          <span className="text-xs font-black text-emerald-700 tracking-tight bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">
+                            {formatMoney(item.totalSalary)}
+                          </span>
+                        </td>
+
+                        {/* Estado */}
+                        <td className="px-3 py-2 text-center whitespace-nowrap">
+                          <button
+                            onClick={() => handleTogglePayment(item)}
+                            className={cn(
+                              "px-2.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider transition-all border",
+                              item.status === 'paid'
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                                : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+                            )}
+                          >
+                            {item.status === 'paid' ? '✓ Pagado' : '⏳ Pendiente'}
+                          </button>
+                        </td>
+
+                        {/* Acciones */}
+                        <td className="px-3 py-2 text-center whitespace-nowrap">
+                          <button
+                            onClick={() => handlePrintShiftTicket(item.sessionId)}
+                            title="Imprimir Comprobante de Liquidación"
+                            className="p-1.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all border border-slate-200 active:scale-95"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {filteredPayrollList.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="px-6 py-10 text-center text-slate-400 font-bold uppercase text-[10px]">
+                        No hay turnos cerrados con nómina calculada para el filtro seleccionado.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Resumen Consolidado por Trabajador */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="p-3.5 border-b border-slate-100 bg-slate-50/50">
+              <h3 className="text-[11px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                <User className="w-3.5 h-3.5 text-indigo-600" />
+                Resumen Acumulado por Trabajador
+              </h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/40 border-b border-slate-100 text-[8px] font-black text-slate-400 uppercase tracking-[0.15em]">
+                    <th className="px-3 py-2.5">Trabajador</th>
+                    <th className="px-3 py-2.5 text-center">Turnos Realizados</th>
+                    <th className="px-3 py-2.5 text-right">Ventas Totales</th>
+                    <th className="px-3 py-2.5 text-right">Salario Base Acumulado</th>
+                    <th className="px-3 py-2.5 text-right">Comisiones Totales</th>
+                    <th className="px-3 py-2.5 text-right">Total Ganado</th>
+                    <th className="px-3 py-2.5 text-right">Pendiente de Pago</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {aggregatedPayrollByWorker.map((agg, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="px-3 py-2 text-[11px] font-black text-slate-900 uppercase tracking-tight whitespace-nowrap">
+                        {agg.workerName}
+                      </td>
+                      <td className="px-3 py-2 text-center text-[10px] font-black text-slate-700 whitespace-nowrap">
+                        {agg.shiftsCount} turnos
+                      </td>
+                      <td className="px-3 py-2 text-right text-[10px] font-bold text-slate-700 whitespace-nowrap">
+                        {formatMoney(agg.totalSales)}
+                      </td>
+                      <td className="px-3 py-2 text-right text-[10px] font-bold text-slate-700 whitespace-nowrap">
+                        {formatMoney(agg.totalBaseSalary)}
+                      </td>
+                      <td className="px-3 py-2 text-right text-[10px] font-bold text-emerald-600 whitespace-nowrap">
+                        +{formatMoney(agg.totalCommissions)}
+                      </td>
+                      <td className="px-3 py-2 text-right text-xs font-black text-slate-900 whitespace-nowrap">
+                        {formatMoney(agg.totalSalary)}
+                      </td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        <span className={cn(
+                          "text-[11px] font-black",
+                          agg.pendingSalary > 0 ? "text-amber-600" : "text-emerald-600"
+                        )}>
+                          {formatMoney(agg.pendingSalary)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+
+                  {aggregatedPayrollByWorker.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-6 text-center text-slate-400 text-[10px] font-bold uppercase">
+                        No hay acumulación registrada de trabajadores.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: HISTORIAL DE CAJAS */}
       {activeTab === 'sessions' && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-          <div className="p-4 border-b border-slate-100">
+          <div className="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
             <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
               <Calculator className="w-3.5 h-3.5 text-indigo-600" />
-              Historial de Cajas
+              Historial de Aperturas y Cierres de Caja
             </h3>
+            <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider">
+              {filteredCashSessions.length} registros
+            </span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50/50 border-b border-slate-100">
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">ID</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Usuario / Sucursal</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Apertura</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Cierre</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Fondo</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Estado</th>
+                <tr className="bg-slate-50/80 border-b border-slate-100 text-[8px] font-black text-slate-400 uppercase tracking-[0.15em]">
+                  <th className="px-3 py-2.5">Turno</th>
+                  <th className="px-3 py-2.5">Usuario / Sucursal</th>
+                  <th className="px-3 py-2.5">Apertura</th>
+                  <th className="px-3 py-2.5">Cierre</th>
+                  <th className="px-3 py-2.5">Fondo Inicial</th>
+                  <th className="px-3 py-2.5">Estado</th>
+                  <th className="px-3 py-2.5 text-center">Ticket</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
-                {cashSessions.map(session => (
-                  <tr key={session.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-4 py-2.5 font-black text-slate-900 text-[9px] uppercase tracking-tighter">{session.id.slice(0, 8)}</td>
-                    <td className="px-4 py-2.5">
-                      <div className="text-[10px] font-black text-slate-900 uppercase tracking-tighter">{users.find(u => u.id === session.userId)?.name || session.userId}</div>
-                      <div className="text-[7px] font-black text-slate-400 uppercase tracking-widest">{branches.find(b => b.id === session.branchId)?.name}</div>
+                {filteredCashSessions.map(session => (
+                  <tr key={session.id} className="hover:bg-slate-50/60 transition-colors">
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-100 tracking-wider">
+                        {sessionTurnMap.get(session.id) || session.id}
+                      </span>
                     </td>
-                    <td className="px-4 py-2.5 text-[9px] font-black text-slate-500 uppercase">{new Date(session.openedAt).toLocaleString()}</td>
-                    <td className="px-4 py-2.5 text-[9px] font-black text-slate-500 uppercase">{session.closedAt ? new Date(session.closedAt).toLocaleString() : '-'}</td>
-                    <td className="px-4 py-2.5 font-black text-slate-900 text-[10px]">{formatMoney(session.openingBalance)} <span className="text-[8px] text-slate-400">{baseCurrency.code}</span></td>
-                    <td className="px-4 py-2.5">
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-black text-slate-900 uppercase">
+                          {session.workerName || users.find(u => u.id === session.userId)?.name || session.userId}
+                        </span>
+                        <span className="text-[8px] font-bold text-slate-400 uppercase bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200/50">
+                          {branches.find(b => b.id === session.branchId)?.name}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-[10px] font-bold text-slate-600 whitespace-nowrap">
+                      {new Date(session.openedAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="px-3 py-2 text-[10px] font-bold text-slate-600 whitespace-nowrap">
+                      {session.closedAt ? new Date(session.closedAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                    </td>
+                    <td className="px-3 py-2 font-black text-slate-900 text-[10px] whitespace-nowrap">
+                      {formatMoney(session.openingBalance)}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
                       <span className={cn(
                         "px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest",
-                        session.status === 'open' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-50 text-slate-600 border border-slate-100"
+                        session.status === 'open' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-100 text-slate-600 border border-slate-200/50"
                       )}>
                         {session.status === 'open' ? 'Abierta' : 'Cerrada'}
                       </span>
                     </td>
+                    <td className="px-3 py-2 text-center whitespace-nowrap">
+                      {session.status === 'closed' && (
+                        <button
+                          onClick={() => handlePrintShiftTicket(session.id)}
+                          title="Imprimir Ticket de Cierre"
+                          className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-all border border-slate-200 active:scale-95"
+                        >
+                          <Printer className="w-3 h-3" />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
-                {cashSessions.length === 0 && (
+                {filteredCashSessions.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
-                      No hay registros de caja.
+                    <td colSpan={7} className="px-6 py-8 text-center text-slate-500 text-[10px] font-bold uppercase">
+                      No hay registros de caja para el filtro seleccionado.
                     </td>
                   </tr>
                 )}
@@ -368,546 +1012,307 @@ export default function Reports() {
         </div>
       )}
 
-      {activeTab === 'sales' && (
+      {/* TAB 4: PRODUCTOS VENDIDOS */}
+      {activeTab === 'products' && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-          <div className="p-4 border-b border-slate-100">
+          <div className="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
             <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-              <TrendingUp className="w-3.5 h-3.5 text-indigo-600" />
-              Detalle de Ventas Realizadas
+              <Package className="w-3.5 h-3.5 text-indigo-600" />
+              Productos Vendidos
             </h3>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50/50 border-b border-slate-100">
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">ID / Fecha</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Vendedor / Sucursal</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Productos</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Pago / Divisas</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] text-right">Total ({baseCurrency.code})</th>
+                <tr className="bg-slate-50/80 border-b border-slate-100 text-[8px] font-black text-slate-400 uppercase tracking-[0.15em]">
+                  <th className="px-3 py-2.5">Producto</th>
+                  <th className="px-3 py-2.5">Categoría</th>
+                  <th className="px-3 py-2.5 text-center">Cantidad</th>
+                  <th className="px-3 py-2.5 text-right">Ingresos Brutos ({baseCurrency.code})</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {transactions.map(tx => (
-                  <tr key={tx.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-4 py-2.5">
-                      <div className="text-[9px] font-black text-slate-900 uppercase tracking-tighter">{tx.id.slice(0, 10)}</div>
-                      <div className="text-[7px] font-bold text-slate-400 uppercase tracking-tight">{new Date(tx.date).toLocaleString()}</div>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        <User className="w-2.5 h-2.5 text-slate-300" />
-                        <span className="text-[10px] font-black text-slate-900 uppercase tracking-tighter">{users.find(u => u.id === tx.userId)?.name || tx.userId}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-[8px] font-black text-slate-400 uppercase tracking-widest">
-                        <MapPin className="w-2.5 h-2.5 text-slate-300" />
-                        {branches.find(b => b.id === tx.branchId)?.name}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex flex-wrap gap-1 max-w-[200px]">
-                        {tx.items.slice(0, 2).map((item, idx) => (
-                          <div key={idx} className="flex flex-col gap-0 mt-0.5">
-                            <span className="inline-flex items-center gap-1 bg-slate-50 text-slate-600 px-1 py-0.25 rounded border border-slate-100 text-[7px] font-black uppercase tracking-tighter">
-                              {item.quantity}x {getProductName(item.product)}
-                            </span>
-                          </div>
-                        ))}
-                        {tx.items.length > 2 && (
-                          <button 
-                            onClick={() => setExpandedSession(tx.id)}
-                            className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-600 px-1 py-0.25 rounded border border-indigo-100 text-[7px] font-black uppercase tracking-tighter hover:bg-indigo-100 transition-colors"
-                          >
-                            +{tx.items.length - 2}
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <div className="space-y-0.5">
-                        {tx.payments.map((p, idx) => (
-                          <div key={idx} className="flex items-center gap-1.5">
-                            <span className={cn(
-                              "px-1 py-0 rounded text-[6px] font-black uppercase tracking-tighter border",
-                              p.method === 'cash' ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-blue-50 text-blue-700 border-blue-100"
-                            )}>
-                              {p.method === 'cash' ? 'EFECT' : 'TRANS'}
-                            </span>
-                            <span className="text-[9px] font-black text-slate-900 tracking-tighter">{formatMoney(p.amount, p.currencyCode)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-black text-slate-900 text-[11px] tracking-tighter">
-                      {formatMoney(tx.total)}
-                    </td>
-                  </tr>
-                ))}
+                {(() => {
+                  const productMap: Record<string, { product: any, quantity: number, total: number }> = {};
+                  const txList = transactions.filter(t => selectedBranchFilter === 'all' || t.branchId === selectedBranchFilter);
+                  txList.forEach(tx => {
+                    tx.items.forEach(item => {
+                      const id = typeof item.product === 'string' ? item.product : item.product.id;
+                      const prodObj = typeof item.product === 'string' ? products.find(p => p.id === id) : item.product;
+                      if (!productMap[id]) {
+                        productMap[id] = { product: prodObj || { name: 'Desconocido', categoryId: '' }, quantity: 0, total: 0 };
+                      }
+                      productMap[id].quantity += item.quantity;
+                      productMap[id].total += ((prodObj?.price || 0) * item.quantity);
+                    });
+                  });
+                  const productStats = Object.values(productMap).sort((a, b) => b.quantity - a.quantity);
+                  return (
+                    <>
+                      {productStats.map((stat, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
+                          <td className="px-3 py-2 text-[10px] font-black text-slate-900 uppercase tracking-tight whitespace-nowrap">{stat.product.name}</td>
+                          <td className="px-3 py-2 text-[8px] font-black text-slate-500 uppercase tracking-widest whitespace-nowrap">{categories.find(c => c.id === stat.product.categoryId)?.name || 'Sin Categoría'}</td>
+                          <td className="px-3 py-2 text-[11px] font-black text-slate-900 text-center whitespace-nowrap">{stat.quantity} uds</td>
+                          <td className="px-3 py-2 text-[10px] font-black text-indigo-600 text-right tracking-tight whitespace-nowrap">{formatMoney(stat.total)}</td>
+                        </tr>
+                      ))}
+                      {productStats.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="px-6 py-8 text-center text-slate-400 text-[10px] font-bold uppercase">
+                            No hay productos vendidos para el filtro seleccionado.
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  );
+                })()}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {activeTab === 'details' && (
-        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-slate-100 bg-slate-50/50">
-            <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-              <Calculator className="w-3.5 h-3.5 text-indigo-600" />
-              Lista de Empleados y Turnos
-              <InfoTooltip text="Desglosa la actividad por cajero y sucursal. Expande una fila para ver el detalle de tickets emitidos en ese turno." position="bottom" />
-            </h3>
-          </div>
-          <div className="divide-y divide-slate-50">
-            {cashSessions.map(session => {
-              const sessionTxs = transactions.filter(t => 
-                t.branchId === session.branchId && 
-                t.userId === session.userId && 
-                new Date(t.date) >= new Date(session.openedAt) &&
-                (!session.closedAt || new Date(t.date) <= new Date(session.closedAt))
+      {/* Modal: Detalle del Turno Cerrado */}
+      {expandedSession && cashSessions.find(s => s.id === expandedSession) && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 border border-white/20">
+            {(() => {
+              const session = cashSessions.find(s => s.id === expandedSession)!;
+              const sessionTx = transactions.filter(t => 
+                t.sessionId 
+                  ? t.sessionId === session.id
+                  : (t.branchId === session.branchId && 
+                     new Date(t.date).getTime() >= new Date(session.openedAt).getTime() && 
+                     (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
               );
-              
-              const isExpanded = expandedSession === session.id;
-              const userName = users.find(u => u.id === session.userId)?.name || session.userId;
-              const branchName = branches.find(b => b.id === session.branchId)?.name;
+              const sequentialTurn = sessionTurnMap.get(session.id) || session.id;
+              const dateToDisplay = new Date(session.closingDate || session.closedAt || session.openedAt);
+              const totalSalesInSession = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
+              const pItem = payrollList.find(p => p.sessionId === session.id);
+
+              // Group items by product
+              const groupedItems: {[key: string]: {name: string, quantity: number, total: number}} = {};
+              sessionTx.forEach(tx => {
+                tx.items.forEach(item => {
+                  const prodObj = typeof item.product === 'object' ? item.product : products.find(p => p.id === (item.product as unknown as string));
+                  const prodName = prodObj?.name || getProductName(item.product);
+                  if (!groupedItems[prodName]) {
+                    groupedItems[prodName] = { name: prodName, quantity: 0, total: 0 };
+                  }
+                  groupedItems[prodName].quantity += item.quantity;
+                  const price = prodObj?.price || 0;
+                  groupedItems[prodName].total += (price * item.quantity);
+                });
+              });
 
               return (
-                <div key={session.id} className="transition-all">
-                  <div 
-                    className={cn(
-                      "flex items-center justify-between p-3 cursor-pointer hover:bg-slate-50 transition-colors",
-                      isExpanded && "bg-slate-50"
-                    )}
-                    onClick={() => setExpandedSession(isExpanded ? null : session.id)}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 shrink-0">
-                        <User className="w-4 h-4" />
+                <>
+                  <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-indigo-50/50">
+                    <div>
+                      <div className="text-sm font-black text-slate-900 uppercase tracking-tight">
+                        {dateToDisplay.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                       </div>
-                      <div className="flex flex-col">
-                        <span className="text-xs font-black text-slate-900 uppercase tracking-tighter leading-none mb-1">{userName}</span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{branchName}</span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] font-black text-indigo-600 uppercase bg-white px-2 py-0.5 rounded border border-indigo-100">
+                          {sequentialTurn}
+                        </span>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">
+                          {session.workerName || users.find(u => u.id === session.userId)?.name || 'Vendedor'}
+                        </span>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setExpandedSession(null)}
+                      className="p-1.5 hover:bg-white rounded-full transition-colors text-slate-400"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="p-5 max-h-[50vh] overflow-y-auto space-y-2 custom-scrollbar">
+                    <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                      Productos Vendidos ({Object.keys(groupedItems).length})
+                    </div>
+                    {Object.values(groupedItems).map((item, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                        <div className="flex items-center gap-3">
+                          <div className="w-7 h-7 bg-white rounded-lg flex items-center justify-center text-[10px] font-black text-indigo-600 border border-slate-100">
+                            {item.quantity}
+                          </div>
+                          <span className="text-[10px] font-black text-slate-900 uppercase tracking-tighter">{item.name}</span>
+                        </div>
+                        <span className="text-[11px] font-black text-slate-900">{formatMoney(item.total)}</span>
+                      </div>
+                    ))}
+
+                    {Object.keys(groupedItems).length === 0 && (
+                      <p className="text-center py-6 text-xs font-bold text-slate-400 uppercase">No hay productos vendidos en este turno.</p>
+                    )}
+
+                    {pItem && (
+                      <div className="mt-4 p-3.5 bg-emerald-50/60 rounded-2xl border border-emerald-100 space-y-1.5">
+                        <div className="text-[9px] font-black text-emerald-800 uppercase tracking-widest flex items-center justify-between">
+                          <span>Liquidación Salarial del Turno</span>
                           <span className={cn(
-                            "px-1.5 py-0.25 rounded-full text-[7px] font-black uppercase tracking-widest border",
-                            session.status === 'open' ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-slate-50 text-slate-500 border-slate-100"
+                            "px-2 py-0.5 rounded text-[8px]",
+                            pItem.status === 'paid' ? "bg-emerald-200 text-emerald-900" : "bg-amber-100 text-amber-900"
                           )}>
-                            {session.status === 'open' ? 'Pendiente' : 'Finalizado'}
+                            {pItem.status === 'paid' ? 'Pagado' : 'Pendiente'}
                           </span>
                         </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-6">
-                      <div className="hidden md:flex flex-col items-end">
-                        <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Turno</p>
-                        <div className="flex flex-col items-end">
-                          <p className="text-[9px] font-black text-slate-600 uppercase">
-                            {new Date(session.openedAt).toLocaleDateString()}
-                          </p>
-                          <p className="text-[8px] font-bold text-indigo-500 uppercase">
-                            {new Date(session.openedAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - 
-                            {session.closedAt ? new Date(session.closedAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : 'EN CURSO'}
-                          </p>
+                        <div className="flex justify-between text-[10px] text-slate-600">
+                          <span>Salario Base:</span>
+                          <span className="font-bold">{formatMoney(pItem.baseSalary)}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px] text-emerald-700">
+                          <span>Comisiones Productos:</span>
+                          <span className="font-bold">+{formatMoney(pItem.commissions)}</span>
+                        </div>
+                        <div className="flex justify-between text-xs font-black text-slate-900 border-t border-emerald-200/60 pt-1">
+                          <span>Total Salario:</span>
+                          <span className="text-emerald-700">{formatMoney(pItem.totalSalary)}</span>
                         </div>
                       </div>
-                      <div className="flex flex-col items-end min-w-[80px]">
-                        <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Ventas</p>
-                        <p className="text-[10px] font-black text-indigo-600">
-                          {formatMoney(sessionTxs.reduce((s,t) => s + t.total, 0))}
-                        </p>
-                      </div>
-                      <div className={cn("transition-transform duration-300", isExpanded ? "rotate-180" : "")}>
-                        <X className="w-4 h-4 text-slate-400 rotate-45" />
-                      </div>
-                    </div>
+                    )}
                   </div>
 
-                  {isExpanded && (
-                    <div className="bg-slate-50/50 p-4 border-t border-slate-100">
-                      {sessionTxs.length === 0 ? (
-                        <p className="text-center py-4 text-[9px] font-black text-slate-400 uppercase tracking-[0.2em]">Sin ventas en este turno</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {sessionTxs.map(tx => (
-                            <div key={tx.id} className="flex flex-col md:flex-row md:items-center justify-between p-2 bg-white rounded-xl border border-slate-100 shadow-sm gap-2">
-                              <div className="flex flex-col md:flex-row md:items-center gap-4">
-                                <span className="text-[9px] font-black text-slate-900 uppercase min-w-[70px]">Ticket {tx.id.slice(-6)}</span>
-                                <div className="flex flex-wrap gap-1">
-                                  {tx.items.map((item, idx) => (
-                                    <div key={idx} className="flex flex-col gap-0.5">
-                                      <span className="bg-slate-50 text-slate-500 text-[7px] font-black px-1.5 py-0.5 rounded border border-slate-100 uppercase">
-                                        {item.quantity}x {getProductName(item.product)}
-                                      </span>
-                                      {item.serialNumber && (
-                                        <span className="text-[6px] font-black text-indigo-400 uppercase tracking-tighter ml-1">SN: {item.serialNumber}</span>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-3 self-end md:self-auto">
-                                <span className="text-[8px] font-black text-slate-400 uppercase">{tx.payments[0]?.method === 'cash' ? 'EFECTIVO' : 'TRANSF'}</span>
-                                <span className="text-[10px] font-black text-indigo-600">{formatMoney(tx.total)}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'movements' && (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-          <div className="p-4 border-b border-slate-100">
-            <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-              <History className="w-3.5 h-3.5 text-indigo-600" />
-              Ingresos y Egresos de Caja
-              <InfoTooltip text="Historial completo de movimientos manuales de efectivo (vales, gastos menores, depósitos adicionales)." position="bottom" />
-            </h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50/50 border-b border-slate-100">
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Fecha / Turno</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Descripción</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Sucursal / Usuario</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Tipo</th>
-                  <th className="px-4 py-3 text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] text-right">Monto</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {cashSessions.flatMap(s => (s.movements || []).map(m => ({ ...m, sessionId: s.id, branchId: s.branchId, userId: s.userId }))).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(m => (
-                  <tr key={m.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-4 py-2.5">
-                      <div className="text-[9px] font-black text-slate-900 uppercase tracking-tighter">{new Date(m.date).toLocaleDateString()}</div>
-                      <div className="text-[7px] font-bold text-slate-400 uppercase tracking-tight">{new Date(m.date).toLocaleTimeString()}</div>
-                    </td>
-                    <td className="px-4 py-2.5 text-[10px] font-black text-slate-700 uppercase tracking-tighter">{m.description}</td>
-                    <td className="px-4 py-2.5">
-                      <div className="text-[9px] font-black text-slate-900 uppercase tracking-tighter">{branches.find(b => b.id === m.branchId)?.name}</div>
-                      <div className="text-[7px] font-bold text-slate-400 uppercase tracking-widest">{users.find(u => u.id === m.userId)?.name}</div>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className={cn(
-                        "px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest border",
-                        m.type === 'income' ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-rose-50 text-rose-700 border-rose-100"
-                      )}>
-                        {m.type === 'income' ? 'ENTRADA' : 'EGRESO'}
-                      </span>
-                    </td>
-                    <td className={cn(
-                      "px-4 py-2.5 text-right font-black text-[11px] tracking-tighter",
-                      m.type === 'income' ? "text-emerald-600" : "text-rose-600"
-                    )}>
-                      {m.type === 'expense' ? '-' : '+'}{formatMoney(m.amount, m.currencyCode)}
-                    </td>
-                  </tr>
-                ))}
-                {allMovements.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-slate-400 text-[10px] font-black uppercase tracking-widest">
-                      No hay movimientos de caja registrados
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'pandl' && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-            <div className="p-6 bg-slate-950 text-white relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-600/10 blur-[100px] rounded-full -mr-32 -mt-32"></div>
-              <div className="relative z-10">
-                <div className="flex justify-between items-start mb-6">
-                  <div>
-                    <h2 className="text-xl font-black uppercase tracking-tighter leading-none mb-1">Estado de Resultados</h2>
-                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-[0.3em]">Auditoría Financiera Real</p>
-                  </div>
-                  <div className="bg-slate-900 px-3 py-1 rounded-full border border-slate-800">
-                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Periodo: Actual</p>
-                  </div>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="p-4 bg-slate-900/50 rounded-2xl border border-slate-800">
-                    <p className="text-[8px] font-black text-indigo-400 uppercase tracking-[0.2em] mb-2">Ventas Brutas (POS)</p>
-                    <p className="text-2xl font-black tracking-tighter">{formatMoney(totalSales)}</p>
-                  </div>
-                  <div className="p-4 bg-slate-900/50 rounded-2xl border border-slate-800">
-                    <p className="text-[8px] font-black text-rose-400 uppercase tracking-[0.2em] mb-2">Costo Inventario (Vendido)</p>
-                    <p className="text-2xl font-black tracking-tighter">
-                      -{formatMoney(transactions.reduce((sum, t) => sum + t.items.reduce((s, i) => s + (i.product.costPrice * i.quantity), 0), 0))}
-                    </p>
-                  </div>
-                  <div className="p-4 bg-indigo-600 rounded-2xl shadow-lg shadow-indigo-500/20">
-                    <p className="text-[8px] font-black text-indigo-100 uppercase tracking-[0.2em] mb-2">Margen Bruto</p>
-                    <p className="text-2xl font-black tracking-tighter">
-                      {formatMoney(totalSales - transactions.reduce((sum, t) => sum + t.items.reduce((s, i) => s + (i.product.costPrice * i.quantity), 0), 0))}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Entradas */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between px-2">
-                  <h4 className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Entradas Adicionales</h4>
-                  <span className="text-[10px] font-black text-emerald-600">+{formatMoney(totalIncomes)}</span>
-                </div>
-                <div className="space-y-1.5">
-                  <div className="p-2.5 bg-emerald-50/30 rounded-xl border border-emerald-100/50 flex justify-between items-center">
-                    <span className="text-[8px] font-black text-emerald-800/60 uppercase tracking-tighter">Cash In (Caja)</span>
-                    <span className="text-[10px] font-black text-emerald-600 tracking-tighter">+{formatMoney(totalCashIncomes)}</span>
-                  </div>
-                  <div className="p-2.5 bg-emerald-50/30 rounded-xl border border-emerald-100/50 flex justify-between items-center">
-                    <span className="text-[8px] font-black text-emerald-800/60 uppercase tracking-tighter">Depósitos Bancarios</span>
-                    <span className="text-[10px] font-black text-emerald-600 tracking-tighter">+{formatMoney(totalBankDeposits)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Salidas */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between px-2">
-                  <h4 className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Salidas Totales</h4>
-                  <span className="text-[10px] font-black text-rose-600">-{formatMoney(totalExpenses)}</span>
-                </div>
-                <div className="space-y-1.5">
-                  <div className="p-2.5 bg-rose-50/30 rounded-xl border border-rose-100/50 flex justify-between items-center">
-                    <span className="text-[8px] font-black text-rose-800/60 uppercase tracking-tighter">Cash Out (Caja)</span>
-                    <span className="text-[10px] font-black text-rose-600 tracking-tighter">-{formatMoney(totalCashExpenses)}</span>
-                  </div>
-                  <div className="p-2.5 bg-rose-50/30 rounded-xl border border-rose-100/50 flex justify-between items-center">
-                    <span className="text-[8px] font-black text-rose-800/60 uppercase tracking-tighter">Retiros / Pagos Bancarios</span>
-                    <span className="text-[10px] font-black text-rose-600 tracking-tighter">-{formatMoney(totalBankWithdrawals)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-6 bg-slate-50 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h3 className="text-lg font-black text-slate-900 uppercase tracking-tighter leading-none mb-1">Utilidad Neta del Periodo</h3>
-                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest italic">Consolidado final después de egresos e impuestos implícitos</p>
-              </div>
-              <div className="text-right">
-                <p className={cn(
-                  "text-3xl font-black tracking-tighter leading-none",
-                  netFlow > 0 ? "text-emerald-600" : "text-rose-600"
-                )}>
-                  {formatMoney(netFlow)}
-                </p>
-                <p className="text-[8px] font-black text-slate-400 uppercase mt-1 tracking-widest">Balance Final Disponible</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'forecast' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-indigo-900 text-white rounded-xl flex items-center justify-center">
-                  <Brain className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">Predicción de Demanda (IA)</h3>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Basado en historial de ventas</p>
-                </div>
-              </div>
-              
-              <div className="space-y-4">
-                {aiInsights.forecasts.length > 0 ? aiInsights.forecasts.map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <div className="p-5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
                     <div>
-                      <p className="text-xs font-black text-slate-900 uppercase tracking-tight">{item.name}</p>
-                      <p className="text-[8px] font-bold text-slate-400 uppercase">Confianza del modelo: {item.confidence}%</p>
+                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Total Ventas Turno</span>
+                      <span className="text-base font-black text-indigo-600">{formatMoney(totalSalesInSession)}</span>
                     </div>
-                    <div className={cn(
-                      "flex items-center gap-1 font-black text-sm",
-                      item.status === 'up' ? "text-emerald-600" : "text-rose-600"
-                    )}>
-                      {item.status === 'up' ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
-                      {item.prediction}
-                    </div>
+                    <button
+                      onClick={() => handlePrintShiftTicket(session.id)}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-sm"
+                    >
+                      <Printer className="w-4 h-4" />
+                      Imprimir Ticket Térmico
+                    </button>
                   </div>
-                )) : (
-                  <div className="p-4 text-center text-slate-500 text-xs font-bold uppercase">No hay suficientes datos.</div>
-                )}
-              </div>
-              
-              <div className="mt-8 p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
-                <div className="flex gap-3">
-                  <AlertCircle className="w-5 h-5 text-indigo-600 shrink-0" />
-                  <p className="text-[10px] font-bold text-indigo-900 leading-relaxed uppercase">
-                    {aiInsights.suggestion}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 bg-rose-900 text-white rounded-lg flex items-center justify-center">
-                  <AlertCircle className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Detección de Anomalías</h3>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Alertas de comportamiento inusual</p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                {aiInsights.anomalies.map((anomaly, idx) => (
-                  <div key={idx} className={cn(
-                    "p-4 rounded-2xl border border-l-4",
-                    anomaly.severity === 'critical' ? "bg-rose-50 border-rose-100 border-l-rose-600" : 
-                    anomaly.severity === 'warning' ? "bg-amber-50 border-amber-100 border-l-amber-600" :
-                    "bg-blue-50 border-blue-100 border-l-blue-600"
-                  )}>
-                    <div className="flex justify-between items-start mb-2">
-                      <h4 className={cn(
-                        "text-[10px] font-black uppercase tracking-widest",
-                        anomaly.severity === 'critical' ? "text-rose-900" : 
-                        anomaly.severity === 'warning' ? "text-amber-900" : "text-blue-900"
-                      )}>{anomaly.title}</h4>
-                      <span className={cn(
-                        "text-[8px] font-black bg-white px-2 py-0.5 rounded-full uppercase",
-                        anomaly.severity === 'critical' ? "text-rose-500" : 
-                        anomaly.severity === 'warning' ? "text-amber-500" : "text-blue-500"
-                      )}>
-                        {anomaly.severity === 'critical' ? 'Crítico' : anomaly.severity === 'warning' ? 'Advertencia' : 'Info'}
-                      </span>
-                    </div>
-                    <p className={cn(
-                      "text-xs font-bold uppercase mb-2",
-                      anomaly.severity === 'critical' ? "text-rose-800" : 
-                      anomaly.severity === 'warning' ? "text-amber-800" : "text-blue-800"
-                    )}>{anomaly.description}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      {activeTab === 'warranties' && (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex justify-between items-center">
-            <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-              <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
-              Resumen de Garantías y Devoluciones
-            </h3>
-            <div className="text-[10px] font-black text-slate-500 uppercase">
-              Total Emitidas: {warranties.length} | Devoluciones: {returns.length}
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50/50 border-b border-slate-100">
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">ID Garantía</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Producto</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Cliente</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Ticket Origen</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Vence</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {warranties.map(w => {
-                  const isExpired = new Date(w.expiryDate) < new Date();
-                  return (
-                    <tr key={w.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-6 py-4 text-xs font-mono font-bold text-slate-900">{w.id}</td>
-                      <td className="px-6 py-4 text-xs font-black text-slate-900">{w.productName} {w.serialNumber && <span className="text-[10px] text-slate-500 ml-1">S/N: {w.serialNumber}</span>}</td>
-                      <td className="px-6 py-4 text-[11px] font-bold text-slate-600">{w.customerName}</td>
-                      <td className="px-6 py-4 text-xs font-mono font-bold text-slate-600">{w.transactionId}</td>
-                      <td className="px-6 py-4 text-[11px] font-bold text-slate-600">
-                        {new Date(w.expiryDate).toLocaleDateString()}
-                        {isExpired && w.status === 'active' && <span className="text-[9px] text-rose-500 uppercase ml-2 block">Vencida</span>}
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className={cn(
-                          "px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest",
-                          w.status === 'active' && !isExpired ? "bg-emerald-100 text-emerald-700" :
-                          w.status === 'exchanged' ? "bg-indigo-100 text-indigo-700" :
-                          w.status === 'refunded' ? "bg-amber-100 text-amber-700" :
-                          "bg-slate-100 text-slate-500"
-                        )}>
-                          {w.status === 'active' ? (isExpired ? 'Inactiva' : 'Activa') : 
-                           w.status === 'exchanged' ? 'Cambiada' : 'Reembolsada'}
-                        </span>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
 
-      {/* Bubble Modal for Sales with > 2 Products */}
-      {activeTab === 'sales' && expandedSession && transactions.find(t => t.id === expandedSession) && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-xs overflow-hidden animate-in zoom-in-95 border border-white/20">
-            <div className="p-5 border-b border-slate-50 flex items-center justify-between bg-indigo-50/50">
-              <div className="flex items-center gap-2">
-                <Package className="w-4 h-4 text-indigo-600" />
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest">Detalle de Productos</h3>
-              </div>
-              <button 
-                onClick={() => setExpandedSession(null)}
-                className="p-1.5 hover:bg-white rounded-full transition-colors text-slate-400"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-5 max-h-[60vh] overflow-y-auto space-y-3 custom-scrollbar">
-              {transactions.find(t => t.id === expandedSession)?.items.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-2xl border border-slate-100">
-                  <div className="flex items-center gap-3">
-                    <div className="w-6 h-6 bg-white rounded-lg flex items-center justify-center text-[9px] font-black text-indigo-600 border border-slate-100">
-                      {item.quantity}
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-[9px] font-black text-slate-900 uppercase tracking-tighter leading-none mb-1">{getProductName(item.product)}</span>
-                      <div className="flex gap-2">
-                        <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">P.U: {formatMoney(item.product.price)}</span>
-                        {item.serialNumber && <span className="text-[8px] font-black text-indigo-500 uppercase">SN: {item.serialNumber}</span>}
-                        {item.warrantyCode && <span className="text-[8px] font-black text-emerald-500 uppercase">GDA: {item.warrantyCode}</span>}
+      {/* Hidden Thermal Printer Area */}
+      {printSession && (
+        <div id="print-closure-area" className="hidden">
+          {(() => {
+            const sessionTx = transactions.filter(t => 
+              t.sessionId 
+                ? t.sessionId === printSession.id
+                : (t.branchId === printSession.branchId && 
+                   new Date(t.date).getTime() >= new Date(printSession.openedAt).getTime() && 
+                   (!printSession.closedAt || new Date(t.date).getTime() <= new Date(printSession.closedAt).getTime()))
+            );
+            const totalSales = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
+            const totalItems = sessionTx.reduce((sum, tx) => sum + tx.items.reduce((s, i) => s + i.quantity, 0), 0);
+            const workerName = printSession.workerName || users.find(u => u.id === printSession.userId)?.name || 'Vendedor';
+            const sequentialTurn = sessionTurnMap.get(printSession.id) || printSession.id;
+
+            return (
+              <>
+                <div className="text-center mb-3">
+                  <h1 className="text-base font-black uppercase tracking-wider">MARÉ</h1>
+                  <p className="text-[10px] uppercase font-bold">{printBranch?.name || 'Sucursal Principal'}</p>
+                  <p className="text-[9px] mt-1 font-bold">COMPROBANTE DE CIERRE DE TURNO</p>
+                  <div className="border-b-2 border-black my-2"></div>
+                </div>
+
+                <div className="text-[10px] space-y-1 mb-2 font-mono">
+                  <div className="flex justify-between">
+                    <span>FECHA CIERRE:</span>
+                    <span className="font-bold">{new Date(printSession.closingDate || printSession.closedAt || printSession.openedAt).toLocaleDateString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>HORA CIERRE:</span>
+                    <span className="font-bold">{new Date(printSession.closingDate || printSession.closedAt || printSession.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>TURNO:</span>
+                    <span className="font-bold">{sequentialTurn}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>TRABAJADOR:</span>
+                    <span className="font-bold">{workerName}</span>
+                  </div>
+                </div>
+
+                <div className="border-b border-black border-dashed my-2"></div>
+                <div className="text-[9px] font-black uppercase mb-1">DETALLE DE PRODUCTOS VENDIDOS</div>
+                <div className="text-[9px] space-y-1 font-mono">
+                  {(() => {
+                    const grouped: {[key: string]: {name: string, quantity: number, total: number}} = {};
+                    sessionTx.forEach(tx => {
+                      tx.items.forEach(item => {
+                        const prodObj = typeof item.product === 'object' ? item.product : products.find(p => p.id === (item.product as unknown as string));
+                        const name = prodObj?.name || getProductName(item.product);
+                        if (!grouped[name]) grouped[name] = { name, quantity: 0, total: 0 };
+                        grouped[name].quantity += item.quantity;
+                        const price = prodObj?.price || 0;
+                        grouped[name].total += (price * item.quantity);
+                      });
+                    });
+
+                    return Object.values(grouped).map((item, idx) => (
+                      <div key={idx} className="flex justify-between">
+                        <span>{item.quantity}x {item.name.slice(0, 18)}</span>
+                        <span>{formatMoney(item.total)}</span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+
+                <div className="border-b border-black border-dashed my-2"></div>
+                <div className="text-[10px] font-mono space-y-1">
+                  <div className="flex justify-between font-bold">
+                    <span>TOTAL VENTAS:</span>
+                    <span>{formatMoney(totalSales)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>ITEMS VENDIDOS:</span>
+                    <span>{totalItems}</span>
+                  </div>
+                </div>
+
+                {printPayrollItem && (
+                  <>
+                    <div className="border-b-2 border-black my-2"></div>
+                    <div className="text-[9px] font-black uppercase mb-1">LIQUIDACIÓN DE SALARIO</div>
+                    <div className="text-[10px] font-mono space-y-1">
+                      <div className="flex justify-between">
+                        <span>Salario Base:</span>
+                        <span>{formatMoney(printPayrollItem.baseSalary)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Comisiones Productos:</span>
+                        <span>+{formatMoney(printPayrollItem.commissions)}</span>
+                      </div>
+                      <div className="flex justify-between font-black text-xs border-t border-black pt-1">
+                        <span>TOTAL SALARIO:</span>
+                        <span>{formatMoney(printPayrollItem.totalSalary)}</span>
+                      </div>
+                      <div className="flex justify-between text-[9px] mt-0.5">
+                        <span>Estado:</span>
+                        <span className="font-bold uppercase">{printPayrollItem.status === 'paid' ? 'PAGADO' : 'PENDIENTE'}</span>
                       </div>
                     </div>
-                  </div>
-                  <span className="text-[10px] font-black text-slate-900">{formatMoney(item.product.price * item.quantity)}</span>
-                </div>
-              ))}
-            </div>
-            <div className="p-5 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
-              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Total Venta</span>
-              <span className="text-sm font-black text-indigo-600">{formatMoney(transactions.find(t => t.id === expandedSession)?.total || 0)}</span>
-            </div>
+                  </>
+                )}
+              </>
+            );
+          })()}
+
+          <div className="mt-8 pt-6 border-t border-black border-dashed text-center text-[9px]">
+            <p className="mb-6">Firma del Trabajador: ______________________</p>
+            <p>Firma del Supervisor: ______________________</p>
+            <p className="mt-4 font-mono text-[8px]">MARÉ SISTEMA DE PUNTO DE VENTA</p>
           </div>
         </div>
       )}
-
     </div>
   );
 }

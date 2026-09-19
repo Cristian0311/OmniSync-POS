@@ -37,3 +37,26 @@
     scrollbar-width: none;
   }
 }
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #print-area, #print-area *,
+  #print-closure-area, #print-closure-area * {
+    visibility: visible !important;
+  }
+  #print-area, #print-closure-area {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 320px !important;
+    margin: 0 auto !important;
+    padding: 8px !important;
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+  }
+}
+

@@ -29,29 +29,19 @@ import { useStore } from "../store/useStore";
 const adminNavItems = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Punto de Venta", href: "/pos", icon: ShoppingCart },
-  { name: "Caja (POS)", href: "/cash", icon: Calculator },
   { name: "Transferencias", href: "/transfers", icon: ArrowLeftRight },
   { name: "Clientes (POS)", href: "/customers", icon: UserCircle },
   { name: "Inventario", href: "/inventory", icon: Package },
   { name: "Auditoría Stock", href: "/inventory-audit", icon: ClipboardCheck },
   { name: "Proveedores", href: "/suppliers", icon: Truck },
   { name: "Cuentas Bancarias", href: "/banks", icon: CreditCard },
-  { name: "Catálogo QR", href: "/catalog", icon: Store },
-  { name: "Cotizaciones", href: "/quotes", icon: FileText },
   { name: "Devoluciones", href: "/returns", icon: RotateCcw },
   { name: "Reportes", href: "/reports", icon: BarChart },
-  { name: "Empleados", href: "/users", icon: Users },
   { name: "Configuración", href: "/settings", icon: Settings },
 ];
 
 const cashierNavItems = [
   { name: "Punto de Venta", href: "/pos", icon: ShoppingCart },
-  { name: "Caja (POS)", href: "/cash", icon: Calculator },
-  { name: "Transferencias", href: "/transfers", icon: ArrowLeftRight },
-  { name: "Clientes (POS)", href: "/customers", icon: UserCircle },
-  { name: "Tienda Web (Admin)", href: "/catalog", icon: Store },
-  { name: "Cotizaciones", href: "/quotes", icon: FileText },
-  { name: "Devoluciones", href: "/returns", icon: RotateCcw },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {

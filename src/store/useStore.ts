@@ -1,11 +1,30 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { supabase } from '../lib/supabase';
-import { Branch, Category, Product, InventoryLevel, CartItem, Transaction, ReturnItem, Currency, Customer, CashRegisterSession, User, PendingOrder, SalarySettlement, InventoryTransfer, Warranty, CashMovement, Supplier, SupplierOrder, InventoryAudit, FiscalConfig, DemandForecast } from '../types';
+import { Branch, Category, Product, InventoryLevel, CartItem, Transaction, ReturnItem, Currency, Customer, CashRegisterSession, User, PendingOrder, SalarySettlement, InventoryTransfer, Warranty, CashMovement, Supplier, SupplierOrder, InventoryAudit, FiscalConfig, DemandForecast, SyncTask } from '../types';
 import { generateId, generateReadableId } from '../lib/utils';
 
 // --- Datos Iniciales ---
-const INITIAL_USERS: User[] = [];
+const INITIAL_USERS: User[] = [
+  {
+    id: 'admin-1',
+    name: 'Admin Principal',
+    email: 'cristianmarco2003@gmail.com',
+    role: 'admin',
+    password: '03111166702',
+    commissionRate: 0,
+    baseSalary: 0
+  },
+  {
+    id: 'employee-1',
+    name: 'Trabajador Principal',
+    email: 'trabajador@gmail.com',
+    role: 'employee',
+    password: '03111166702',
+    commissionRate: 0,
+    baseSalary: 0
+  }
+];
 
 const INITIAL_FISCAL_CONFIGS: FiscalConfig[] = [
   { id: crypto.randomUUID(), type: 'B01', name: 'Crédito Fiscal', prefix: 'B01', current: 1, limit: 1000, active: true },
@@ -15,7 +34,6 @@ const INITIAL_FISCAL_CONFIGS: FiscalConfig[] = [
 const INITIAL_CURRENCIES: Currency[] = [
   { code: 'CUP', name: 'Peso Cubano', symbol: 'CUP', rateToBase: 1, isBase: true },
   { code: 'USD', name: 'Dólar Estadounidense', symbol: '$', rateToBase: 320 },
-  { code: 'EUR', name: 'Euro', symbol: '€', rateToBase: 350 },
 ];
 
 const INITIAL_BRANCHES: Branch[] = [
@@ -54,9 +72,15 @@ interface AppState {
   // Offline Architecture
   isInitialized: boolean;
   isOffline: boolean;
+  isSyncing: boolean;
+  syncQueue: SyncTask[];
   pendingSyncTransactions: Transaction[];
   setOfflineStatus: (status: boolean) => void;
   syncPendingTransactions: () => void;
+  addSyncTask: (task: Omit<SyncTask, 'id' | 'timestamp' | 'status' | 'retryCount'>) => void;
+  removeSyncTask: (id: string) => void;
+  processSyncQueue: () => Promise<void>;
+  setupRealtimeSubscriptions: () => () => void;
 
   // Auth
   users: User[];
@@ -137,7 +161,7 @@ interface AppState {
   // Caja
   cashSessions: CashRegisterSession[];
   openSession: (session: CashRegisterSession) => void;
-  closeSession: (sessionId: string, closingBalances: import('../types').Payment[]) => void;
+  closeSession: (sessionId: string, closingBalances: import('../types').Payment[], workerName?: string, closingDate?: string) => void;
   getCurrentSession: (branchId: string, userId: string) => CashRegisterSession | undefined;
 
   // Garantías
@@ -182,6 +206,7 @@ interface AppState {
   receiptConfig: import('../types').ReceiptConfig;
   updateReceiptConfig: (config: Partial<import('../types').ReceiptConfig>) => void;
 
+  lastTurnNumber: number;
   // Banks Module
   bankCards: import('../types').BankCard[];
   addBankCard: (card: import('../types').BankCard) => void;
@@ -197,27 +222,194 @@ interface AppState {
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
-  isInitialized: false,
-  isOffline: !navigator.onLine,
-  pendingSyncTransactions: [],
-  setOfflineStatus: (status) => set({ isOffline: status }),
-  syncPendingTransactions: () => {
-    const { pendingSyncTransactions, transactions } = get();
-    if (pendingSyncTransactions.length === 0) return;
-    // Simulate background sync with main database
-    console.log(`Syncing ${pendingSyncTransactions.length} transactions to main database...`);
-    // Here would be an API call to sync data.
-    // Assuming success, clear pending:
-    set({ pendingSyncTransactions: [] });
+      lastTurnNumber: 0,
+      isInitialized: false,
+  isSyncing: false,
+  isOffline: typeof navigator !== 'undefined' ? !navigator.onLine : false,
+  syncQueue: [],
+      pendingSyncTransactions: [],
+  setOfflineStatus: (status) => {
+    set({ isOffline: status });
+    if (!status) {
+      // Pequeno retraso para asegurar que la conexión sea estable antes de procesar la cola
+      setTimeout(() => get().processSyncQueue(), 1000);
+    }
+  },
+  
+  addSyncTask: (task) => {
+    set((state) => ({
+      syncQueue: [
+        ...state.syncQueue,
+        {
+          ...task,
+          id: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          status: 'pending',
+          retryCount: 0
+        }
+      ]
+    }));
+    // Try to process immediately if online
+    if (!get().isOffline) {
+      get().processSyncQueue();
+    }
+  },
+  
+  removeSyncTask: (id) => {
+    set((state) => ({
+      syncQueue: state.syncQueue.filter(t => t.id !== id)
+    }));
+  },
+  
+  processSyncQueue: async () => {
+    const state = get();
+    if (state.isOffline || state.syncQueue.length === 0 || state.isSyncing) return;
+    
+    set({ isSyncing: true });
+    
+    try {
+      const queueSnapshot = [...get().syncQueue];
+      console.log(`[Sync Queue] Processing ${queueSnapshot.length} tasks...`);
+      let processedAny = false;
+      
+      for (const task of queueSnapshot) {
+        if (!navigator.onLine) break; // Stop if connection lost
+        
+        try {
+          let error = null;
+          let taskData = task.data;
+
+          // Strip nonexistent column `closing_date` from cash_sessions payload if present
+          if (task.table === 'cash_sessions' && taskData) {
+            if (Array.isArray(taskData)) {
+              taskData = taskData.map(item => {
+                if (item && typeof item === 'object') {
+                  const { closing_date, ...rest } = item;
+                  return rest;
+                }
+                return item;
+              });
+            } else if (typeof taskData === 'object') {
+              const { closing_date, ...rest } = taskData;
+              taskData = rest;
+            }
+          }
+          
+          if (task.action === 'INSERT') {
+            // Idempotent upsert by ID or compound keys to prevent unique constraint failures
+            if (task.table === 'inventory_levels') {
+              const { error: upsertErr } = await supabase.from('inventory_levels').upsert(
+                taskData,
+                { onConflict: 'product_id, branch_id, variant_label' }
+              );
+              error = upsertErr;
+            } else {
+              const { error: upsertErr } = await supabase.from(task.table).upsert(
+                taskData,
+                { onConflict: 'id' }
+              );
+              error = upsertErr;
+            }
+          } else if (task.action === 'UPDATE') {
+            if (task.table === 'inventory_levels_upsert' || task.table === 'inventory_levels') {
+              const { error: upsertErr } = await supabase.from('inventory_levels').upsert(
+                taskData,
+                { onConflict: 'product_id, branch_id, variant_label' }
+              );
+              error = upsertErr;
+            } else {
+              const { id, closing_date, ...updateData } = taskData;
+              const { error: updateErr } = await supabase.from(task.table).update(updateData).eq('id', id);
+              error = updateErr;
+            }
+          }
+          
+          if (error) {
+            console.error(`[Sync Queue] Failed to process task ${task.id} (${task.table}):`, error);
+            
+            // If it's a network error, stop processing the queue for now
+            const errorMsg = typeof error === 'object' && error !== null ? (error as any).message : String(error);
+            const errorCode = typeof error === 'object' && error !== null ? (error as any).code : '';
+            const isNetworkError = errorMsg.includes('Failed to fetch') || errorMsg.includes('network');
+            
+            const currentRetryCount = (task.retryCount || 0) + 1;
+            if (errorCode === 'PGRST204' || currentRetryCount > 10) {
+              console.warn(`[Sync Queue] Removing unrecoverable task ${task.id} (${task.table}):`, errorMsg);
+              get().removeSyncTask(task.id);
+            } else {
+              set(s => ({
+                syncQueue: s.syncQueue.map(t => t.id === task.id ? { ...t, retryCount: currentRetryCount } : t)
+              }));
+            }
+
+            if (isNetworkError) {
+              console.warn('[Sync Queue] Network error detected, pausing queue processing.');
+              break; 
+            }
+          } else {
+            console.log(`[Sync Queue] Success task ${task.id} (${task.table})`);
+            get().removeSyncTask(task.id);
+            processedAny = true;
+          }
+        } catch (err) {
+          console.error(`[Sync Queue] Exception on task ${task.id}:`, err);
+        }
+      }
+
+      // Automatically reconcile database with local state in background
+      if (processedAny) {
+        get().initializeFromSupabase();
+      }
+    } finally {
+      set({ isSyncing: false });
+    }
+  },
+
+  syncPendingTransactions: async () => {
+    const { pendingSyncTransactions } = get();
+    console.log(`[Sync] Triggering sync of pending tasks and offline sales...`);
+    await get().processSyncQueue();
+    if (pendingSyncTransactions.length > 0) {
+      set({ pendingSyncTransactions: [] });
+    }
+    await get().initializeFromSupabase();
   },
 
   users: INITIAL_USERS,
   currentUser: null,
   login: async (email, pass) => {
-    const user = get().users.find(u => u.email === email && u.password === pass);
+    let user = get().users.find(u => u.email === email && u.password === pass);
+    
+    // Hardcoded accounts requested by the user
+    if (!user) {
+      if (email === 'cristianmarco2003@gmail.com' && pass === '03111166702') {
+        user = {
+          id: 'admin-1',
+          name: 'Administrador',
+          email: 'cristianmarco2003@gmail.com',
+          role: 'admin',
+          commissionRate: 0,
+          baseSalary: 0
+        };
+      } else if (email === 'trabajador@gmail.com' && pass === '03111166702') {
+        user = {
+          id: 'employee-1',
+          name: 'Trabajador',
+          email: 'trabajador@gmail.com',
+          role: 'employee',
+          commissionRate: 0,
+          baseSalary: 0
+        };
+      }
+    }
+
     if (user) {
       set({ currentUser: user });
-      if (user.branchId) {
+      
+      // If the hardcoded user logs in and we have branches, auto-assign the first one if they don't have one
+      if (!user.branchId && get().branches.length > 0) {
+        set({ currentBranchId: get().branches[0].id });
+      } else if (user.branchId) {
         set({ currentBranchId: user.branchId });
       }
       
@@ -278,8 +470,10 @@ export const useStore = create<AppState>()(
       timeShifts: [],
       cart: [],
       currentCustomerId: undefined,
+      syncQueue: [],
       pendingSyncTransactions: [],
       pendingOrders: [],
+      lastTurnNumber: 0,
     });
   },
   addUser: async (user) => {
@@ -772,51 +966,40 @@ export const useStore = create<AppState>()(
     // 5. Optimistic store update
     set({ inventory: newInventory });
 
-    // 6. Supabase Transaction & Audit Log
-    try {
-      const { error: upsertErr } = await supabase
-        .from('inventory_levels')
-        .upsert(upsertPayloads, { onConflict: 'id' });
+    // 6. Queue sync tasks instead of direct Supabase calls for offline support
+    get().addSyncTask({
+      action: 'UPDATE',
+      table: 'inventory_levels_upsert',
+      data: upsertPayloads
+    });
 
-      if (upsertErr) {
-        console.error('Supabase inventory_levels upsert error:', upsertErr);
-        // Rollback state
-        set({ inventory: previousInventory });
-        return { success: false, error: `Error al actualizar inventario en Supabase: ${upsertErr.message}` };
-      }
+    // Add transfer record
+    const product = get().products.find(p => p.id === productId);
+    const fromBranch = get().branches.find(b => b.id === fromBranchId);
+    const toBranch = get().branches.find(b => b.id === toBranchId);
+    const transferId = crypto.randomUUID();
+    const variantSummary = activeVariants.length === 1 
+      ? (activeVariants[0].variantLabel || 'Producto Base') 
+      : activeVariants.map(v => `${v.variantLabel || 'Base'}: ${v.quantity}`).join(', ');
 
-      // Add transfer record
-      const product = get().products.find(p => p.id === productId);
-      const fromBranch = get().branches.find(b => b.id === fromBranchId);
-      const toBranch = get().branches.find(b => b.id === toBranchId);
-      const transferId = crypto.randomUUID();
-      const variantSummary = activeVariants.length === 1 
-        ? (activeVariants[0].variantLabel || 'Producto Base') 
-        : activeVariants.map(v => `${v.variantLabel || 'Base'}: ${v.quantity}`).join(', ');
+    const transferRecord: InventoryTransfer = {
+      id: transferId,
+      productId,
+      productName: product?.name || 'Producto',
+      fromBranchId,
+      fromBranchName: fromBranch?.name || 'Sucursal Origen',
+      toBranchId,
+      toBranchName: toBranch?.name || 'Sucursal Destino',
+      quantity: totalQuantity,
+      variants: activeVariants,
+      date: new Date().toISOString(),
+      userId: get().currentUser?.id || 'system',
+      status: 'completed',
+      variantLabel: variantSummary
+    };
 
-      const transferRecord: InventoryTransfer = {
-        id: transferId,
-        productId,
-        productName: product?.name || 'Producto',
-        fromBranchId,
-        fromBranchName: fromBranch?.name || 'Sucursal Origen',
-        toBranchId,
-        toBranchName: toBranch?.name || 'Sucursal Destino',
-        quantity: totalQuantity,
-        variants: activeVariants,
-        date: new Date().toISOString(),
-        userId: get().currentUser?.id || 'system',
-        status: 'completed',
-        variantLabel: variantSummary
-      };
-
-      await get().addTransfer(transferRecord);
-      return { success: true };
-    } catch (err: any) {
-      console.error('Exception during transferInventoryBatch:', err);
-      set({ inventory: previousInventory });
-      return { success: false, error: err.message || 'Error inesperado durante la transferencia.' };
-    }
+    get().addTransfer(transferRecord);
+    return { success: true };
   },
 
   reconcileProductStock: async (productId, corrections) => {
@@ -1270,15 +1453,16 @@ export const useStore = create<AppState>()(
       };
     });
 
-    try {
-      // Parallelize all sync operations for speed and reliable saving
-      const syncPromises = [];
-
-      // 1. Transaction
-      syncPromises.push(supabase.from('transactions').insert([{
+    // Queue all changes instead of direct Supabase calls
+    // 1. Transaction
+    get().addSyncTask({
+      action: 'INSERT',
+      table: 'transactions',
+      data: [{
         id: newTransaction.id,
         branch_id: newTransaction.branchId,
         user_id: newTransaction.userId,
+        session_id: newTransaction.sessionId || null,
         date: newTransaction.date,
         subtotal: newTransaction.subtotal,
         tax: newTransaction.tax,
@@ -1288,88 +1472,86 @@ export const useStore = create<AppState>()(
         ncf: newTransaction.ncf || null,
         ncf_type: newTransaction.ncfType || null,
         change_given: newTransaction.changeGiven || 0
-      }]));
+      }]
+    });
 
-      // 2. Payments
-      if (newTransaction.payments && newTransaction.payments.length > 0) {
-        syncPromises.push(supabase.from('transaction_payments').insert(
-          newTransaction.payments.map((p: any) => ({
-            id: crypto.randomUUID(),
-            transaction_id: newTransaction.id,
-            currency_code: p.currencyCode,
-            amount: p.amount,
-            exchange_rate: p.exchangeRate,
-            method: p.method,
-            bank_card_id: p.bankCardId || null
-          }))
-        ));
-      }
+    // 2. Payments
+    if (newTransaction.payments && newTransaction.payments.length > 0) {
+      get().addSyncTask({
+        action: 'INSERT',
+        table: 'transaction_payments',
+        data: newTransaction.payments.map((p: any) => ({
+          id: crypto.randomUUID(),
+          transaction_id: newTransaction.id,
+          currency_code: p.currencyCode,
+          amount: p.amount,
+          exchange_rate: p.exchangeRate,
+          method: p.method,
+          bank_card_id: p.bankCardId || null
+        }))
+      });
+    }
 
-      // 3. Items
-      if (newTransaction.items && newTransaction.items.length > 0) {
-        syncPromises.push(supabase.from('transaction_items').insert(
-          newTransaction.items.map((i: any) => ({
-            id: crypto.randomUUID(),
-            transaction_id: newTransaction.id,
-            cart_item_id: i.id,
-            product_id: i.product.id,
-            quantity: i.quantity,
-            price: i.product.price || 0,
-            cost: i.product.costPrice || 0,
-            tax: 0,
-            serial_number: i.serialNumber || null,
-            warranty_code: i.warrantyCode || null,
-            selected_size: i.selectedSize || null,
-            selected_color: i.selectedColor || null,
-            variant_label: i.variantLabel || null
-          }))
-        ));
-      }
+    // 3. Items
+    if (newTransaction.items && newTransaction.items.length > 0) {
+      get().addSyncTask({
+        action: 'INSERT',
+        table: 'transaction_items',
+        data: newTransaction.items.map((i: any) => ({
+          id: crypto.randomUUID(),
+          transaction_id: newTransaction.id,
+          product_id: i.product.id,
+          quantity: i.quantity,
+          price: i.product.price || 0,
+          cost: i.product.costPrice || 0,
+          tax: 0,
+          serial_number: i.serialNumber || null,
+          warranty_code: i.warrantyCode || null,
+          selected_size: i.selectedSize || null,
+          selected_color: i.selectedColor || null,
+          variant_label: i.variantLabel || null
+        }))
+      });
+    }
 
-      // 4. Inventory (Upsert)
-      const modifiedInventory = updatedInventory.filter(ui => 
-        transaction.items.some(ti => ti.product.id === ui.productId && (ti.variantLabel || '') === (ui.variantLabel || ''))
-        || transaction.items.some(ti => ti.product.isKit && ti.product.kitComponents?.some(kc => kc.productId === ui.productId))
-      );
-      if (modifiedInventory.length > 0) {
-        syncPromises.push(supabase.from('inventory_levels').upsert(
-          modifiedInventory.map(i => ({
-            id: crypto.randomUUID(),
-            product_id: i.productId,
-            branch_id: i.branchId,
-            variant_label: i.variantLabel || null,
-            quantity: i.quantity,
-            min_quantity: i.minQuantity
-          })), 
-          { onConflict: 'product_id, branch_id, variant_label' }
-        ));
-      }
+    // 4. Inventory (Upsert -> Note: we use RPC or UPDATE for upsert, but we can encode upsert in data)
+    const modifiedInventory = updatedInventory.filter(ui => 
+      transaction.items.some(ti => ti.product.id === ui.productId && (ti.variantLabel || '') === (ui.variantLabel || ''))
+      || transaction.items.some(ti => ti.product.isKit && ti.product.kitComponents?.some(kc => kc.productId === ui.productId))
+    );
+    if (modifiedInventory.length > 0) {
+      get().addSyncTask({
+        action: 'UPDATE', // Special marker that this is an UPSERT on inventory
+        table: 'inventory_levels_upsert', 
+        data: modifiedInventory.map(i => ({
+          id: crypto.randomUUID(),
+          product_id: i.productId,
+          branch_id: i.branchId,
+          variant_label: i.variantLabel || null,
+          quantity: i.quantity,
+          min_quantity: i.minQuantity
+        }))
+      });
+    }
 
-      // 5. Warranties
-      if (newWarranties.length > 0) {
-        syncPromises.push(supabase.from('warranties').insert(
-          newWarranties.map(w => ({
-            id: w.id,
-            product_id: w.productId,
-            product_name: w.productName,
-            transaction_id: w.transactionId,
-            customer_id: w.customerId || null,
-            customer_name: w.customerName || null,
-            purchase_date: w.purchaseDate,
-            expiry_date: w.expiryDate,
-            serial_number: w.serialNumber || null,
-            status: w.status
-          }))
-        ));
-      }
-
-      const results = await Promise.all(syncPromises);
-      const errors = results.filter(r => r.error);
-      if (errors.length > 0) {
-        console.error('Some transaction sync components failed:', errors.map(e => e.error));
-      }
-    } catch (error) {
-      console.error('Error syncing transaction to Supabase:', error);
+    // 5. Warranties
+    if (newWarranties.length > 0) {
+      get().addSyncTask({
+        action: 'INSERT',
+        table: 'warranties',
+        data: newWarranties.map(w => ({
+          id: w.id,
+          product_id: w.productId,
+          product_name: w.productName,
+          transaction_id: w.transactionId,
+          customer_id: w.customerId || null,
+          customer_name: w.customerName || null,
+          purchase_date: w.purchaseDate,
+          expiry_date: w.expiryDate,
+          serial_number: w.serialNumber || null,
+          status: w.status
+        }))
+      });
     }
   },
 
@@ -1491,17 +1673,17 @@ export const useStore = create<AppState>()(
   customers: [],
   addCustomer: async (customer) => {
     set((state) => ({ customers: [...state.customers, customer] }));
-    try {
-      await supabase.from('customers').insert([{
+    get().addSyncTask({
+      action: 'INSERT',
+      table: 'customers',
+      data: {
         id: customer.id,
         name: customer.name,
         email: customer.email,
         phone: customer.phone,
         tax_id: customer.taxId || null
-      }]);
-    } catch (error) {
-      console.error('Error adding customer to Supabase:', error);
-    }
+      }
+    });
   },
   updateCustomer: async (id, customer) => {
     set((state) => ({
@@ -1534,36 +1716,112 @@ export const useStore = create<AppState>()(
 
   cashSessions: [],
   openSession: async (session) => {
-    set((state) => ({ cashSessions: [...state.cashSessions, session] }));
-    try {
-      await supabase.from('cash_sessions').insert([{
-        id: session.id,
-        branch_id: session.branchId,
-        opened_at: session.openedAt,
-        opening_balance: session.openingBalance,
-        expected_balance: session.expectedBalance || null,
-        status: session.status,
-        user_id: session.userId
-      }]);
-    } catch (error) {
-      console.error('Error adding session to Supabase:', error);
-    }
+    const nextTurn = (get().lastTurnNumber || 0) + 1;
+    const sessionWithSequentialId = {
+      ...session,
+      id: `Turno-${nextTurn}`
+    };
+    set((state) => ({ 
+      cashSessions: [...state.cashSessions, sessionWithSequentialId],
+      lastTurnNumber: nextTurn
+    }));
+    get().addSyncTask({
+      action: 'INSERT',
+      table: 'cash_sessions',
+      data: {
+        id: sessionWithSequentialId.id,
+        branch_id: sessionWithSequentialId.branchId,
+        opened_at: sessionWithSequentialId.openedAt,
+        opening_balance: sessionWithSequentialId.openingBalance,
+        expected_balance: sessionWithSequentialId.expectedBalance || null,
+        status: sessionWithSequentialId.status,
+        user_id: sessionWithSequentialId.userId,
+        worker_name: sessionWithSequentialId.workerName || null
+      }
+    });
   },
-  closeSession: async (sessionId, closingBalances) => {
+  closeSession: async (sessionId, closingBalances, workerName, closingDate) => {
+    const finalClosingDate = closingDate || new Date().toISOString();
+    const session = get().cashSessions.find(s => s.id === sessionId);
+    if (!session) return;
+
+    // Calculate total sales and commissions for salary settlement
+    const sessionTxs = get().transactions.filter(t => 
+      t.sessionId 
+        ? t.sessionId === session.id
+        : (t.branchId === session.branchId && 
+           new Date(t.date).getTime() >= new Date(session.openedAt).getTime() &&
+           (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
+    );
+    
+    const user = get().users.find(u => u.id === session.userId);
+    const commissions = sessionTxs.reduce((sum, tx) => {
+      return sum + tx.items.reduce((itemSum, item) => {
+        const comm = item.product.commissionType === 'percentage' 
+          ? (item.product.price * item.quantity * item.product.commissionValue / 100)
+          : (item.product.commissionValue * item.quantity);
+        return itemSum + comm;
+      }, 0);
+    }, 0);
+
+    const baseSalary = user?.baseSalary || 0;
+    const totalSalary = baseSalary + commissions;
+
+    const settlementId = crypto.randomUUID();
+    const settlement: SalarySettlement = {
+      id: settlementId,
+      userId: session.userId,
+      userName: workerName || session.workerName || user?.name || 'Vendedor',
+      sessionId: sessionId,
+      baseSalary: baseSalary,
+      commissions: commissions,
+      total: totalSalary,
+      date: finalClosingDate,
+      status: 'pending'
+    };
+
     set((state) => ({
       cashSessions: state.cashSessions.map(s => 
-        s.id === sessionId ? { ...s, closedAt: new Date().toISOString(), status: 'closed', closingBalances } : s
-      )
+        s.id === sessionId ? { 
+          ...s, 
+          closedAt: finalClosingDate, 
+          status: 'closed', 
+          closingBalances, 
+          workerName: workerName || s.workerName,
+          closingDate: finalClosingDate
+        } : s
+      ),
+      salarySettlements: [...state.salarySettlements, settlement]
     }));
-    try {
-      await supabase.from('cash_sessions').update({
-        closed_at: new Date().toISOString(),
+
+    get().addSyncTask({
+      action: 'UPDATE',
+      table: 'cash_sessions',
+      data: {
+        id: sessionId,
+        closed_at: finalClosingDate,
         status: 'closed',
-        closing_balances: closingBalances ? JSON.stringify(closingBalances) : null
-      }).eq('id', sessionId);
-    } catch (error) {
-      console.error('Error updating session in Supabase:', error);
-    }
+        closing_balances: closingBalances,
+        expected_balance: session.expectedBalance || null,
+        worker_name: workerName || session.workerName || null
+      }
+    });
+
+    get().addSyncTask({
+      action: 'INSERT',
+      table: 'salary_settlements',
+      data: {
+        id: settlement.id,
+        user_id: settlement.userId,
+        user_name: settlement.userName,
+        session_id: settlement.sessionId,
+        base_salary: settlement.baseSalary,
+        commissions: settlement.commissions,
+        total: settlement.total,
+        date: settlement.date,
+        status: settlement.status
+      }
+    });
   },
   getCurrentSession: (branchId, userId) => {
     return get().cashSessions.find(s => s.branchId === branchId && s.userId === userId && s.status === 'open');
@@ -1797,7 +2055,6 @@ export const useStore = create<AppState>()(
     showLogo: true,
     showAddress: true,
     showPhone: true,
-    showNCF: true,
     showFooter: true,
     footerText: "¡GRACIAS POR SU PREFERENCIA!",
     businessName: "MI NEGOCIO CORP",
@@ -1805,18 +2062,28 @@ export const useStore = create<AppState>()(
     businessPhone: "+53 555-5555",
     printerWidth: "80mm",
     openDrawer: true,
+    autoPrint: false,
   },
-  updateReceiptConfig: (config) => set((state) => ({
-    receiptConfig: { ...state.receiptConfig, ...config }
-  })),
+  updateReceiptConfig: async (config) => {
+    set((state) => ({
+      receiptConfig: { ...state.receiptConfig, ...config }
+    }));
+    try {
+      await supabase.from('settings').upsert({ id: 'global', receipt_config: get().receiptConfig }).throwOnError();
+    } catch (error) {
+      console.error('Error saving receipt config:', error);
+    }
+  },
 
   salarySettlements: [],
   addSalarySettlement: async (settlement) => {
     set((state) => ({
       salarySettlements: [settlement, ...state.salarySettlements]
     }));
-    try {
-      await supabase.from('salary_settlements').insert([{
+    get().addSyncTask({
+      action: 'INSERT',
+      table: 'salary_settlements',
+      data: {
         id: settlement.id,
         user_id: settlement.userId,
         user_name: settlement.userName,
@@ -1826,10 +2093,8 @@ export const useStore = create<AppState>()(
         total: settlement.total,
         date: settlement.date,
         status: settlement.status
-      }]);
-    } catch (error) {
-      console.error('Error adding salary settlement:', error);
-    }
+      }
+    });
   },
   updateSalarySettlement: async (id, settlement) => {
     set((state) => ({
@@ -1851,8 +2116,10 @@ export const useStore = create<AppState>()(
         s.id === sessionId ? { ...s, movements: [...(s.movements || []), movement] } : s
       )
     }));
-    try {
-      await supabase.from('cash_movements').insert([{
+    get().addSyncTask({
+      action: 'INSERT',
+      table: 'cash_movements',
+      data: {
         id: movement.id,
         session_id: sessionId,
         type: movement.type,
@@ -1860,10 +2127,8 @@ export const useStore = create<AppState>()(
         currency_code: movement.currencyCode,
         description: movement.description,
         date: movement.date
-      }]);
-    } catch (error) {
-      console.error('Error adding cash movement to Supabase:', error);
-    }
+      }
+    });
   },
 
   transfers: [],
@@ -1871,33 +2136,31 @@ export const useStore = create<AppState>()(
     set((state) => ({
       transfers: [transfer, ...state.transfers]
     }));
-    try {
-      const payload: any = {
-        id: transfer.id,
-        product_id: transfer.productId,
-        product_name: transfer.productName,
-        from_branch_id: transfer.fromBranchId,
-        from_branch_name: transfer.fromBranchName,
-        to_branch_id: transfer.toBranchId,
-        to_branch_name: transfer.toBranchName,
-        variant_label: transfer.variantLabel || null,
-        quantity: transfer.quantity,
-        date: transfer.date || new Date().toISOString(),
-        status: transfer.status || 'completed'
-      };
+    
+    const payload: any = {
+      id: transfer.id,
+      product_id: transfer.productId,
+      product_name: transfer.productName,
+      from_branch_id: transfer.fromBranchId,
+      from_branch_name: transfer.fromBranchName,
+      to_branch_id: transfer.toBranchId,
+      to_branch_name: transfer.toBranchName,
+      variant_label: transfer.variantLabel || null,
+      quantity: transfer.quantity,
+      date: transfer.date || new Date().toISOString(),
+      status: transfer.status || 'completed'
+    };
 
-      // Ensure user_id is a valid UUID format before sending to postgres uuid column
-      if (transfer.userId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(transfer.userId)) {
-        payload.user_id = transfer.userId;
-      }
-
-      const { error } = await supabase.from('inventory_transfers').insert([payload]);
-      if (error) {
-        console.error('Error adding inventory transfer to Supabase:', error);
-      }
-    } catch (error) {
-      console.error('Error adding inventory transfer to Supabase:', error);
+    // Ensure user_id is a valid UUID format before sending to postgres uuid column
+    if (transfer.userId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(transfer.userId)) {
+      payload.user_id = transfer.userId;
     }
+
+    get().addSyncTask({
+      action: 'INSERT',
+      table: 'inventory_transfers',
+      data: payload
+    });
   },
 
   warranties: [],
@@ -2020,6 +2283,173 @@ export const useStore = create<AppState>()(
     }
   },
 
+    setupRealtimeSubscriptions: () => {
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'products' },
+        (payload) => {
+          console.log('[Realtime] Product change:', payload);
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const p = payload.new;
+            const mappedProduct = {
+              id: p.id,
+              name: p.name,
+              sku: p.sku,
+              barcode: p.barcode || '',
+              price: p.price,
+              costPrice: p.cost_price,
+              margin: p.margin,
+              categoryId: p.category_id,
+              color: p.color || 'bg-slate-100',
+              commissionType: p.commission_type || 'percentage',
+              commissionValue: p.commission_value || 0,
+              unit: p.unit || 'unidad',
+              status: p.status || 'active',
+              minStockAlert: p.min_stock_alert || 0,
+              hasSerial: p.has_serial || false,
+              isKit: p.is_kit || false,
+              warrantyDays: p.warranty_days || 0,
+              deviceColor: p.device_color,
+              availableSizes: p.available_sizes || [],
+              availableColors: p.available_colors || [],
+              nextSerial: p.next_serial || 1,
+              image: p.image
+            };
+            set(state => ({
+              products: state.products.some(old => old.id === p.id)
+                ? state.products.map(old => old.id === p.id ? mappedProduct : old)
+                : [mappedProduct, ...state.products]
+            }));
+          } else if (payload.eventType === 'DELETE') {
+            set(state => ({
+              products: state.products.filter(p => p.id !== payload.old.id)
+            }));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'inventory_levels' },
+        (payload) => {
+          console.log('[Realtime] Inventory change:', payload);
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const i = payload.new;
+            const mappedInv = {
+              id: i.id,
+              productId: i.product_id,
+              branchId: i.branch_id,
+              variantLabel: i.variant_label,
+              quantity: i.quantity,
+              minQuantity: i.min_quantity
+            };
+            set(state => ({
+              inventory: state.inventory.some(old => old.id === i.id)
+                ? state.inventory.map(old => old.id === i.id ? mappedInv : old)
+                : [...state.inventory, mappedInv]
+            }));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'categories' },
+        (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const c = payload.new;
+            set(state => ({
+              categories: state.categories.some(old => old.id === c.id)
+                ? state.categories.map(old => old.id === c.id ? { id: c.id, name: c.name, department: c.department } : old)
+                : [...state.categories, { id: c.id, name: c.name, department: c.department }]
+            }));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cash_sessions' },
+        (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const s = payload.new;
+            const mappedSession: any = {
+              id: s.id,
+              userId: s.user_id,
+              workerName: s.worker_name,
+              branchId: s.branch_id,
+              openedAt: s.opened_at,
+              closedAt: s.closed_at,
+              closingDate: s.closing_date,
+              openingBalance: s.opening_balance,
+              closingBalance: s.closing_balance,
+              expectedBalance: s.expected_balance,
+              difference: s.difference,
+              notes: s.notes,
+              status: s.status
+            };
+            set(state => ({
+              cashSessions: state.cashSessions.some(old => old.id === s.id)
+                ? state.cashSessions.map(old => old.id === s.id ? mappedSession : old)
+                : [mappedSession, ...state.cashSessions]
+            }));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'salary_settlements' },
+        (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const st = payload.new;
+            const mappedSettlement: any = {
+              id: st.id,
+              sessionId: st.session_id,
+              userId: st.user_id,
+              userName: st.user_name,
+              baseSalary: st.base_salary,
+              commissions: st.commissions,
+              total: st.total,
+              date: st.date,
+              status: st.status
+            };
+            set(state => ({
+              salarySettlements: state.salarySettlements.some(old => old.id === st.id)
+                ? state.salarySettlements.map(old => old.id === st.id ? mappedSettlement : old)
+                : [mappedSettlement, ...state.salarySettlements]
+            }));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'inventory_transfers' },
+        (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const tr = payload.new;
+            const mappedTransfer: any = {
+              id: tr.id,
+              fromBranchId: tr.from_branch_id,
+              toBranchId: tr.to_branch_id,
+              productId: tr.product_id,
+              quantity: tr.quantity,
+              date: tr.date,
+              userId: tr.user_id,
+              variantLabel: tr.variant_label
+            };
+            set(state => ({
+              transfers: state.transfers.some(old => old.id === tr.id)
+                ? state.transfers.map(old => old.id === tr.id ? mappedTransfer : old)
+                : [mappedTransfer, ...state.transfers]
+            }));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  },
   initializeFromSupabase: async () => {
     try {
       const [
@@ -2138,58 +2568,66 @@ export const useStore = create<AppState>()(
           branchId: u.branch_id || undefined,
           supervisorId: u.supervisor_id || undefined
         })) : state.users,
-        transactions: transactionsData?.length ? transactionsData.map(t => ({
-          id: t.id,
-          branchId: t.branch_id,
-          userId: t.user_id,
-          date: t.date,
-          subtotal: t.subtotal,
-          tax: t.tax,
-          total: t.total,
-          status: t.status,
-          customerId: t.customer_id || undefined,
-          ncf: t.ncf || undefined,
-          ncfType: t.ncf_type || undefined,
-          changeGiven: t.change_given,
-          payments: t.transaction_payments ? t.transaction_payments.map((p: any) => ({
-            currencyCode: p.currency_code,
-            amount: p.amount,
-            exchangeRate: p.exchange_rate,
-            method: p.method,
-            bankCardId: p.bank_card_id || undefined
-          })) : [],
-          items: t.transaction_items ? t.transaction_items.map((i: any) => {
-            let product = state.products.find(p => p.id === i.product_id) || productsData?.map(p => ({
-              id: p.id, name: p.name, sku: p.sku, price: p.price, costPrice: p.cost_price, margin: p.margin, categoryId: p.category_id, color: p.color, commissionType: p.commission_type, commissionValue: p.commission_value
-            })).find(p => p.id === i.product_id); // Fallback to raw data mapping if not fully loaded yet in state
-            
-            if (!product) {
-              product = {
-                id: i.product_id,
-                name: 'Producto Eliminado',
-                sku: 'N/A',
-                price: i.price || 0,
-                costPrice: i.cost || 0,
-                margin: 0,
-                categoryId: '',
-                color: 'bg-slate-100',
-                commissionType: 'percentage',
-                commissionValue: 0
-              };
-            }
+        transactions: (() => {
+          const dbTxs = transactionsData?.length ? transactionsData.map(t => ({
+            id: t.id,
+            branchId: t.branch_id,
+            userId: t.user_id,
+            sessionId: t.session_id || undefined,
+            sellerEmployeeIds: [t.user_id],
+            date: t.date,
+            subtotal: t.subtotal,
+            tax: t.tax,
+            total: t.total,
+            status: t.status,
+            customerId: t.customer_id || undefined,
+            ncf: t.ncf || undefined,
+            ncfType: t.ncf_type || undefined,
+            changeGiven: t.change_given,
+            payments: t.transaction_payments ? t.transaction_payments.map((p: any) => ({
+              currencyCode: p.currency_code,
+              amount: p.amount,
+              exchangeRate: p.exchange_rate,
+              method: p.method,
+              bankCardId: p.bank_card_id || undefined
+            })) : [],
+            items: t.transaction_items ? t.transaction_items.map((i: any) => {
+              let product = state.products.find(p => p.id === i.product_id) || productsData?.map(p => ({
+                id: p.id, name: p.name, sku: p.sku, price: p.price, costPrice: p.cost_price, margin: p.margin, categoryId: p.category_id, color: p.color, commissionType: p.commission_type, commissionValue: p.commission_value
+              })).find(p => p.id === i.product_id);
+              
+              if (!product) {
+                product = {
+                  id: i.product_id,
+                  name: 'Producto Eliminado',
+                  sku: 'N/A',
+                  price: i.price || 0,
+                  costPrice: i.cost || 0,
+                  margin: 0,
+                  categoryId: '',
+                  color: 'bg-slate-100',
+                  commissionType: 'percentage',
+                  commissionValue: 0
+                };
+              }
 
-            return {
-              id: i.cart_item_id || i.id,
-              product: product as any, // Mapped locally
-              quantity: i.quantity,
-              serialNumber: i.serial_number || undefined,
-              warrantyCode: i.warranty_code || undefined,
-              selectedSize: i.selected_size || undefined,
-              selectedColor: i.selected_color || undefined,
-              variantLabel: i.variant_label || undefined
-            };
-          }) : []
-        })) : state.transactions,
+              return {
+                id: i.id,
+                product: product as any,
+                quantity: i.quantity,
+                serialNumber: i.serial_number || undefined,
+                warrantyCode: i.warranty_code || undefined,
+                selectedSize: i.selected_size || undefined,
+                selectedColor: i.selected_color || undefined,
+                variantLabel: i.variant_label || undefined
+              };
+            }) : []
+          })) : [];
+
+          const dbTxIds = new Set(dbTxs.map(t => t.id));
+          const localOnlyTxs = state.transactions.filter(t => !dbTxIds.has(t.id));
+          return [...dbTxs, ...localOnlyTxs];
+        })(),
         returns: returnsData?.length ? returnsData.map(r => ({
           id: r.id,
           transactionId: r.transaction_id,
@@ -2213,25 +2651,55 @@ export const useStore = create<AppState>()(
           serialNumber: w.serial_number || undefined,
           status: w.status
         })) : state.warranties,
-        cashSessions: cashSessionsData?.length ? cashSessionsData.map(s => ({
-          id: s.id,
-          branchId: s.branch_id,
-          userId: s.user_id,
-          openedAt: s.opened_at,
-          closedAt: s.closed_at || undefined,
-          openingBalance: s.opening_balance,
-          closingBalances: s.closing_balances || undefined,
-          expectedBalance: s.expected_balance || undefined,
-          status: s.status,
-          movements: cashMovementsData?.filter(m => m.session_id === s.id).map(m => ({
-            id: m.id,
-            type: m.type,
-            amount: m.amount,
-            currencyCode: m.currency_code,
-            description: m.description,
-            date: m.date
-          })) || []
-        })) : state.cashSessions,
+        cashSessions: (() => {
+          const dbSessions = cashSessionsData?.length ? cashSessionsData.map(s => ({
+            id: s.id,
+            branchId: s.branch_id,
+            userId: s.user_id,
+            workerName: s.worker_name || undefined,
+            openedAt: s.opened_at,
+            closedAt: s.closed_at || undefined,
+            closingDate: s.closing_date || s.closed_at || undefined,
+            openingBalance: s.opening_balance,
+            expectedBalance: s.expected_balance || undefined,
+            closingBalances: s.closing_balances || undefined,
+            status: s.status,
+            movements: cashMovementsData?.filter(m => m.session_id === s.id).map(m => ({
+              id: m.id,
+              type: m.type,
+              amount: m.amount,
+              currencyCode: m.currency_code,
+              description: m.description,
+              date: m.date
+            })) || []
+          })) : [];
+
+          const dbSessionIds = new Set(dbSessions.map(s => s.id));
+          const localOnlySessions = state.cashSessions.filter(s => !dbSessionIds.has(s.id));
+
+          const mergedDbSessions = dbSessions.map(dbS => {
+            const localS = state.cashSessions.find(ls => ls.id === dbS.id);
+            if (localS) {
+              if (localS.status === 'closed' && dbS.status !== 'closed') {
+                return { ...dbS, ...localS };
+              }
+              if (localS.movements && localS.movements.length > (dbS.movements?.length || 0)) {
+                return { ...dbS, movements: localS.movements, ...(localS.status === 'closed' ? localS : {}) };
+              }
+            }
+            return dbS;
+          });
+
+          return [...mergedDbSessions, ...localOnlySessions];
+        })(),
+        lastTurnNumber: (() => {
+          const sessions = cashSessionsData?.length ? cashSessionsData : state.cashSessions;
+          const nums = sessions.map((s: any) => {
+            const m = (s.id || '').match(/Turno-(\d+)/i);
+            return m ? parseInt(m[1], 10) : 0;
+          }).filter((n: number) => !isNaN(n));
+          return nums.length ? Math.max(0, ...nums) : state.lastTurnNumber || 0;
+        })(),
         transfers: transfersData?.length ? transfersData.map(t => ({
           id: t.id,
           productId: t.product_id,
@@ -2334,19 +2802,32 @@ export const useStore = create<AppState>()(
             difference: i.difference
           })) || []
         })) : state.inventoryAudits,
-        salarySettlements: salarySettlementsData?.length ? salarySettlementsData.map(s => ({
-          id: s.id,
-          userId: s.user_id,
-          userName: s.user_name,
-          sessionId: s.session_id,
-          baseSalary: s.base_salary,
-          commissions: s.commissions,
-          total: s.total,
-          date: s.date,
-          status: s.status
-        })) : state.salarySettlements,
+        salarySettlements: (() => {
+          const dbSettlements = salarySettlementsData?.length ? salarySettlementsData.map(s => ({
+            id: s.id,
+            userId: s.user_id,
+            userName: s.user_name,
+            sessionId: s.session_id,
+            baseSalary: s.base_salary,
+            commissions: s.commissions,
+            total: s.total,
+            date: s.date,
+            status: s.status
+          })) : [];
+          const dbIds = new Set(dbSettlements.map(s => s.id));
+          const localOnly = state.salarySettlements.filter(s => !dbIds.has(s.id));
+          return [...dbSettlements, ...localOnly];
+        })(),
         isInitialized: true
       }));
+
+      // Seed default users if missing
+      const currentState = get();
+      if (currentState.users.length === 0) {
+        for (const u of INITIAL_USERS) {
+          await get().addUser(u);
+        }
+      }
 
       if (settingsData && settingsData.length > 0) {
         const settings = settingsData[0];
@@ -2361,7 +2842,112 @@ export const useStore = create<AppState>()(
       console.error('Error fetching from Supabase:', error);
       // Fallback
     } finally {
+      // Autocierre de sesiones antiguas
+      try {
+        const today = new Date().toDateString();
+        const state = get();
+        const oldOpenSessions = state.cashSessions.filter(s => s.status === 'open' && new Date(s.openedAt).toDateString() !== today);
+        for (const session of oldOpenSessions) {
+          console.log(`Auto-closing old session ${session.id} from ${session.openedAt}`);
+          const expected: import('../types').Payment[] = [
+            { currencyCode: state.getBaseCurrency().code as any, amount: session.openingBalance, exchangeRate: 1, method: 'cash' as any }
+          ];
+          const sessionTxs = state.transactions.filter(t => 
+            t.sessionId 
+              ? t.sessionId === session.id
+              : (t.branchId === session.branchId && t.userId === session.userId && new Date(t.date).getTime() >= new Date(session.openedAt).getTime())
+          );
+          sessionTxs.forEach(tx => {
+            tx.payments.forEach(p => {
+              const exItem = expected.find(e => e.currencyCode === p.currencyCode && e.method === p.method);
+              if (exItem) {
+                exItem.amount += p.amount;
+              } else {
+                expected.push({ currencyCode: p.currencyCode, amount: p.amount, exchangeRate: p.exchangeRate, method: p.method });
+              }
+            });
+            
+            // Subtract change payments
+            if (tx.changePayments && tx.changePayments.length > 0) {
+              tx.changePayments.forEach(cp => {
+                const exItem = expected.find(e => e.currencyCode === cp.currencyCode && e.method === cp.method);
+                if (exItem) {
+                  exItem.amount -= cp.amount;
+                } else {
+                  expected.push({ currencyCode: cp.currencyCode, amount: -cp.amount, exchangeRate: cp.exchangeRate, method: cp.method });
+                }
+              });
+            } else if (tx.changeGiven && tx.changeGiven > 0) {
+              const baseCode = state.getBaseCurrency().code;
+              const exItem = expected.find(e => e.currencyCode === baseCode && e.method === 'cash');
+              if (exItem) {
+                exItem.amount -= tx.changeGiven;
+              } else {
+                expected.push({ currencyCode: baseCode as any, amount: -tx.changeGiven, exchangeRate: 1, method: 'cash' as any });
+              }
+            }
+          });
+          const movements = state.cashSessions.find(s => s.id === session.id)?.movements || [];
+          movements.forEach(m => {
+            const exItem = expected.find(e => e.currencyCode === m.currencyCode && e.method === 'cash');
+            const multiplier = m.type === 'income' ? 1 : -1;
+            if (exItem) {
+              exItem.amount += (m.amount * multiplier);
+            } else {
+              const currency = state.currencies.find(c => c.code === m.currencyCode);
+              expected.push({ currencyCode: m.currencyCode as any, amount: m.amount * multiplier, exchangeRate: currency?.rateToBase || 1, method: 'cash' as any });
+            }
+          });
+          const employeeCommissions: Record<string, number> = {};
+          sessionTxs.forEach(tx => {
+            const sellers = tx.sellerEmployeeIds && tx.sellerEmployeeIds.length > 0 ? tx.sellerEmployeeIds : [tx.userId];
+            const splitFactor = sellers.length;
+            tx.items.forEach(item => {
+              let itemComm = 0;
+              if (item.product.commissionType === 'fixed') {
+                itemComm = (item.product.commissionValue || 0) * item.quantity;
+              } else {
+                itemComm = (item.product.price * ((item.product.commissionValue || 0) / 100)) * item.quantity;
+              }
+              const splitComm = itemComm / splitFactor;
+              sellers.forEach(sellerId => {
+                if (!employeeCommissions[sellerId]) employeeCommissions[sellerId] = 0;
+                employeeCommissions[sellerId] += splitComm;
+              });
+            });
+          });
+          const employeesToSettle = new Set<string>();
+          if (session.workingEmployeeIds) {
+            session.workingEmployeeIds.forEach(id => employeesToSettle.add(id));
+          }
+          Object.keys(employeeCommissions).forEach(id => employeesToSettle.add(id));
+          if (employeesToSettle.size === 0) employeesToSettle.add(session.userId);
+          employeesToSettle.forEach(empId => {
+            const emp = state.users.find(u => u.id === empId);
+            if (!emp || emp.role === 'admin') return;
+            const baseSalary = emp.baseSalary || 0;
+            const comm = employeeCommissions[empId] || 0;
+            state.addSalarySettlement({
+              id: crypto.randomUUID(),
+              userId: empId,
+              userName: emp.name || 'Usuario',
+              sessionId: session.id,
+              baseSalary,
+              commissions: comm,
+              total: baseSalary + comm,
+              date: new Date().toISOString(),
+              status: 'pending'
+            });
+          });
+
+          await state.closeSession(session.id, expected);
+        }
+      } catch (err) {
+        console.error('Error auto-closing old sessions:', err);
+      }
+
       set({ isInitialized: true });
+      get().processSyncQueue();
     }
   }
 }),

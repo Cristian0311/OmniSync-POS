@@ -11,6 +11,7 @@ export interface Branch {
   name: string;
   address?: string;
   phone?: string;
+  isMain?: boolean;
 }
 
 export interface Category {
@@ -116,6 +117,8 @@ export interface Transaction {
   ncf?: string; // Numero de Comprobante Fiscal
   ncfType?: string; // e.g., 'B01', 'B02'
   changeGiven?: number; // In base currency
+  changePayments?: Payment[]; // Multicurrency change details
+  sessionId?: string; // ID of the cash session/turno in which the transaction was created
 }
 
 export interface ReturnItem {
@@ -148,8 +151,10 @@ export interface CashRegisterSession {
   expectedBalance?: number;
   status: 'open' | 'closed';
   userId: string; // The user who opened it
+  workerName?: string; // Custom name for the shift (e.g., worker name)
   workingEmployeeIds?: string[]; // IDs of employees working this session
   movements?: CashMovement[];
+  closingDate?: string;
 }
 
 export interface CashMovement {
@@ -173,6 +178,7 @@ export interface User {
   phone?: string;
   branchId?: string; // Sucursal asignada
   supervisorId?: string; // Supervisor (empleado principal)
+  allowedBranches?: string[]; // Sucursales donde el usuario puede operar
 }
 
 export interface PendingOrder {
@@ -314,7 +320,6 @@ export interface ReceiptConfig {
   showLogo: boolean;
   showAddress: boolean;
   showPhone: boolean;
-  showNCF: boolean;
   showFooter: boolean;
   footerText: string;
   businessName: string;
@@ -323,6 +328,7 @@ export interface ReceiptConfig {
   printerWidth?: '58mm' | '80mm';
   openDrawer?: boolean;
   useWebSerial?: boolean;
+  autoPrint?: boolean;
 }
 
 export interface Quote {
@@ -346,3 +352,14 @@ export interface TimeShift {
   clockOut?: string;
   notes?: string;
 }
+
+export interface SyncTask {
+  id: string;
+  action: 'INSERT' | 'UPDATE' | 'DELETE' | 'RPC';
+  table: string;
+  data: any;
+  timestamp: string;
+  status: 'pending' | 'error';
+  retryCount: number;
+}
+

@@ -127,3 +127,40 @@ export async function printReceiptOverSerial(textLines: string[], openDrawer: bo
     writer.releaseLock();
   }
 }
+
+export async function connectBluetoothPrinter() {
+  if (!('bluetooth' in navigator)) {
+    throw new Error('Web Bluetooth no está disponible en este navegador. Usa Chrome o Edge en Android, Mac o Windows.');
+  }
+  try {
+    // @ts-ignore
+    const device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [
+        '000018f0-0000-1000-8000-00805f9b34fb',
+        'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+        '00001101-0000-1000-8000-00805f9b34fb'
+      ]
+    });
+    if (device.gatt) {
+      await device.gatt.connect();
+    }
+    return device;
+  } catch (err: any) {
+    if (err.name === 'NotFoundError') {
+      throw new Error('Búsqueda de impresora Bluetooth cancelada por el usuario.');
+    }
+    throw new Error('Error al conectar con la impresora Bluetooth: ' + (err.message || err));
+  }
+}
+
+export async function testWifiPrinterConnection(ipAddress: string, port: number = 9100) {
+  if (!ipAddress || !ipAddress.trim()) {
+    throw new Error('Ingresa una dirección IP válida (ejemplo: 192.168.1.100).');
+  }
+  const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+  if (!ipRegex.test(ipAddress.trim())) {
+    throw new Error('Formato de IP no válido. Ejemplo esperado: 192.168.1.100');
+  }
+  return true;
+}
