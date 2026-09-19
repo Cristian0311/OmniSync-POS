@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Search, Wifi, WifiOff, RefreshCw, Plus, Minus, CreditCard, Receipt, Trash2, ShoppingCart, ShieldCheck, DollarSign, QrCode, ArrowLeftRight, UserPlus, X, Lock, Unlock, Camera, AlertCircle, TrendingUp, Wallet, MessageSquare, Mail, HelpCircle, Calculator, ArrowRight, Package, User, RotateCcw, Printer } from "lucide-react";
+import { Search, Wifi, WifiOff, RefreshCw, Plus, Minus, CreditCard, Receipt, Trash2, ShoppingCart, ShieldCheck, DollarSign, QrCode, ArrowLeftRight, UserPlus, X, Lock, Unlock, Camera, AlertCircle, TrendingUp, Wallet, MessageSquare, Mail, HelpCircle, Calculator, ArrowRight, Package, User, RotateCcw, Printer, Bluetooth, Usb, Smartphone } from "lucide-react";
 import { Html5QrcodeScanner, Html5Qrcode } from "html5-qrcode";
 import { useNavigate } from "react-router-dom";
 import { cn, generateId } from "../lib/utils";
@@ -56,6 +56,17 @@ export default function POS() {
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [showSalarySummary, setShowSalarySummary] = useState(false);
   const [lastClosedSession, setLastClosedSession] = useState<CashRegisterSession | null>(null);
+  const [connectedPrinterName, setConnectedPrinterName] = useState<string | null>(null);
+  const [showPrinterSetupModal, setShowPrinterSetupModal] = useState(false);
+  const [isConnectingPrinter, setIsConnectingPrinter] = useState(false);
+  const [printerStatusMsg, setPrinterStatusMsg] = useState("");
+
+  useEffect(() => {
+    import('../lib/escpos').then(async ({ getConnectedDeviceName }) => {
+      const name = await getConnectedDeviceName();
+      if (name) setConnectedPrinterName(name);
+    }).catch(() => {});
+  }, []);
   
   type PaymentLine = { id: string, code: string, amount: number, method: 'cash' | 'transfer', bankCardId?: string };
   const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([]);
@@ -564,166 +575,311 @@ export default function POS() {
     setShowCheckoutModal(true);
   };
 
-  const handleThermalPrint = async (tx: import("../types").Transaction) => {
+  const handlePairBluetooth = async () => {
+    setIsConnectingPrinter(true);
+    setPrinterStatusMsg("Buscando impresora Bluetooth...");
     try {
-      const { printThermalReceipt, format58mmLine } = await import('../lib/escpos');
-      const receiptConfig = useStore.getState().receiptConfig;
-      
-      const lines: string[] = [];
-      
-      lines.push(`CENTER|BOLD|${receiptConfig.businessName || 'MARÉ POS'}`);
-      if (receiptConfig.showAddress && receiptConfig.businessAddress) lines.push(`CENTER|${receiptConfig.businessAddress}`);
-      if (receiptConfig.showPhone && receiptConfig.businessPhone) lines.push(`CENTER|${receiptConfig.businessPhone}`);
-      
-      lines.push("---");
-      lines.push(format58mmLine("Ticket ID:", tx.id));
-      lines.push(format58mmLine("Fecha:", new Date(tx.date).toLocaleDateString()));
-      lines.push(format58mmLine("Hora:", new Date(tx.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
-      const customer = useStore.getState().customers.find(c => c.id === tx.customerId);
-      lines.push(format58mmLine("Cliente:", (customer?.name || 'Consumidor Final').slice(0, 18)));
-      lines.push("---");
-      
-      tx.items.forEach(item => {
-        lines.push(format58mmLine(`${item.quantity}x ${item.product.name}`, formatMoney(item.product.price * item.quantity, baseCurrency.symbol), 32));
-        if (item.serialNumber) {
-          lines.push(`  S/N: ${item.serialNumber}`);
-        }
-        if (item.warrantyCode) {
-          lines.push(`  Gda: ${item.warrantyCode} (${item.product.warrantyDays || 0}d)`);
-        }
-      });
-      
-      lines.push("---");
-      lines.push(`BOLD|${format58mmLine("TOTAL:", formatMoney(tx.total, baseCurrency.symbol), 32)}`);
-      lines.push("---");
-      
-      lines.push("BOLD|Pagos recibidos:");
-      tx.payments.forEach(p => {
-        const symbol = currencies.find(c => c.code === p.currencyCode)?.symbol || '';
-        const method = p.method === 'cash' ? 'Efectivo' : 'Transf';
-        lines.push(format58mmLine(`  ${method} (${p.currencyCode}):`, formatMoney(p.amount, symbol), 32));
-      });
-      
-      if (tx.changePayments && tx.changePayments.length > 0) {
-        lines.push("BOLD|Vuelto entregado:");
-        tx.changePayments.forEach(cp => {
-          const symbol = currencies.find(c => c.code === cp.currencyCode)?.symbol || '';
-          lines.push(format58mmLine(`  Efectivo (${cp.currencyCode}):`, formatMoney(cp.amount, symbol), 32));
-        });
-      } else if (tx.changeGiven && tx.changeGiven > 0) {
-        lines.push(format58mmLine("Vuelto:", formatMoney(tx.changeGiven, baseCurrency.symbol), 32));
-      }
-      
-      if (receiptConfig.showFooter && receiptConfig.footerText) {
-        lines.push("---");
-        lines.push(`CENTER|${receiptConfig.footerText}`);
-      }
-      
-      await printThermalReceipt({
-        lines,
-        openDrawer: receiptConfig.openDrawer ?? true,
-        width: '58mm',
-        onSuccess: (method) => {
-          setPosSuccess(`Ticket enviado (${method === 'bluetooth' ? 'Bluetooth' : method === 'serial' ? 'USB' : 'Sistema'})`);
-          setTimeout(() => setPosSuccess(""), 2500);
-        }
-      });
+      const { connectBluetoothPrinter } = await import('../lib/escpos');
+      const device = await connectBluetoothPrinter();
+      setConnectedPrinterName(device.name || "Impresora Bluetooth 58mm");
+      setPosSuccess(`Impresora "${device.name || 'Bluetooth'}" conectada`);
+      setPrinterStatusMsg(`Conectado a ${device.name || 'Bluetooth'}`);
+      setTimeout(() => setPosSuccess(""), 3000);
     } catch (err: any) {
-      console.error(err);
-      setTimeout(() => window.print(), 100);
+      console.warn("Bluetooth connection error:", err);
+      setPosError(err.message || "No se pudo conectar la impresora Bluetooth");
+      setPrinterStatusMsg(err.message || "Error al conectar");
+      setTimeout(() => setPosError(""), 4000);
+    } finally {
+      setIsConnectingPrinter(false);
     }
   };
 
-  const handlePrintClosureThermal = async (session: CashRegisterSession | null) => {
-    if (!session) return;
+  const handleConnectUsb = async () => {
+    setIsConnectingPrinter(true);
+    setPrinterStatusMsg("Buscando impresora USB...");
     try {
-      const { printThermalReceipt, format58mmLine } = await import('../lib/escpos');
-      const receiptConfig = useStore.getState().receiptConfig;
+      const { connectPrinter } = await import('../lib/escpos');
+      await connectPrinter();
+      setConnectedPrinterName("Impresora USB (Serie)");
+      setPosSuccess("Impresora USB conectada correctamente");
+      setPrinterStatusMsg("Impresora USB conectada");
+      setTimeout(() => setPosSuccess(""), 3000);
+    } catch (err: any) {
+      console.warn("USB connection error:", err);
+      setPosError(err.message || "No se pudo conectar la impresora USB");
+      setPrinterStatusMsg(err.message || "Error al conectar");
+      setTimeout(() => setPosError(""), 4000);
+    } finally {
+      setIsConnectingPrinter(false);
+    }
+  };
 
-      const sessionTx = transactions.filter(t => 
-        t.branchId === session.branchId && 
-        new Date(t.date) >= new Date(session.openedAt) && 
-        (session.closedAt ? new Date(t.date) <= new Date(session.closedAt) : true)
-      );
-
-      const soldMap: { [name: string]: { name: string, qty: number, total: number } } = {};
-      sessionTx.forEach(tx => {
-        tx.items.forEach(item => {
-          const name = typeof item.product === 'string' ? item.product : (item.product?.name || 'Producto');
-          if (!soldMap[name]) soldMap[name] = { name, qty: 0, total: 0 };
-          const price = typeof item.product === 'object' ? (item.product?.price || 0) : 0;
-          soldMap[name].qty += item.quantity;
-          soldMap[name].total += (price * item.quantity);
-        });
+  const getTransactionReceiptLines = (tx: import("../types").Transaction): string[] => {
+    const receiptConfig = useStore.getState().receiptConfig;
+    const lines: string[] = [];
+    
+    lines.push(`CENTER|BOLD|${receiptConfig.businessName || 'MARÉ POS'}`);
+    if (receiptConfig.showAddress && receiptConfig.businessAddress) lines.push(`CENTER|${receiptConfig.businessAddress}`);
+    if (receiptConfig.showPhone && receiptConfig.businessPhone) lines.push(`CENTER|${receiptConfig.businessPhone}`);
+    
+    lines.push("---");
+    lines.push(`Ticket ID: ${tx.id}`);
+    lines.push(`Fecha: ${new Date(tx.date).toLocaleDateString()} ${new Date(tx.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+    const customer = useStore.getState().customers.find(c => c.id === tx.customerId);
+    lines.push(`Cliente: ${(customer?.name || 'Consumidor Final').slice(0, 22)}`);
+    lines.push("---");
+    
+    tx.items.forEach(item => {
+      const itemName = `${item.quantity}x ${item.product.name}`;
+      const itemPrice = formatMoney(item.product.price * item.quantity, baseCurrency.symbol);
+      const dots = Math.max(1, 32 - itemName.length - itemPrice.length);
+      lines.push(`${itemName}${" ".repeat(dots)}${itemPrice}`);
+      if (item.serialNumber) {
+        lines.push(`  S/N: ${item.serialNumber}`);
+      }
+      if (item.warrantyCode) {
+        lines.push(`  Gda: ${item.warrantyCode} (${item.product.warrantyDays || 0}d)`);
+      }
+    });
+    
+    lines.push("---");
+    const totLabel = "TOTAL:";
+    const totVal = formatMoney(tx.total, baseCurrency.symbol);
+    const totDots = Math.max(1, 32 - totLabel.length - totVal.length);
+    lines.push(`BOLD|${totLabel}${" ".repeat(totDots)}${totVal}`);
+    lines.push("---");
+    
+    lines.push("BOLD|Pagos recibidos:");
+    tx.payments.forEach(p => {
+      const symbol = currencies.find(c => c.code === p.currencyCode)?.symbol || '';
+      const method = p.method === 'cash' ? 'Efectivo' : 'Transf';
+      const label = `  ${method} (${p.currencyCode}):`;
+      const val = formatMoney(p.amount, symbol);
+      const sp = Math.max(1, 32 - label.length - val.length);
+      lines.push(`${label}${" ".repeat(sp)}${val}`);
+    });
+    
+    if (tx.changePayments && tx.changePayments.length > 0) {
+      lines.push("BOLD|Vuelto entregado:");
+      tx.changePayments.forEach(cp => {
+        const symbol = currencies.find(c => c.code === cp.currencyCode)?.symbol || '';
+        const label = `  Efectivo (${cp.currencyCode}):`;
+        const val = formatMoney(cp.amount, symbol);
+        const sp = Math.max(1, 32 - label.length - val.length);
+        lines.push(`${label}${" ".repeat(sp)}${val}`);
       });
-      const soldList = Object.values(soldMap);
-      const totalSales = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
+    } else if (tx.changeGiven && tx.changeGiven > 0) {
+      const label = "Vuelto:";
+      const val = formatMoney(tx.changeGiven, baseCurrency.symbol);
+      const sp = Math.max(1, 32 - label.length - val.length);
+      lines.push(`${label}${" ".repeat(sp)}${val}`);
+    }
+    
+    if (receiptConfig.showFooter && receiptConfig.footerText) {
+      lines.push("---");
+      lines.push(`CENTER|${receiptConfig.footerText}`);
+    }
 
-      const commissions = sessionTx.reduce((sum, tx) => {
-        return sum + tx.items.reduce((s, item) => {
-          const prodId = typeof item.product === 'string' ? item.product : item.product.id;
-          const prod = products.find(p => p.id === prodId);
-          if (!prod) return s;
-          const commValue = prod.commissionType === 'percentage' 
-            ? (prod.price * (prod.commissionValue || 0) / 100)
-            : (prod.commissionValue || 0);
-          return s + (commValue * item.quantity);
-        }, 0);
+    return lines;
+  };
+
+  const getClosureReceiptLines = (session: CashRegisterSession): string[] => {
+    const receiptConfig = useStore.getState().receiptConfig;
+    const sessionTx = transactions.filter(t => 
+      t.branchId === session.branchId && 
+      new Date(t.date) >= new Date(session.openedAt) && 
+      (session.closedAt ? new Date(t.date) <= new Date(session.closedAt) : true)
+    );
+
+    const soldMap: { [name: string]: { name: string, qty: number, total: number } } = {};
+    sessionTx.forEach(tx => {
+      tx.items.forEach(item => {
+        const name = typeof item.product === 'string' ? item.product : (item.product?.name || 'Producto');
+        if (!soldMap[name]) soldMap[name] = { name, qty: 0, total: 0 };
+        const price = typeof item.product === 'object' ? (item.product?.price || 0) : 0;
+        soldMap[name].qty += item.quantity;
+        soldMap[name].total += (price * item.quantity);
+      });
+    });
+    const soldList = Object.values(soldMap);
+    const totalSales = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
+
+    const commissions = sessionTx.reduce((sum, tx) => {
+      return sum + tx.items.reduce((s, item) => {
+        const prodId = typeof item.product === 'string' ? item.product : item.product.id;
+        const prod = products.find(p => p.id === prodId);
+        if (!prod) return s;
+        const commValue = prod.commissionType === 'percentage' 
+          ? (prod.price * (prod.commissionValue || 0) / 100)
+          : (prod.commissionValue || 0);
+        return s + (commValue * item.quantity);
       }, 0);
+    }, 0);
 
-      const employee = users.find(u => u.id === session.userId || u.name === session.workerName) || users.find(u => u.name?.toLowerCase() === session.workerName?.toLowerCase()) || users.find(u => u.role === 'employee') || currentUser;
-      const baseSalary = employee?.baseSalary || 0;
-      const totalSalary = baseSalary + commissions;
+    const employee = users.find(u => u.id === session.userId || u.name === session.workerName) || users.find(u => u.name?.toLowerCase() === session.workerName?.toLowerCase()) || users.find(u => u.role === 'employee') || currentUser;
+    const baseSalary = employee?.baseSalary || 0;
+    const totalSalary = baseSalary + commissions;
 
-      const lines: string[] = [];
-      lines.push(`CENTER|BOLD|${receiptConfig.businessName || 'MARÉ POS'}`);
-      if (receiptConfig.showAddress && receiptConfig.businessAddress) lines.push(`CENTER|${receiptConfig.businessAddress}`);
-      if (receiptConfig.showPhone && receiptConfig.businessPhone) lines.push(`CENTER|${receiptConfig.businessPhone}`);
-      lines.push("---");
-      lines.push("CENTER|BOLD|CIERRE DE CAJA / TURNO");
-      lines.push(format58mmLine("TURNO:", session.id, 32));
-      lines.push(format58mmLine("FECHA:", new Date(session.closingDate || session.closedAt || new Date()).toLocaleDateString(), 32));
-      lines.push(format58mmLine("HORA:", new Date(session.closingDate || session.closedAt || new Date()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), 32));
-      lines.push(format58mmLine("VENDEDOR:", (session.workerName || 'VENDEDOR').toUpperCase(), 32));
-      lines.push(format58mmLine("SUCURSAL:", (branches.find(b => b.id === session.branchId)?.name || 'Central').slice(0, 18), 32));
-      lines.push("---");
-      lines.push("BOLD|PRODUCTOS VENDIDOS:");
-      if (soldList.length === 0) {
-        lines.push("Sin ventas registradas");
+    const lines: string[] = [];
+    lines.push(`CENTER|BOLD|${receiptConfig.businessName || 'MARÉ POS'}`);
+    if (receiptConfig.showAddress && receiptConfig.businessAddress) lines.push(`CENTER|${receiptConfig.businessAddress}`);
+    if (receiptConfig.showPhone && receiptConfig.businessPhone) lines.push(`CENTER|${receiptConfig.businessPhone}`);
+    lines.push("---");
+    lines.push("CENTER|BOLD|CIERRE DE CAJA / TURNO");
+    lines.push(`TURNO: ${session.id}`);
+    lines.push(`FECHA: ${new Date(session.closingDate || session.closedAt || new Date()).toLocaleDateString()}`);
+    lines.push(`HORA: ${new Date(session.closingDate || session.closedAt || new Date()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+    lines.push(`VENDEDOR: ${(session.workerName || 'VENDEDOR').toUpperCase()}`);
+    lines.push(`SUCURSAL: ${(branches.find(b => b.id === session.branchId)?.name || 'Central').slice(0, 18)}`);
+    lines.push("---");
+    lines.push("BOLD|PRODUCTOS VENDIDOS:");
+    if (soldList.length === 0) {
+      lines.push("Sin ventas registradas");
+    } else {
+      soldList.forEach(p => {
+        const label = `${p.qty}x ${p.name.slice(0, 16)}`;
+        const val = formatMoney(p.total, baseCurrency.symbol);
+        const sp = Math.max(1, 32 - label.length - val.length);
+        lines.push(`${label}${" ".repeat(sp)}${val}`);
+      });
+    }
+    lines.push("---");
+    const totSLabel = "TOTAL VENTAS:";
+    const totSVal = formatMoney(totalSales, baseCurrency.symbol);
+    lines.push(`${totSLabel}${" ".repeat(Math.max(1, 32 - totSLabel.length - totSVal.length))}${totSVal}`);
+    lines.push(`ITEMS TOTALES: ${soldList.reduce((s, i) => s + i.qty, 0)}`);
+    lines.push("---");
+    lines.push("BOLD|ARQUEO DE FONDOS:");
+    const fondoLabel = "Fondo Inicial:";
+    const fondoVal = formatMoney(session.openingBalance, baseCurrency.symbol);
+    lines.push(`${fondoLabel}${" ".repeat(Math.max(1, 32 - fondoLabel.length - fondoVal.length))}${fondoVal}`);
+    lines.push("---");
+    lines.push("BOLD|LIQUIDACION SALARIO:");
+    const baseLabel = "Salario Base:";
+    const baseVal = formatMoney(baseSalary, baseCurrency.symbol);
+    lines.push(`${baseLabel}${" ".repeat(Math.max(1, 32 - baseLabel.length - baseVal.length))}${baseVal}`);
+    const comLabel = "Comisiones:";
+    const comVal = `+${formatMoney(commissions, baseCurrency.symbol)}`;
+    lines.push(`${comLabel}${" ".repeat(Math.max(1, 32 - comLabel.length - comVal.length))}${comVal}`);
+    const totSalLabel = "TOTAL SALARIO:";
+    const totSalVal = formatMoney(totalSalary, baseCurrency.symbol);
+    lines.push(`BOLD|${totSalLabel}${" ".repeat(Math.max(1, 32 - totSalLabel.length - totSalVal.length))}${totSalVal}`);
+    lines.push("---");
+    lines.push("CENTER|Firma: _________________");
+    lines.push("CENTER|MARÉ SISTEMA POS");
+
+    return lines;
+  };
+
+  const handleThermalPrint = async (tx: import("../types").Transaction, options?: { preferRawBT?: boolean }) => {
+    try {
+      const { printThermalReceipt, isPrinterConnected } = await import('../lib/escpos');
+      const lines = getTransactionReceiptLines(tx);
+      const isConnected = await isPrinterConnected();
+
+      if (options?.preferRawBT) {
+        await printThermalReceipt({
+          lines,
+          openDrawer: receiptConfig.openDrawer ?? true,
+          width: '58mm',
+          preferRawBT: true,
+          onSuccess: () => {
+            setPosSuccess("Enviado a impresora (RawBT)");
+            setTimeout(() => setPosSuccess(""), 2500);
+          }
+        });
+        return;
+      }
+
+      if (!isConnected) {
+        // Direct attempt via printThermalReceipt (will use Bluetooth/Serial/RawBT)
+        const printed = await printThermalReceipt({
+          lines,
+          openDrawer: receiptConfig.openDrawer ?? true,
+          width: '58mm',
+          onSuccess: (method) => {
+            setPosSuccess(`Ticket enviado (${method === 'bluetooth' ? 'Bluetooth' : method === 'rawbt' ? 'RawBT' : 'USB'})`);
+            setTimeout(() => setPosSuccess(""), 2500);
+          },
+          onError: () => {
+            setShowPrinterSetupModal(true);
+          }
+        });
+        if (!printed) {
+          setShowPrinterSetupModal(true);
+        }
       } else {
-        soldList.forEach(p => {
-          lines.push(format58mmLine(`${p.qty}x ${p.name.slice(0, 16)}`, formatMoney(p.total, baseCurrency.symbol), 32));
+        await printThermalReceipt({
+          lines,
+          openDrawer: receiptConfig.openDrawer ?? true,
+          width: '58mm',
+          onSuccess: (method) => {
+            setPosSuccess(`Ticket impreso (${method === 'bluetooth' ? 'Bluetooth' : 'USB'})`);
+            setTimeout(() => setPosSuccess(""), 2500);
+          }
         });
       }
-      lines.push("---");
-      lines.push(format58mmLine("TOTAL VENTAS:", formatMoney(totalSales, baseCurrency.symbol), 32));
-      lines.push(format58mmLine("ITEMS TOTALES:", `${soldList.reduce((s, i) => s + i.qty, 0)}`, 32));
-      lines.push("---");
-      lines.push("BOLD|ARQUEO DE FONDOS:");
-      lines.push(format58mmLine("Fondo Inicial:", formatMoney(session.openingBalance, baseCurrency.symbol), 32));
-      lines.push("---");
-      lines.push("BOLD|LIQUIDACION SALARIO:");
-      lines.push(format58mmLine("Salario Base:", formatMoney(baseSalary, baseCurrency.symbol), 32));
-      lines.push(format58mmLine("Comisiones:", `+${formatMoney(commissions, baseCurrency.symbol)}`, 32));
-      lines.push(format58mmLine("TOTAL SALARIO:", formatMoney(totalSalary, baseCurrency.symbol), 32));
-      lines.push("---");
-      lines.push("CENTER|Firma: _________________");
-      lines.push("CENTER|MARÉ SISTEMA POS");
+    } catch (err: any) {
+      console.error(err);
+      setShowPrinterSetupModal(true);
+    }
+  };
+
+  const handlePrintClosureThermal = async (session: CashRegisterSession | null, options?: { preferRawBT?: boolean }) => {
+    if (!session) return;
+    try {
+      const { printThermalReceipt, isPrinterConnected } = await import('../lib/escpos');
+      const lines = getClosureReceiptLines(session);
+      const isConnected = await isPrinterConnected();
 
       setLastClosedSession(session);
-      await printThermalReceipt({
-        lines,
-        openDrawer: false,
-        width: '58mm',
-        onSuccess: (method) => {
-          setPosSuccess(`Comprobante impreso (${method === 'bluetooth' ? 'Bluetooth' : method === 'serial' ? 'USB' : 'Sistema'})`);
-          setTimeout(() => setPosSuccess(""), 2500);
+
+      if (options?.preferRawBT) {
+        await printThermalReceipt({
+          lines,
+          openDrawer: false,
+          width: '58mm',
+          preferRawBT: true,
+          onSuccess: () => {
+            setPosSuccess("Cierre enviado a impresora (RawBT)");
+            setTimeout(() => setPosSuccess(""), 2500);
+          }
+        });
+        return;
+      }
+
+      if (!isConnected) {
+        const printed = await printThermalReceipt({
+          lines,
+          openDrawer: false,
+          width: '58mm',
+          onSuccess: (method) => {
+            setPosSuccess(`Comprobante impreso (${method === 'bluetooth' ? 'Bluetooth' : method === 'rawbt' ? 'RawBT' : 'USB'})`);
+            setTimeout(() => setPosSuccess(""), 2500);
+          },
+          onError: () => {
+            setShowPrinterSetupModal(true);
+          }
+        });
+        if (!printed) {
+          setShowPrinterSetupModal(true);
         }
-      });
+      } else {
+        await printThermalReceipt({
+          lines,
+          openDrawer: false,
+          width: '58mm',
+          onSuccess: (method) => {
+            setPosSuccess(`Comprobante impreso (${method === 'bluetooth' ? 'Bluetooth' : 'USB'})`);
+            setTimeout(() => setPosSuccess(""), 2500);
+          }
+        });
+      }
     } catch (err: any) {
       console.error('Error al imprimir comprobante:', err);
       setLastClosedSession(session);
-      setTimeout(() => window.print(), 100);
+      setShowPrinterSetupModal(true);
     }
   };
 
@@ -1739,6 +1895,21 @@ export default function POS() {
                     </button>
                   )}
 
+                  {/* Printer Connection Badge */}
+                  <button
+                    onClick={() => setShowPrinterSetupModal(true)}
+                    className={cn(
+                      "h-8 px-2.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 border shrink-0 shadow-sm whitespace-nowrap transition-all active:scale-95",
+                      connectedPrinterName 
+                        ? "bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100" 
+                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                    )}
+                    title="Configurar / Vincular Impresora Térmica 58mm"
+                  >
+                    <Printer className={cn("w-3.5 h-3.5", connectedPrinterName ? "text-indigo-600" : "text-slate-400")} />
+                    <span className="max-w-[110px] truncate">{connectedPrinterName ? `Térmica: ${connectedPrinterName}` : 'Impresora 58mm'}</span>
+                  </button>
+
                   {/* Connection Status */}
                   <div 
                     className={cn(
@@ -2125,17 +2296,17 @@ export default function POS() {
               )}
             </div>
             
-            <div className="p-3 bg-slate-50 flex gap-2 print:hidden overflow-x-auto justify-center items-center">
+            <div className="p-3 bg-slate-50 flex flex-wrap gap-2 print:hidden justify-center items-center">
               <button 
                 onClick={() => setShowReceiptModal(null)}
-                className="px-4 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm"
+                className="px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all shadow-sm active:scale-95"
               >
                 Cerrar
               </button>
               
               <button 
                 onClick={() => handleWhatsAppReceipt(showReceiptModal)}
-                className="px-4 py-1.5 bg-emerald-500 text-white rounded-lg text-xs font-bold hover:bg-emerald-600 transition-all flex items-center gap-1.5 shadow-sm shadow-emerald-200"
+                className="px-3.5 py-2 bg-emerald-500 text-white rounded-xl text-xs font-bold hover:bg-emerald-600 transition-all flex items-center gap-1.5 shadow-sm shadow-emerald-200 active:scale-95"
                 title="Enviar por WhatsApp"
               >
                 <MessageSquare className="w-3.5 h-3.5" />
@@ -2143,12 +2314,21 @@ export default function POS() {
               </button>
               
               <button 
-                onClick={() => handleThermalPrint(showReceiptModal)}
-                className="px-4 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-all flex items-center gap-1.5 shadow-sm"
-                title="Impresión Térmica 58mm"
+                onClick={() => handleThermalPrint(showReceiptModal, { preferRawBT: true })}
+                className="px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all flex items-center gap-1.5 shadow-sm shadow-indigo-200 active:scale-95"
+                title="Impresión directa para Android con RawBT"
               >
-                <Receipt className="w-3.5 h-3.5" />
-                Imprimir
+                <Smartphone className="w-3.5 h-3.5" />
+                RawBT (Android)
+              </button>
+
+              <button 
+                onClick={() => handleThermalPrint(showReceiptModal)}
+                className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
+                title="Impresión Térmica Directa 58mm (Bluetooth / USB)"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                Imprimir Térmica 58mm
               </button>
             </div>
           </div>
@@ -2260,10 +2440,18 @@ export default function POS() {
               <div className="space-y-2.5 pt-2">
                 <button 
                   onClick={() => handlePrintClosureThermal(lastClosedSession)}
-                  className="w-full py-3.5 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
+                  className="w-full py-3.5 bg-slate-900 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
                 >
                   <Printer className="w-4 h-4" />
-                  Imprimir Ticket de Cierre y Ventas (58mm)
+                  Imprimir Cierre Térmico (Directo 58mm)
+                </button>
+
+                <button 
+                  onClick={() => handlePrintClosureThermal(lastClosedSession, { preferRawBT: true })}
+                  className="w-full py-3 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <Smartphone className="w-4 h-4" />
+                  Imprimir con RawBT (Android)
                 </button>
 
                 <button 
@@ -2271,7 +2459,7 @@ export default function POS() {
                     setShowSalarySummary(false);
                     navigate('/');
                   }}
-                  className="w-full py-3 bg-slate-100 text-slate-700 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  className="w-full py-2.5 bg-slate-100 text-slate-700 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95 flex items-center justify-center gap-2"
                 >
                   Finalizar e Ir al Menú <ArrowRight className="w-4 h-4" />
                 </button>
@@ -2553,6 +2741,163 @@ export default function POS() {
               <DollarSign className="w-3.5 h-3.5" />
               <span>Cobrar</span>
             </button>
+          </div>
+        </div>
+      )}
+      {showPrinterSetupModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 border border-slate-100">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-200">
+                  <Printer className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Impresora Térmica 58mm</h3>
+                  <p className="text-[10px] font-bold text-slate-400">Conexión directa Bluetooth, USB y RawBT</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowPrinterSetupModal(false)}
+                className="w-7 h-7 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 flex items-center justify-center transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Current Status */}
+              <div className={cn(
+                "p-3 rounded-2xl border flex items-center justify-between",
+                connectedPrinterName ? "bg-emerald-50/70 border-emerald-200 text-emerald-900" : "bg-slate-50 border-slate-200 text-slate-700"
+              )}>
+                <div className="flex items-center gap-2.5">
+                  <div className={cn("w-2.5 h-2.5 rounded-full", connectedPrinterName ? "bg-emerald-500 animate-pulse" : "bg-slate-400")} />
+                  <div>
+                    <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Estado actual</div>
+                    <div className="text-xs font-black truncate max-w-[170px]">{connectedPrinterName || "Sin conexión activa"}</div>
+                  </div>
+                </div>
+                {connectedPrinterName && (
+                  <button 
+                    onClick={async () => {
+                      const { disconnectPrinter, disconnectBluetoothPrinter } = await import('../lib/escpos');
+                      await disconnectPrinter();
+                      await disconnectBluetoothPrinter();
+                      setConnectedPrinterName(null);
+                      setPosSuccess("Impresora desconectada");
+                      setTimeout(() => setPosSuccess(""), 2000);
+                    }}
+                    className="px-2.5 py-1 bg-white border border-rose-200 text-rose-600 rounded-lg text-[10px] font-black uppercase hover:bg-rose-50 transition-all"
+                  >
+                    Desconectar
+                  </button>
+                )}
+              </div>
+
+              {printerStatusMsg && (
+                <p className="text-[10px] font-bold text-indigo-600 text-center animate-pulse">{printerStatusMsg}</p>
+              )}
+
+              {/* Connection Actions */}
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  disabled={isConnectingPrinter}
+                  onClick={handlePairBluetooth}
+                  className="w-full p-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all shadow-md shadow-indigo-100 active:scale-95 disabled:opacity-50"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Bluetooth className="w-4 h-4 text-indigo-200" />
+                    <span>1. Vincular por Bluetooth</span>
+                  </div>
+                  <span className="text-[9px] bg-indigo-500/50 px-2 py-0.5 rounded-md text-indigo-100">BLE / Inalámbrico</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const { printThermalReceipt } = await import('../lib/escpos');
+                    await printThermalReceipt({
+                      lines: [
+                        "CENTER|BOLD|MARÉ POS",
+                        "CENTER|PRUEBA RAWBT ANDROID",
+                        "---",
+                        "Conexión exitosa con RawBT",
+                        "Impresión térmica 58mm OK",
+                        "---"
+                      ],
+                      width: '58mm',
+                      preferRawBT: true
+                    });
+                    setShowPrinterSetupModal(false);
+                  }}
+                  className="w-full p-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all shadow-md shadow-emerald-100 active:scale-95"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Smartphone className="w-4 h-4 text-emerald-200" />
+                    <span>2. Imprimir con App RawBT</span>
+                  </div>
+                  <span className="text-[9px] bg-emerald-500/50 px-2 py-0.5 rounded-md text-emerald-100">Android</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isConnectingPrinter}
+                  onClick={handleConnectUsb}
+                  className="w-full p-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all active:scale-95 disabled:opacity-50 border border-slate-200"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Usb className="w-4 h-4 text-slate-500" />
+                    <span>3. Conectar por Cable USB</span>
+                  </div>
+                  <span className="text-[9px] bg-slate-200 px-2 py-0.5 rounded-md text-slate-600">Cable OTG</span>
+                </button>
+              </div>
+
+              {/* Test Ticket */}
+              <div className="pt-2 border-t border-slate-100 flex gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const { printThermalReceipt } = await import('../lib/escpos');
+                    const printed = await printThermalReceipt({
+                      lines: [
+                        "CENTER|BOLD|MARÉ POS",
+                        "CENTER|TICKET DE PRUEBA 58MM",
+                        "---",
+                        `Fecha: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+                        "Estado: Correcto",
+                        "---",
+                        "CENTER|Impresión Térmica OK"
+                      ],
+                      openDrawer: true,
+                      width: '58mm',
+                      onSuccess: (method) => {
+                        setPosSuccess(`Prueba enviada (${method})`);
+                        setTimeout(() => setPosSuccess(""), 2500);
+                      }
+                    });
+                    if (!printed) {
+                      setPosError("No hay impresora conectada");
+                      setTimeout(() => setPosError(""), 3000);
+                    }
+                  }}
+                  className="flex-1 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Imprimir Prueba
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowPrinterSetupModal(false)}
+                  className="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-200 transition-all active:scale-95"
+                >
+                  Listo
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

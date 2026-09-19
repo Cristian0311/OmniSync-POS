@@ -25,27 +25,34 @@ export function isInsideIframe(): boolean {
   }
 }
 
+export function isAndroidDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android/i.test(navigator.userAgent);
+}
+
 export function getHardwareCapabilities() {
   const serialSupported = typeof navigator !== 'undefined' && 'serial' in navigator;
   const bluetoothSupported = typeof navigator !== 'undefined' && 'bluetooth' in navigator;
   const inIframe = isInsideIframe();
+  const isAndroid = isAndroidDevice();
 
   return {
     serialSupported,
     bluetoothSupported,
-    inIframe
+    inIframe,
+    isAndroid
   };
 }
 
 /**
- * Format a line with left text and right text padded to exactly maxCols characters (default 32 for 58mm).
+ * Format a line with left text and right text padded to exactly maxCols characters (32 cols for 58mm).
  */
 export function format58mmLine(left: string, right: string, maxCols: number = 32): string {
-  const cleanLeft = left.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-  const cleanRight = right.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const cleanLeft = (left || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const cleanRight = (right || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
   
   const rightLen = cleanRight.length;
-  const maxLeftLen = maxCols - rightLen - 1;
+  const maxLeftLen = Math.max(1, maxCols - rightLen - 1);
   
   const truncatedLeft = cleanLeft.length > maxLeftLen ? cleanLeft.substring(0, maxLeftLen) : cleanLeft;
   const spacesNeeded = Math.max(1, maxCols - truncatedLeft.length - rightLen);
@@ -115,7 +122,8 @@ export function encodeEscPosLines(
     if (isCenter || isRight) append(ESCPOS_COMMANDS.ALIGN_LEFT);
   }
 
-  // Feed and cut
+  // Feed extra lines for thermal tear-off
+  append(ESCPOS_COMMANDS.LF);
   append(ESCPOS_COMMANDS.LF);
   append(ESCPOS_COMMANDS.LF);
   append(ESCPOS_COMMANDS.LF);
@@ -137,7 +145,51 @@ export function encodeEscPosLines(
 }
 
 /**
- * Connect to USB/Serial Printer
+ * Convert ESC/POS bytes into Base64 string (for RawBT and Print Apps).
+ */
+export function getEscPosBase64(
+  textLines: string[], 
+  openDrawer: boolean = false, 
+  width: '58mm' | '80mm' = '58mm'
+): string {
+  const bytes = encodeEscPosLines(textLines, openDrawer, width);
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Direct Print via RawBT protocol (Universal Android Thermal Printer App).
+ * RawBT connects seamlessly to Bluetooth (BLE & Classic 2.0/3.0 SPP), USB OTG, and WiFi printers on Android.
+ */
+export function printViaRawBT(
+  textLines: string[], 
+  openDrawer: boolean = false, 
+  width: '58mm' | '80mm' = '58mm'
+): boolean {
+  const base64 = getEscPosBase64(textLines, openDrawer, width);
+  const rawbtUrl = `rawbt:data:application/octet-stream;base64,${base64}`;
+  
+  try {
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = rawbtUrl;
+    document.body.appendChild(iframe);
+    setTimeout(() => {
+      try { document.body.removeChild(iframe); } catch (e) {}
+    }, 2000);
+    return true;
+  } catch (err) {
+    window.location.href = rawbtUrl;
+    return true;
+  }
+}
+
+/**
+ * Direct Connect to USB/Serial Printer (Web Serial API)
  */
 export async function connectPrinter() {
   if (cachedPort && cachedPort.readable) {
@@ -149,7 +201,7 @@ export async function connectPrinter() {
   }
 
   if (!('serial' in navigator)) {
-    throw new Error('Web Serial API no está soportada en este navegador. Utiliza Google Chrome o Microsoft Edge en tu PC o Mac.');
+    throw new Error('Web Serial API no está soportada en este navegador. Utiliza Google Chrome o Microsoft Edge.');
   }
 
   try {
@@ -167,7 +219,7 @@ export async function connectPrinter() {
       throw new Error('Selección de puerto cancelada.');
     }
     if (error?.name === 'SecurityError') {
-      throw new Error('Permiso denegado por el navegador o bloqueado por el visor. Abre el sistema en una nueva pestaña del navegador.');
+      throw new Error('Permiso denegado por el navegador. Abre el sistema en una nueva pestaña.');
     }
     console.error('Error conectando impresora USB/Serie:', error);
     throw new Error(error?.message || 'No se pudo conectar con la impresora.');
@@ -211,6 +263,52 @@ export async function getConnectedDeviceName(): Promise<string | null> {
   return null;
 }
 
+export async function isPrinterConnected(): Promise<boolean> {
+  const bt = await checkBluetoothConnection();
+  if (bt) return true;
+  const usb = await checkPrinterConnection();
+  return usb;
+}
+
+export async function disconnectPrinter() {
+  if (cachedPort) {
+    try {
+      await cachedPort.close();
+    } catch (e) {}
+    cachedPort = null;
+  }
+}
+
+export function disconnectBluetoothPrinter() {
+  try {
+    if (cachedBluetoothDevice && cachedBluetoothDevice.gatt && cachedBluetoothDevice.gatt.connected) {
+      cachedBluetoothDevice.gatt.disconnect();
+    }
+  } catch (e) {}
+  cachedBluetoothDevice = null;
+  cachedBluetoothCharacteristic = null;
+}
+
+/**
+ * Standard Bluetooth LE Service UUIDs across POS Thermal Printers:
+ * HM-10, Goojprt, MPT-II, POS-58, PT-210, Xprinter, Netum, Rongta, Star, Epson BLE, etc.
+ */
+const THERMAL_PRINTER_SERVICE_UUIDS = [
+  '000018f0-0000-1000-8000-00805f9b34fb', // Standard ESC/POS BLE
+  '0000ffe0-0000-1000-8000-00805f9b34fb', // HM-10 / CC2541 (Goojprt, MPT, PT-210, etc.)
+  '0000ff00-0000-1000-8000-00805f9b34fb', // Generic POS BLE
+  '0000fff0-0000-1000-8000-00805f9b34fb', // Generic POS BLE 2
+  '0000ae00-0000-1000-8000-00805f9b34fb', // AE00
+  '0000fee7-0000-1000-8000-00805f9b34fb', // Tencent/WeChat BLE standard
+  '000018f1-0000-1000-8000-00805f9b34fb',
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455', // ISSC transparent UART
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // Nordic UART 1
+  '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART 2
+  '0000af30-0000-1000-8000-00805f9b34fb', // ZJiang / POS58
+  '0000fee0-0000-1000-8000-00805f9b34fb',
+  '0000fe59-0000-1000-8000-00805f9b34fb',
+];
+
 /**
  * Connect to Bluetooth Thermal Printer (BLE ESC/POS)
  */
@@ -220,19 +318,14 @@ export async function connectBluetoothPrinter() {
   }
 
   if (!('bluetooth' in navigator)) {
-    throw new Error('Web Bluetooth no está disponible en este navegador o sistema operativo. Usa Google Chrome o Edge en Android, Mac o Windows.');
+    throw new Error('Web Bluetooth no está disponible en este navegador. Asegúrate de usar Google Chrome o Edge en Android o PC.');
   }
   
   try {
     // @ts-ignore
     const device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
-      optionalServices: [
-        '000018f0-0000-1000-8000-00805f9b34fb',
-        '0000ffe0-0000-1000-8000-00805f9b34fb',
-        'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
-        '49535343-fe7d-4ae5-8fa9-9fafd205e455'
-      ]
+      optionalServices: THERMAL_PRINTER_SERVICE_UUIDS
     });
     
     cachedBluetoothDevice = device;
@@ -244,25 +337,18 @@ export async function connectBluetoothPrinter() {
     
     return device;
   } catch (err: any) {
-    if (err.name === 'NotFoundError' || err?.message?.includes('User cancelled')) {
+    if (err.name === 'NotFoundError' || err?.message?.includes('User cancelled') || err?.message?.includes('cancelada')) {
       throw new Error('Búsqueda de dispositivo cancelada.');
     }
     if (err.name === 'SecurityError') {
-      throw new Error('Permiso de Bluetooth denegado. Asegúrate de abrir la app en una pestaña directa.');
+      throw new Error('Permiso de Bluetooth denegado. Abre la app en una pestaña directa del navegador.');
     }
     throw new Error(err.message || 'Error al conectar con la impresora Bluetooth.');
   }
 }
 
 async function findBluetoothWritableCharacteristic(server: any) {
-  const serviceUUIDs = [
-    '000018f0-0000-1000-8000-00805f9b34fb',
-    '0000ffe0-0000-1000-8000-00805f9b34fb',
-    'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
-    '49535343-fe7d-4ae5-8fa9-9fafd205e455'
-  ];
-
-  for (const sUuid of serviceUUIDs) {
+  for (const sUuid of THERMAL_PRINTER_SERVICE_UUIDS) {
     try {
       const service = await server.getPrimaryService(sUuid);
       const characteristics = await service.getCharacteristics();
@@ -276,7 +362,7 @@ async function findBluetoothWritableCharacteristic(server: any) {
     }
   }
 
-  // Fallback: search all primary services
+  // Fallback: search all primary services exposed by device
   try {
     const services = await server.getPrimaryServices();
     for (const service of services) {
@@ -314,7 +400,7 @@ export async function printReceiptOverBluetooth(textLines: string[], openDrawer:
   }
 
   if (!characteristic) {
-    throw new Error('No se encontró canal de escritura ESC/POS en la impresora Bluetooth conectada.');
+    throw new Error('No se encontró canal de escritura ESC/POS en la impresora Bluetooth.');
   }
 
   const bytes = encodeEscPosLines(textLines, openDrawer, width);
@@ -350,31 +436,32 @@ export async function printReceiptOverSerial(textLines: string[], openDrawer: bo
 
 /**
  * Unified Thermal Receipt Dispatcher:
- * 1) Tries Bluetooth if device is connected
+ * 1) Tries Web Bluetooth if device is connected
  * 2) Tries Serial/USB if connected
- * 3) If neither is connected or hardware fails, triggers system print dialog on formatted thermal area
+ * 3) If neither is directly paired, allows RawBT print or connection modal
  */
 export async function printThermalReceipt(options: {
   lines: string[];
   openDrawer?: boolean;
   width?: '58mm' | '80mm';
-  onSuccess?: (method: 'bluetooth' | 'serial' | 'system') => void;
+  preferRawBT?: boolean;
+  onSuccess?: (method: 'bluetooth' | 'serial' | 'rawbt' | 'system') => void;
   onError?: (err: any) => void;
-}): Promise<'bluetooth' | 'serial' | 'system'> {
-  const { lines, openDrawer = false, width = '58mm', onSuccess, onError } = options;
+}): Promise<'bluetooth' | 'serial' | 'rawbt' | 'system'> {
+  const { lines, openDrawer = false, width = '58mm', preferRawBT = false, onSuccess, onError } = options;
 
-  // 1. Try Bluetooth
+  // Option 1: Direct Bluetooth BLE
   if (cachedBluetoothDevice?.gatt?.connected) {
     try {
       await printReceiptOverBluetooth(lines, openDrawer, width);
       onSuccess?.('bluetooth');
       return 'bluetooth';
     } catch (btErr) {
-      console.warn('Bluetooth thermal print failed, attempting serial/system fallback:', btErr);
+      console.warn('Bluetooth thermal print failed:', btErr);
     }
   }
 
-  // 2. Try Serial / USB
+  // Option 2: Direct Serial / USB OTG
   const isSerialConnected = await checkPrinterConnection();
   if (isSerialConnected) {
     try {
@@ -382,20 +469,24 @@ export async function printThermalReceipt(options: {
       onSuccess?.('serial');
       return 'serial';
     } catch (serErr) {
-      console.warn('Serial thermal print failed, falling back to system print:', serErr);
+      console.warn('Serial thermal print failed:', serErr);
     }
   }
 
-  // 3. Fallback to System Print dialog (with 58mm CSS styles)
-  try {
-    window.print();
-    onSuccess?.('system');
-    return 'system';
-  } catch (sysErr) {
-    console.error('System print failed:', sysErr);
-    onError?.(sysErr);
-    throw sysErr;
+  // Option 3: RawBT (Android) if requested or running on Android mobile
+  if (preferRawBT || (isAndroidDevice() && !cachedBluetoothDevice?.gatt?.connected && !isSerialConnected)) {
+    try {
+      printViaRawBT(lines, openDrawer, width);
+      onSuccess?.('rawbt');
+      return 'rawbt';
+    } catch (rawErr) {
+      console.warn('RawBT print failed:', rawErr);
+    }
   }
+
+  const err = new Error('No hay impresora térmica conectada.');
+  onError?.(err);
+  throw err;
 }
 
 export async function openCashDrawer() {
@@ -411,6 +502,11 @@ export async function openCashDrawer() {
     } finally {
       writer.releaseLock();
     }
+    return;
+  }
+
+  if (isAndroidDevice()) {
+    printViaRawBT([], true);
     return;
   }
 

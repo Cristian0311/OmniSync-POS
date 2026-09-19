@@ -415,13 +415,12 @@ export default function Reports() {
         lines,
         openDrawer: false,
         width: '58mm',
-        onError: () => {
-          setTimeout(() => window.print(), 100);
+        onError: (err) => {
+          console.warn('Direct thermal print failed:', err);
         }
       });
     } catch (e) {
-      console.error(e);
-      setTimeout(() => window.print(), 100);
+      console.error('Error printing thermal shift ticket:', e);
     }
   };
 

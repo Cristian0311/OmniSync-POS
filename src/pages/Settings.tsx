@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw, Usb, Bluetooth, Wifi, Printer, CheckCircle2, ExternalLink, AlertCircle, Sparkles } from "lucide-react";
+import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw, Usb, Bluetooth, Wifi, Printer, CheckCircle2, ExternalLink, AlertCircle, Sparkles, Smartphone } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { Branch, Category, User } from "../types";
@@ -492,40 +492,77 @@ export default function Settings() {
                       </button>
                     </div>
 
-                    <div className="pt-1 flex gap-2">
+                    <div className="pt-1 flex flex-col gap-1.5">
                       <button
                         type="button"
                         onClick={async () => {
-                          setPrinterStatus({ type: 'loading', message: 'Imprimiendo ticket de prueba...' });
+                          setPrinterStatus({ type: 'loading', message: 'Enviando ticket de prueba a impresora térmica...' });
                           try {
-                            const { printReceiptOverSerial } = await import('../lib/escpos');
+                            const { printThermalReceipt } = await import('../lib/escpos');
                             const lines = [
+                              "CENTER|BOLD|MARÉ STORE",
                               "CENTER|*** TICKET DE PRUEBA ***",
-                              `CENTER|${ticketConfig.businessName || 'MARÉ STORE'}`,
                               ticketConfig.businessPhone ? `CENTER|Tel: ${ticketConfig.businessPhone}` : "",
                               "---",
-                              "1x Producto de Prueba    $10.00",
+                              "1x Producto Demostración   $10.00",
                               "---",
                               "BOLD|TOTAL: $10.00",
                               "---",
-                              "CENTER|Impresion Directa OK",
+                              "CENTER|Impresion Termica 58mm OK",
                               `CENTER|${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
                             ].filter(Boolean);
-                            await printReceiptOverSerial(lines, ticketConfig.openDrawer ?? false);
-                            setPrinterStatus({ type: 'success', message: '¡Ticket de prueba enviado a la impresora térmica!' });
-                          } catch (err: any) {
-                            // Si falla por serial, ofrecemos imprimir vía diálogo del sistema
-                            setPrinterStatus({
-                              type: 'warning',
-                              message: `Impresión directa no conectada (${err.message}). Abriendo diálogo de impresión del sistema...`
+                            const success = await printThermalReceipt({
+                              lines,
+                              openDrawer: ticketConfig.openDrawer ?? false,
+                              width: ticketConfig.printerWidth || '58mm',
+                              onSuccess: (method) => {
+                                setPrinterStatus({ type: 'success', message: `¡Ticket enviado exitosamente mediante ${method}!` });
+                              },
+                              onError: (err) => {
+                                setPrinterStatus({ type: 'error', message: `No se pudo imprimir: ${err}` });
+                              }
                             });
-                            window.print();
+                            if (!success) {
+                              setPrinterStatus({
+                                type: 'warning',
+                                message: 'No hay impresora Bluetooth o USB conectada. Puedes usar el botón RawBT para Android o conectar por Bluetooth primero.'
+                              });
+                            }
+                          } catch (err: any) {
+                            setPrinterStatus({
+                              type: 'error',
+                              message: `Error de impresión: ${err.message}`
+                            });
                           }
                         }}
                         className="w-full py-2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-emerald-100 transition-all flex items-center justify-center gap-1.5"
                       >
                         <Printer className="w-3.5 h-3.5 text-emerald-600" />
-                        Imprimir Ticket de Prueba
+                        Imprimir Ticket de Prueba (Directo)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const { printThermalReceipt } = await import('../lib/escpos');
+                          await printThermalReceipt({
+                            lines: [
+                              "CENTER|BOLD|MARÉ STORE",
+                              "CENTER|PRUEBA RAWBT ANDROID",
+                              "---",
+                              "1x Producto Prueba   $10.00",
+                              "---",
+                              "BOLD|TOTAL: $10.00",
+                              "---"
+                            ],
+                            width: ticketConfig.printerWidth || '58mm',
+                            preferRawBT: true
+                          });
+                        }}
+                        className="w-full py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg text-[8px] font-black uppercase tracking-wider hover:bg-indigo-100 transition-all flex items-center justify-center gap-1.5"
+                      >
+                        <Smartphone className="w-3 h-3 text-indigo-600" />
+                        Probar con App RawBT (Android)
                       </button>
                     </div>
                   </div>
