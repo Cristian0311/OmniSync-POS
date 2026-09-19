@@ -329,6 +329,7 @@ export interface ReceiptConfig {
   openDrawer?: boolean;
   useWebSerial?: boolean;
   autoPrint?: boolean;
+  printerIp?: string;
 }
 
 export interface Quote {
