@@ -15,6 +15,7 @@ export const ESCPOS_COMMANDS = {
 
 let cachedPort: any = null;
 let cachedBluetoothDevice: any = null;
+let cachedBluetoothCharacteristic: any = null;
 
 export function isInsideIframe(): boolean {
   try {
@@ -36,6 +37,108 @@ export function getHardwareCapabilities() {
   };
 }
 
+/**
+ * Format a line with left text and right text padded to exactly maxCols characters (default 32 for 58mm).
+ */
+export function format58mmLine(left: string, right: string, maxCols: number = 32): string {
+  const cleanLeft = left.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const cleanRight = right.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  
+  const rightLen = cleanRight.length;
+  const maxLeftLen = maxCols - rightLen - 1;
+  
+  const truncatedLeft = cleanLeft.length > maxLeftLen ? cleanLeft.substring(0, maxLeftLen) : cleanLeft;
+  const spacesNeeded = Math.max(1, maxCols - truncatedLeft.length - rightLen);
+  
+  return `${truncatedLeft}${' '.repeat(spacesNeeded)}${cleanRight}`;
+}
+
+/**
+ * Encode an array of lines into an ESC/POS byte sequence.
+ */
+export function encodeEscPosLines(
+  textLines: string[], 
+  openDrawer: boolean = false, 
+  width: '58mm' | '80mm' = '58mm'
+): Uint8Array {
+  const cols = width === '58mm' ? 32 : 42;
+  const chunks: Uint8Array[] = [];
+  const encoder = new TextEncoder();
+
+  const append = (arr: Uint8Array) => chunks.push(arr);
+  const appendText = (text: string) => {
+    const clean = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    chunks.push(encoder.encode(clean));
+  };
+
+  append(ESCPOS_COMMANDS.INIT);
+
+  for (const rawLine of textLines) {
+    let line = rawLine;
+
+    if (line === '---') {
+      appendText('-'.repeat(cols));
+      append(ESCPOS_COMMANDS.LF);
+      continue;
+    }
+    if (line === '===') {
+      appendText('='.repeat(cols));
+      append(ESCPOS_COMMANDS.LF);
+      continue;
+    }
+
+    let isBold = false;
+    let isCenter = false;
+    let isRight = false;
+
+    if (line.startsWith('CENTER|')) {
+      isCenter = true;
+      line = line.substring(7);
+    } else if (line.startsWith('RIGHT|')) {
+      isRight = true;
+      line = line.substring(6);
+    }
+
+    if (line.startsWith('BOLD|')) {
+      isBold = true;
+      line = line.substring(5);
+    }
+
+    if (isCenter) append(ESCPOS_COMMANDS.ALIGN_CENTER);
+    if (isRight) append(ESCPOS_COMMANDS.ALIGN_RIGHT);
+    if (isBold) append(ESCPOS_COMMANDS.BOLD_ON);
+
+    appendText(line);
+    append(ESCPOS_COMMANDS.LF);
+
+    if (isBold) append(ESCPOS_COMMANDS.BOLD_OFF);
+    if (isCenter || isRight) append(ESCPOS_COMMANDS.ALIGN_LEFT);
+  }
+
+  // Feed and cut
+  append(ESCPOS_COMMANDS.LF);
+  append(ESCPOS_COMMANDS.LF);
+  append(ESCPOS_COMMANDS.LF);
+  append(ESCPOS_COMMANDS.CUT_PARTIAL);
+
+  if (openDrawer) {
+    append(ESCPOS_COMMANDS.OPEN_DRAWER);
+  }
+
+  const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return result;
+}
+
+/**
+ * Connect to USB/Serial Printer
+ */
 export async function connectPrinter() {
   if (cachedPort && cachedPort.readable) {
     return cachedPort;
@@ -82,7 +185,7 @@ export async function checkPrinterConnection() {
         try {
           await cachedPort.open({ baudRate: 9600 });
         } catch (e) {
-          // Ya abierto
+          // Already opened
         }
       }
       return true;
@@ -91,75 +194,26 @@ export async function checkPrinterConnection() {
   return false;
 }
 
-export async function openCashDrawer() {
-  if (!await checkPrinterConnection()) {
-    throw new Error('No hay impresora conectada.');
+export async function checkBluetoothConnection(): Promise<boolean> {
+  if (cachedBluetoothDevice && cachedBluetoothDevice.gatt && cachedBluetoothDevice.gatt.connected) {
+    return true;
   }
-
-  const writer = cachedPort.writable.getWriter();
-  try {
-    await writer.write(ESCPOS_COMMANDS.OPEN_DRAWER);
-  } finally {
-    writer.releaseLock();
-  }
+  return false;
 }
 
-export async function printReceiptOverSerial(textLines: string[], openDrawer: boolean = false) {
-  if (!await checkPrinterConnection()) {
-    throw new Error('Debe conectar y emparejar una impresora térmica primero en Configuración.');
+export async function getConnectedDeviceName(): Promise<string | null> {
+  if (cachedBluetoothDevice && cachedBluetoothDevice.gatt?.connected) {
+    return cachedBluetoothDevice.name || 'Impresora Bluetooth 58mm';
   }
-
-  const writer = cachedPort.writable.getWriter();
-  
-  const writeCommand = async (cmd: Uint8Array) => {
-    await writer.write(cmd);
-  };
-
-  const writeText = async (text: string) => {
-    const encoder = new TextEncoder();
-    const cleanText = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    await writer.write(encoder.encode(cleanText));
-  };
-
-  try {
-    await writeCommand(ESCPOS_COMMANDS.INIT);
-    
-    for (const line of textLines) {
-      if (line === '---') {
-        await writeText('-'.repeat(32));
-        await writeCommand(ESCPOS_COMMANDS.LF);
-      } else if (line === '===') {
-        await writeText('='.repeat(32));
-        await writeCommand(ESCPOS_COMMANDS.LF);
-      } else if (line.startsWith('BOLD|')) {
-        await writeCommand(ESCPOS_COMMANDS.BOLD_ON);
-        await writeText(line.substring(5));
-        await writeCommand(ESCPOS_COMMANDS.LF);
-        await writeCommand(ESCPOS_COMMANDS.BOLD_OFF);
-      } else if (line.startsWith('CENTER|')) {
-        await writeCommand(ESCPOS_COMMANDS.ALIGN_CENTER);
-        await writeText(line.substring(7));
-        await writeCommand(ESCPOS_COMMANDS.LF);
-        await writeCommand(ESCPOS_COMMANDS.ALIGN_LEFT);
-      } else {
-        await writeText(line);
-        await writeCommand(ESCPOS_COMMANDS.LF);
-      }
-    }
-    
-    await writeCommand(ESCPOS_COMMANDS.LF);
-    await writeCommand(ESCPOS_COMMANDS.LF);
-    await writeCommand(ESCPOS_COMMANDS.LF);
-    await writeCommand(ESCPOS_COMMANDS.CUT_PARTIAL);
-    
-    if (openDrawer) {
-       await writeCommand(ESCPOS_COMMANDS.OPEN_DRAWER);
-    }
-  } finally {
-    writer.releaseLock();
+  if (cachedPort) {
+    return 'Impresora USB/Serie 58mm';
   }
+  return null;
 }
 
+/**
+ * Connect to Bluetooth Thermal Printer (BLE ESC/POS)
+ */
 export async function connectBluetoothPrinter() {
   if (isInsideIframe()) {
     throw new Error('Las APIs de Bluetooth están restringidas dentro de marcos (iframe). Abre la aplicación en una pestaña nueva para buscar dispositivos.');
@@ -183,12 +237,9 @@ export async function connectBluetoothPrinter() {
     
     cachedBluetoothDevice = device;
     
-    try {
-      if (device.gatt && !device.gatt.connected) {
-        await device.gatt.connect();
-      }
-    } catch (gattErr) {
-      console.warn('GATT connection note:', gattErr);
+    if (device.gatt) {
+      const server = await device.gatt.connect();
+      cachedBluetoothCharacteristic = await findBluetoothWritableCharacteristic(server);
     }
     
     return device;
@@ -203,7 +254,170 @@ export async function connectBluetoothPrinter() {
   }
 }
 
-export async function testWifiPrinterConnection(ipAddress: string, port: number = 9100) {
+async function findBluetoothWritableCharacteristic(server: any) {
+  const serviceUUIDs = [
+    '000018f0-0000-1000-8000-00805f9b34fb',
+    '0000ffe0-0000-1000-8000-00805f9b34fb',
+    'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+    '49535343-fe7d-4ae5-8fa9-9fafd205e455'
+  ];
+
+  for (const sUuid of serviceUUIDs) {
+    try {
+      const service = await server.getPrimaryService(sUuid);
+      const characteristics = await service.getCharacteristics();
+      for (const char of characteristics) {
+        if (char.properties.write || char.properties.writeWithoutResponse) {
+          return char;
+        }
+      }
+    } catch (e) {
+      // Try next service
+    }
+  }
+
+  // Fallback: search all primary services
+  try {
+    const services = await server.getPrimaryServices();
+    for (const service of services) {
+      try {
+        const characteristics = await service.getCharacteristics();
+        for (const char of characteristics) {
+          if (char.properties.write || char.properties.writeWithoutResponse) {
+            return char;
+          }
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+
+  return null;
+}
+
+/**
+ * Print raw ESC/POS bytes over Bluetooth in safe chunk size (<= 100 bytes)
+ */
+export async function printReceiptOverBluetooth(textLines: string[], openDrawer: boolean = false, width: '58mm' | '80mm' = '58mm') {
+  if (!cachedBluetoothDevice || !cachedBluetoothDevice.gatt) {
+    throw new Error('No hay impresora Bluetooth conectada.');
+  }
+
+  let server = cachedBluetoothDevice.gatt;
+  if (!server.connected) {
+    server = await cachedBluetoothDevice.gatt.connect();
+  }
+
+  let characteristic = cachedBluetoothCharacteristic;
+  if (!characteristic) {
+    characteristic = await findBluetoothWritableCharacteristic(server);
+    cachedBluetoothCharacteristic = characteristic;
+  }
+
+  if (!characteristic) {
+    throw new Error('No se encontró canal de escritura ESC/POS en la impresora Bluetooth conectada.');
+  }
+
+  const bytes = encodeEscPosLines(textLines, openDrawer, width);
+  const chunkSize = 100;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.slice(i, i + chunkSize);
+    if (characteristic.properties.writeWithoutResponse) {
+      await characteristic.writeValueWithoutResponse(chunk);
+    } else {
+      await characteristic.writeValue(chunk);
+    }
+    await new Promise(r => setTimeout(r, 20));
+  }
+}
+
+/**
+ * Print raw ESC/POS bytes over Serial/USB
+ */
+export async function printReceiptOverSerial(textLines: string[], openDrawer: boolean = false, width: '58mm' | '80mm' = '58mm') {
+  if (!await checkPrinterConnection()) {
+    throw new Error('No hay impresora USB/Serie conectada.');
+  }
+
+  const bytes = encodeEscPosLines(textLines, openDrawer, width);
+  const writer = cachedPort.writable.getWriter();
+  try {
+    await writer.write(bytes);
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+/**
+ * Unified Thermal Receipt Dispatcher:
+ * 1) Tries Bluetooth if device is connected
+ * 2) Tries Serial/USB if connected
+ * 3) If neither is connected or hardware fails, triggers system print dialog on formatted thermal area
+ */
+export async function printThermalReceipt(options: {
+  lines: string[];
+  openDrawer?: boolean;
+  width?: '58mm' | '80mm';
+  onSuccess?: (method: 'bluetooth' | 'serial' | 'system') => void;
+  onError?: (err: any) => void;
+}): Promise<'bluetooth' | 'serial' | 'system'> {
+  const { lines, openDrawer = false, width = '58mm', onSuccess, onError } = options;
+
+  // 1. Try Bluetooth
+  if (cachedBluetoothDevice?.gatt?.connected) {
+    try {
+      await printReceiptOverBluetooth(lines, openDrawer, width);
+      onSuccess?.('bluetooth');
+      return 'bluetooth';
+    } catch (btErr) {
+      console.warn('Bluetooth thermal print failed, attempting serial/system fallback:', btErr);
+    }
+  }
+
+  // 2. Try Serial / USB
+  const isSerialConnected = await checkPrinterConnection();
+  if (isSerialConnected) {
+    try {
+      await printReceiptOverSerial(lines, openDrawer, width);
+      onSuccess?.('serial');
+      return 'serial';
+    } catch (serErr) {
+      console.warn('Serial thermal print failed, falling back to system print:', serErr);
+    }
+  }
+
+  // 3. Fallback to System Print dialog (with 58mm CSS styles)
+  try {
+    window.print();
+    onSuccess?.('system');
+    return 'system';
+  } catch (sysErr) {
+    console.error('System print failed:', sysErr);
+    onError?.(sysErr);
+    throw sysErr;
+  }
+}
+
+export async function openCashDrawer() {
+  if (cachedBluetoothDevice?.gatt?.connected) {
+    await printReceiptOverBluetooth([], true);
+    return;
+  }
+
+  if (await checkPrinterConnection()) {
+    const writer = cachedPort.writable.getWriter();
+    try {
+      await writer.write(ESCPOS_COMMANDS.OPEN_DRAWER);
+    } finally {
+      writer.releaseLock();
+    }
+    return;
+  }
+
+  throw new Error('No hay impresora térmica conectada para abrir el cajón.');
+}
+
+export async function testWifiPrinterConnection(ipAddress: string, _port: number = 9100) {
   if (!ipAddress || !ipAddress.trim()) {
     throw new Error('Ingresa una dirección IP válida (ejemplo: 192.168.1.100).');
   }

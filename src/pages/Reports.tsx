@@ -336,11 +336,93 @@ export default function Reports() {
     }
   };
 
-  const handlePrintShiftTicket = (sessionId: string) => {
+  const handlePrintShiftTicket = async (sessionId: string) => {
     setPrintSessionId(sessionId);
-    setTimeout(() => {
-      window.print();
-    }, 150);
+    const session = cashSessions.find(s => s.id === sessionId);
+    if (!session) {
+      setTimeout(() => window.print(), 100);
+      return;
+    }
+
+    try {
+      const { printThermalReceipt, format58mmLine } = await import('../lib/escpos');
+      const branch = branches.find(b => b.id === session.branchId);
+      const payrollItem = payrollList.find(p => p.sessionId === session.id);
+      const sequentialTurn = sessionTurnMap.get(session.id) || session.id;
+      const workerName = session.workerName || users.find(u => u.id === session.userId)?.name || 'Vendedor';
+
+      const sessionTx = transactions.filter(t => 
+        t.sessionId 
+          ? t.sessionId === session.id
+          : (t.branchId === session.branchId && 
+             new Date(t.date).getTime() >= new Date(session.openedAt).getTime() && 
+             (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
+      );
+
+      const totalSales = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
+      const totalItems = sessionTx.reduce((sum, tx) => sum + tx.items.reduce((s, i) => s + i.quantity, 0), 0);
+
+      const grouped: {[key: string]: {name: string, quantity: number, total: number}} = {};
+      sessionTx.forEach(tx => {
+        tx.items.forEach(item => {
+          const prodObj = typeof item.product === 'object' ? item.product : products.find(p => p.id === (item.product as unknown as string));
+          const name = prodObj?.name || getProductName(item.product);
+          if (!grouped[name]) grouped[name] = { name, quantity: 0, total: 0 };
+          grouped[name].quantity += item.quantity;
+          const price = prodObj?.price || 0;
+          grouped[name].total += (price * item.quantity);
+        });
+      });
+
+      const lines: string[] = [];
+      lines.push("CENTER|BOLD|MARÉ");
+      lines.push(`CENTER|${(branch?.name || 'Sucursal Principal').toUpperCase()}`);
+      lines.push("CENTER|BOLD|CIERRE DE TURNO");
+      lines.push("---");
+      lines.push(format58mmLine("FECHA:", new Date(session.closingDate || session.closedAt || session.openedAt).toLocaleDateString(), 32));
+      lines.push(format58mmLine("HORA:", new Date(session.closingDate || session.closedAt || session.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), 32));
+      lines.push(format58mmLine("TURNO:", sequentialTurn, 32));
+      lines.push(format58mmLine("TRABAJADOR:", workerName.slice(0, 18), 32));
+      lines.push("---");
+      lines.push("BOLD|DETALLE PRODUCTOS:");
+      const itemsList = Object.values(grouped);
+      if (itemsList.length === 0) {
+        lines.push("Sin productos vendidos");
+      } else {
+        itemsList.forEach(item => {
+          lines.push(format58mmLine(`${item.quantity}x ${item.name.slice(0, 16)}`, formatMoney(item.total), 32));
+        });
+      }
+      lines.push("---");
+      lines.push(format58mmLine("TOTAL VENTAS:", formatMoney(totalSales), 32));
+      lines.push(format58mmLine("ITEMS VENDIDOS:", `${totalItems}`, 32));
+
+      if (payrollItem) {
+        lines.push("---");
+        lines.push("BOLD|LIQUIDACION SALARIO:");
+        lines.push(format58mmLine("Salario Base:", formatMoney(payrollItem.baseSalary), 32));
+        lines.push(format58mmLine("Comisiones:", `+${formatMoney(payrollItem.commissions)}`, 32));
+        lines.push(format58mmLine("TOTAL SALARIO:", formatMoney(payrollItem.totalSalary), 32));
+        lines.push(format58mmLine("Estado:", payrollItem.status === 'paid' ? 'PAGADO' : 'PENDIENTE', 32));
+      }
+
+      lines.push("---");
+      lines.push("CENTER|Firma Trabajador: ___________");
+      lines.push("CENTER|Firma Supervisor: ___________");
+      lines.push("CENTER|MARÉ SISTEMA POS");
+
+      await printThermalReceipt({
+        lines,
+        openDrawer: false,
+        width: '58mm',
+        onError: () => {
+          setTimeout(() => window.print(), 100);
+        }
+      });
+    } catch (e) {
+      console.error(e);
+      setTimeout(() => window.print(), 100);
+    }
   };
 
   const exportSalesCSV = () => {

@@ -323,6 +323,64 @@ export const useStore = create<AppState>()(
               error = updateErr;
             }
           }
+
+          // Auto-recovery: If schema cache is missing a column (PGRST204), strip it and retry immediately
+          if (error) {
+            const errCode = (error as any)?.code || '';
+            const errMsg = (error as any)?.message || String(error);
+            if (errCode === 'PGRST204' || errMsg.includes('Could not find the')) {
+              let currentErr: any = error;
+              let retryData = taskData;
+              
+              for (let attempt = 0; attempt < 3; attempt++) {
+                const msg = currentErr?.message || String(currentErr);
+                const match = msg.match(/Could not find the '([^']+)' column/i);
+                if (!match || !match[1]) break;
+                
+                const missingCol = match[1];
+                console.warn(`[Sync Queue] Auto-healing: Removing missing column '${missingCol}' from ${task.table} and retrying...`);
+                
+                if (Array.isArray(retryData)) {
+                  retryData = retryData.map((item: any) => {
+                    if (item && typeof item === 'object') {
+                      const { [missingCol]: _, ...rest } = item;
+                      return rest;
+                    }
+                    return item;
+                  });
+                } else if (retryData && typeof retryData === 'object') {
+                  const { [missingCol]: _, ...rest } = retryData;
+                  retryData = rest;
+                }
+                
+                let retryErr = null;
+                if (task.action === 'INSERT') {
+                  if (task.table === 'inventory_levels') {
+                    const res = await supabase.from('inventory_levels').upsert(retryData, { onConflict: 'product_id, branch_id, variant_label' });
+                    retryErr = res.error;
+                  } else {
+                    const res = await supabase.from(task.table).upsert(retryData, { onConflict: 'id' });
+                    retryErr = res.error;
+                  }
+                } else if (task.action === 'UPDATE') {
+                  if (task.table === 'inventory_levels_upsert' || task.table === 'inventory_levels') {
+                    const res = await supabase.from('inventory_levels').upsert(retryData, { onConflict: 'product_id, branch_id, variant_label' });
+                    retryErr = res.error;
+                  } else {
+                    const { id, ...updateData } = retryData;
+                    const res = await supabase.from(task.table).update(updateData).eq('id', id);
+                    retryErr = res.error;
+                  }
+                }
+                
+                currentErr = retryErr;
+                if (!currentErr) {
+                  error = null;
+                  break;
+                }
+              }
+            }
+          }
           
           if (error) {
             console.error(`[Sync Queue] Failed to process task ${task.id} (${task.table}):`, error);
@@ -1480,15 +1538,20 @@ export const useStore = create<AppState>()(
       get().addSyncTask({
         action: 'INSERT',
         table: 'transaction_payments',
-        data: newTransaction.payments.map((p: any) => ({
-          id: crypto.randomUUID(),
-          transaction_id: newTransaction.id,
-          currency_code: p.currencyCode,
-          amount: p.amount,
-          exchange_rate: p.exchangeRate,
-          method: p.method,
-          bank_card_id: p.bankCardId || null
-        }))
+        data: newTransaction.payments.map((p: any) => {
+          const item: any = {
+            id: crypto.randomUUID(),
+            transaction_id: newTransaction.id,
+            currency_code: p.currencyCode,
+            amount: p.amount,
+            exchange_rate: p.exchangeRate,
+            method: p.method
+          };
+          if (p.bankCardId) {
+            item.bank_card_id = p.bankCardId;
+          }
+          return item;
+        })
       });
     }
 
@@ -1500,11 +1563,9 @@ export const useStore = create<AppState>()(
         data: newTransaction.items.map((i: any) => ({
           id: crypto.randomUUID(),
           transaction_id: newTransaction.id,
+          cart_item_id: i.id || null,
           product_id: i.product.id,
           quantity: i.quantity,
-          price: i.product.price || 0,
-          cost: i.product.costPrice || 0,
-          tax: 0,
           serial_number: i.serialNumber || null,
           warranty_code: i.warrantyCode || null,
           selected_size: i.selectedSize || null,
@@ -2057,10 +2118,10 @@ export const useStore = create<AppState>()(
     showPhone: true,
     showFooter: true,
     footerText: "¡GRACIAS POR SU PREFERENCIA!",
-    businessName: "MI NEGOCIO CORP",
+    businessName: "MARÉ POS",
     businessAddress: "CALLE COMERCIAL #456",
     businessPhone: "+53 555-5555",
-    printerWidth: "80mm",
+    printerWidth: "58mm",
     openDrawer: true,
     autoPrint: false,
   },

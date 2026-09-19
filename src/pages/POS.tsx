@@ -566,61 +566,164 @@ export default function POS() {
 
   const handleThermalPrint = async (tx: import("../types").Transaction) => {
     try {
-      const { printReceiptOverSerial } = await import('../lib/escpos');
+      const { printThermalReceipt, format58mmLine } = await import('../lib/escpos');
       const receiptConfig = useStore.getState().receiptConfig;
       
       const lines: string[] = [];
-      const divider = receiptConfig.printerWidth === '58mm' ? "---" : "===";
       
-      lines.push(`CENTER|BOLD|${receiptConfig.businessName}`);
+      lines.push(`CENTER|BOLD|${receiptConfig.businessName || 'MARÉ POS'}`);
+      if (receiptConfig.showAddress && receiptConfig.businessAddress) lines.push(`CENTER|${receiptConfig.businessAddress}`);
+      if (receiptConfig.showPhone && receiptConfig.businessPhone) lines.push(`CENTER|${receiptConfig.businessPhone}`);
       
-      if (receiptConfig.showAddress) lines.push(`CENTER|${receiptConfig.businessAddress}`);
-      if (receiptConfig.showPhone) lines.push(`CENTER|${receiptConfig.businessPhone}`);
-      
-      lines.push("");
-      lines.push(`Recibo: ${tx.id}`);
-      lines.push(`Fecha: ${new Date(tx.date).toLocaleString()}`);
-      lines.push("");
-      
-      lines.push(divider);
+      lines.push("---");
+      lines.push(format58mmLine("Ticket ID:", tx.id));
+      lines.push(format58mmLine("Fecha:", new Date(tx.date).toLocaleDateString()));
+      lines.push(format58mmLine("Hora:", new Date(tx.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
+      const customer = useStore.getState().customers.find(c => c.id === tx.customerId);
+      lines.push(format58mmLine("Cliente:", (customer?.name || 'Consumidor Final').slice(0, 18)));
+      lines.push("---");
       
       tx.items.forEach(item => {
-         const name = receiptConfig.printerWidth === '58mm' ? item.product.name.substring(0, 15) : item.product.name.substring(0, 20);
-         lines.push(`${item.quantity}x ${name}`);
-         lines.push(`  ${formatMoney(item.product.price * item.quantity, baseCurrency.symbol)}`);
+        lines.push(format58mmLine(`${item.quantity}x ${item.product.name}`, formatMoney(item.product.price * item.quantity, baseCurrency.symbol), 32));
+        if (item.serialNumber) {
+          lines.push(`  S/N: ${item.serialNumber}`);
+        }
+        if (item.warrantyCode) {
+          lines.push(`  Gda: ${item.warrantyCode} (${item.product.warrantyDays || 0}d)`);
+        }
       });
       
-      lines.push(divider);
-      lines.push(`BOLD|TOTAL: ${formatMoney(tx.total, baseCurrency.symbol)}`);
-      lines.push("");
+      lines.push("---");
+      lines.push(`BOLD|${format58mmLine("TOTAL:", formatMoney(tx.total, baseCurrency.symbol), 32)}`);
+      lines.push("---");
       
-      lines.push("Pagos:");
+      lines.push("BOLD|Pagos recibidos:");
       tx.payments.forEach(p => {
-        lines.push(`  ${p.method === 'cash' ? 'Efe' : 'Trf'} (${p.currencyCode}): ${formatMoney(p.amount, currencies.find(c => c.code === p.currencyCode)?.symbol || '')}`);
+        const symbol = currencies.find(c => c.code === p.currencyCode)?.symbol || '';
+        const method = p.method === 'cash' ? 'Efectivo' : 'Transf';
+        lines.push(format58mmLine(`  ${method} (${p.currencyCode}):`, formatMoney(p.amount, symbol), 32));
       });
       
       if (tx.changePayments && tx.changePayments.length > 0) {
-        lines.push("Vuelto:");
+        lines.push("BOLD|Vuelto entregado:");
         tx.changePayments.forEach(cp => {
-          lines.push(`  Efe (${cp.currencyCode}): ${formatMoney(cp.amount, currencies.find(c => c.code === cp.currencyCode)?.symbol || '')}`);
+          const symbol = currencies.find(c => c.code === cp.currencyCode)?.symbol || '';
+          lines.push(format58mmLine(`  Efectivo (${cp.currencyCode}):`, formatMoney(cp.amount, symbol), 32));
         });
       } else if (tx.changeGiven && tx.changeGiven > 0) {
-        lines.push(`Vuelto: ${formatMoney(tx.changeGiven, baseCurrency.symbol)}`);
+        lines.push(format58mmLine("Vuelto:", formatMoney(tx.changeGiven, baseCurrency.symbol), 32));
       }
       
-      lines.push("");
-      
-      if (receiptConfig.showFooter) {
-         lines.push(`CENTER|${receiptConfig.footerText}`);
+      if (receiptConfig.showFooter && receiptConfig.footerText) {
+        lines.push("---");
+        lines.push(`CENTER|${receiptConfig.footerText}`);
       }
       
-      await printReceiptOverSerial(lines, receiptConfig.openDrawer ?? true);
-      setPosSuccess("Impresión enviada correctamente");
-      setTimeout(() => setPosSuccess(""), 2000);
+      await printThermalReceipt({
+        lines,
+        openDrawer: receiptConfig.openDrawer ?? true,
+        width: '58mm',
+        onSuccess: (method) => {
+          setPosSuccess(`Ticket enviado (${method === 'bluetooth' ? 'Bluetooth' : method === 'serial' ? 'USB' : 'Sistema'})`);
+          setTimeout(() => setPosSuccess(""), 2500);
+        }
+      });
     } catch (err: any) {
       console.error(err);
-      setPosError(err.message || "Error al conectar con la impresora térmica.");
-      setTimeout(() => setPosError(""), 3000);
+      setTimeout(() => window.print(), 100);
+    }
+  };
+
+  const handlePrintClosureThermal = async (session: CashRegisterSession | null) => {
+    if (!session) return;
+    try {
+      const { printThermalReceipt, format58mmLine } = await import('../lib/escpos');
+      const receiptConfig = useStore.getState().receiptConfig;
+
+      const sessionTx = transactions.filter(t => 
+        t.branchId === session.branchId && 
+        new Date(t.date) >= new Date(session.openedAt) && 
+        (session.closedAt ? new Date(t.date) <= new Date(session.closedAt) : true)
+      );
+
+      const soldMap: { [name: string]: { name: string, qty: number, total: number } } = {};
+      sessionTx.forEach(tx => {
+        tx.items.forEach(item => {
+          const name = typeof item.product === 'string' ? item.product : (item.product?.name || 'Producto');
+          if (!soldMap[name]) soldMap[name] = { name, qty: 0, total: 0 };
+          const price = typeof item.product === 'object' ? (item.product?.price || 0) : 0;
+          soldMap[name].qty += item.quantity;
+          soldMap[name].total += (price * item.quantity);
+        });
+      });
+      const soldList = Object.values(soldMap);
+      const totalSales = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
+
+      const commissions = sessionTx.reduce((sum, tx) => {
+        return sum + tx.items.reduce((s, item) => {
+          const prodId = typeof item.product === 'string' ? item.product : item.product.id;
+          const prod = products.find(p => p.id === prodId);
+          if (!prod) return s;
+          const commValue = prod.commissionType === 'percentage' 
+            ? (prod.price * (prod.commissionValue || 0) / 100)
+            : (prod.commissionValue || 0);
+          return s + (commValue * item.quantity);
+        }, 0);
+      }, 0);
+
+      const employee = users.find(u => u.id === session.userId || u.name === session.workerName) || users.find(u => u.name?.toLowerCase() === session.workerName?.toLowerCase()) || users.find(u => u.role === 'employee') || currentUser;
+      const baseSalary = employee?.baseSalary || 0;
+      const totalSalary = baseSalary + commissions;
+
+      const lines: string[] = [];
+      lines.push(`CENTER|BOLD|${receiptConfig.businessName || 'MARÉ POS'}`);
+      if (receiptConfig.showAddress && receiptConfig.businessAddress) lines.push(`CENTER|${receiptConfig.businessAddress}`);
+      if (receiptConfig.showPhone && receiptConfig.businessPhone) lines.push(`CENTER|${receiptConfig.businessPhone}`);
+      lines.push("---");
+      lines.push("CENTER|BOLD|CIERRE DE CAJA / TURNO");
+      lines.push(format58mmLine("TURNO:", session.id, 32));
+      lines.push(format58mmLine("FECHA:", new Date(session.closingDate || session.closedAt || new Date()).toLocaleDateString(), 32));
+      lines.push(format58mmLine("HORA:", new Date(session.closingDate || session.closedAt || new Date()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), 32));
+      lines.push(format58mmLine("VENDEDOR:", (session.workerName || 'VENDEDOR').toUpperCase(), 32));
+      lines.push(format58mmLine("SUCURSAL:", (branches.find(b => b.id === session.branchId)?.name || 'Central').slice(0, 18), 32));
+      lines.push("---");
+      lines.push("BOLD|PRODUCTOS VENDIDOS:");
+      if (soldList.length === 0) {
+        lines.push("Sin ventas registradas");
+      } else {
+        soldList.forEach(p => {
+          lines.push(format58mmLine(`${p.qty}x ${p.name.slice(0, 16)}`, formatMoney(p.total, baseCurrency.symbol), 32));
+        });
+      }
+      lines.push("---");
+      lines.push(format58mmLine("TOTAL VENTAS:", formatMoney(totalSales, baseCurrency.symbol), 32));
+      lines.push(format58mmLine("ITEMS TOTALES:", `${soldList.reduce((s, i) => s + i.qty, 0)}`, 32));
+      lines.push("---");
+      lines.push("BOLD|ARQUEO DE FONDOS:");
+      lines.push(format58mmLine("Fondo Inicial:", formatMoney(session.openingBalance, baseCurrency.symbol), 32));
+      lines.push("---");
+      lines.push("BOLD|LIQUIDACION SALARIO:");
+      lines.push(format58mmLine("Salario Base:", formatMoney(baseSalary, baseCurrency.symbol), 32));
+      lines.push(format58mmLine("Comisiones:", `+${formatMoney(commissions, baseCurrency.symbol)}`, 32));
+      lines.push(format58mmLine("TOTAL SALARIO:", formatMoney(totalSalary, baseCurrency.symbol), 32));
+      lines.push("---");
+      lines.push("CENTER|Firma: _________________");
+      lines.push("CENTER|MARÉ SISTEMA POS");
+
+      setLastClosedSession(session);
+      await printThermalReceipt({
+        lines,
+        openDrawer: false,
+        width: '58mm',
+        onSuccess: (method) => {
+          setPosSuccess(`Comprobante impreso (${method === 'bluetooth' ? 'Bluetooth' : method === 'serial' ? 'USB' : 'Sistema'})`);
+          setTimeout(() => setPosSuccess(""), 2500);
+        }
+      });
+    } catch (err: any) {
+      console.error('Error al imprimir comprobante:', err);
+      setLastClosedSession(session);
+      setTimeout(() => window.print(), 100);
     }
   };
 
@@ -737,7 +840,7 @@ export default function POS() {
     // Show receipt modal so cashier gets receipt details & print option
     setShowReceiptModal(tx);
 
-    if (useStore.getState().receiptConfig.autoPrint && useStore.getState().receiptConfig.useWebSerial) {
+    if (useStore.getState().receiptConfig.autoPrint) {
       handleThermalPrint(tx).catch(console.error);
     }
   };
@@ -1348,16 +1451,11 @@ export default function POS() {
                         {/* Botón para Imprimir Resumen Completo */}
                         <button
                           type="button"
-                          onClick={() => {
-                            setLastClosedSession(currentSession);
-                            setTimeout(() => {
-                              window.print();
-                            }, 100);
-                          }}
+                          onClick={() => handlePrintClosureThermal(currentSession)}
                           className="w-full py-3.5 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
                         >
                           <Printer className="w-4 h-4" />
-                          Imprimir Resumen Completo de Ventas
+                          Imprimir Resumen Completo de Ventas (58mm)
                         </button>
                       </div>
                     );
@@ -2047,7 +2145,7 @@ export default function POS() {
               <button 
                 onClick={() => handleThermalPrint(showReceiptModal)}
                 className="px-4 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-all flex items-center gap-1.5 shadow-sm"
-                title="Impresión Térmica USB"
+                title="Impresión Térmica 58mm"
               >
                 <Receipt className="w-3.5 h-3.5" />
                 Imprimir
@@ -2161,11 +2259,11 @@ export default function POS() {
 
               <div className="space-y-2.5 pt-2">
                 <button 
-                  onClick={() => window.print()}
+                  onClick={() => handlePrintClosureThermal(lastClosedSession)}
                   className="w-full py-3.5 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
                 >
                   <Printer className="w-4 h-4" />
-                  Imprimir Ticket de Cierre y Ventas (POS)
+                  Imprimir Ticket de Cierre y Ventas (58mm)
                 </button>
 
                 <button 
