@@ -1092,6 +1092,56 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* Apariencia y Visibilidad (Mejorado para Miopía) */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4 lg:col-span-3">
+          <div className="flex items-center gap-3 border-b border-slate-50 pb-3">
+            <div className="bg-slate-900 p-2 rounded-lg text-white">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Apariencia y Visibilidad</h3>
+              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Personalización del entorno de trabajo</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-6 bg-slate-50 p-5 rounded-2xl border border-slate-200/60">
+            <div className="flex-1 space-y-1">
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-black text-slate-900 uppercase">Modo Oscuro (Contraste Suave)</h4>
+                <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[7px] font-black rounded-full uppercase">Recomendado para Miopía</span>
+              </div>
+              <p className="text-[10px] text-slate-600 font-medium max-w-2xl">
+                Al activar el modo oscuro, el fondo se vuelve gris azulado profundo y las letras blancas suaves. Esto reduce el deslumbramiento, mejora la nitidez de los bordes para personas con miopía y disminuye el cansancio visual tras largas jornadas de trabajo.
+              </p>
+            </div>
+
+            <div className="shrink-0 flex items-center gap-3">
+              <span className={cn("text-[10px] font-black uppercase tracking-widest transition-colors", !config.darkMode ? "text-indigo-600" : "text-slate-400")}>Luz</span>
+              <button 
+                type="button"
+                onClick={() => {
+                  const newConfig = { ...config, darkMode: !config.darkMode };
+                  setConfig(newConfig);
+                  updateStoreConfig(newConfig);
+                  showToast(newConfig.darkMode ? "Modo oscuro activado" : "Modo luz activado");
+                }}
+                className={cn(
+                  "relative inline-flex h-7 w-14 items-center rounded-full transition-all duration-300 focus:outline-none",
+                  config.darkMode ? "bg-indigo-600" : "bg-slate-300"
+                )}
+              >
+                <span
+                  className={cn(
+                    "inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-300",
+                    config.darkMode ? "translate-x-8" : "translate-x-1"
+                  )}
+                />
+              </button>
+              <span className={cn("text-[10px] font-black uppercase tracking-widest transition-colors", config.darkMode ? "text-indigo-600" : "text-slate-400")}>Oscuro</span>
+            </div>
+          </div>
+        </div>
+
         {/* Supabase Diagnostic & Cloud Storage Panel */}
         <div className="bg-white rounded-2xl shadow-sm border border-indigo-100 p-5 space-y-4 lg:col-span-3">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">

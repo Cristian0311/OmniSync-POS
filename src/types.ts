@@ -98,6 +98,7 @@ export interface StoreConfig {
   receiptNotes?: string;
   latitude?: number;
   longitude?: number;
+  darkMode?: boolean;
 }
 
 export interface CatalogConfig {

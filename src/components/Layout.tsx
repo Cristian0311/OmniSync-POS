@@ -57,9 +57,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const { currentUser, logout, notifications, removeNotification } = useStore();
+  const { currentUser, logout, notifications, removeNotification, storeConfig } = useStore();
   const location = useLocation();
   const isPosPage = location.pathname === "/pos";
+
+  // Efecto para el Modo Oscuro (Mejorado para Miopía: contraste suave)
+  useEffect(() => {
+    if (storeConfig.darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [storeConfig.darkMode]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
