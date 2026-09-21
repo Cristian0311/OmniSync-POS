@@ -7,7 +7,8 @@ import {
   pushTransactionToSupabase, pushCashSessionToSupabase, pushUserToSupabase, deleteUserFromSupabase, 
   pushIDNSettlementPriceToSupabase, deleteIDNSettlementPriceFromSupabase, SyncResult,
   pushBranchToSupabase, deleteBranchFromSupabase, pushCategoryToSupabase, deleteCategoryFromSupabase, deleteProductFromSupabase,
-  pushCurrencyToSupabase, clearSupabaseData, pushBankCardToSupabase, deleteBankCardFromSupabase, pushBankTransactionToSupabase, pushAllToSupabase
+  pushCurrencyToSupabase, clearSupabaseData, pushBankCardToSupabase, deleteBankCardFromSupabase, pushBankTransactionToSupabase, pushAllToSupabase,
+  pushSupplierToSupabase, deleteSupplierFromSupabase, pushSupplierOrderToSupabase
 } from '../services/supabaseSync';
 import { getSupabaseCredentials } from '../lib/supabase';
 
@@ -68,10 +69,7 @@ const INITIAL_USERS: User[] = [
 ];
 
 const INITIAL_BRANCHES: Branch[] = [
-  { id: 'b-central', name: 'Sucursal Central (Tienda Principal)', address: 'Calle 23 esq. L, Vedado, La Habana', phone: '+53 5200-1122', isMain: true },
-  { id: 'b-almacen-1', name: 'Almacén General de Distribución', address: 'Zona Industrial Berroa Nave 4', phone: '+53 5300-3344', isMain: false },
-  { id: 'b-vedado', name: 'Sucursal Vedado Boutique', address: 'Calle Línea entre Paseo y A, Plaza', phone: '+53 5400-5566', isMain: false },
-  { id: 'b-playa', name: 'Sucursal Playa 5ta Avenida', address: '5ta Ave e/ 84 y 86, Miramar, Playa', phone: '+53 5500-7788', isMain: false }
+  { id: 'b-central', name: 'Sucursal Principal', address: 'Calle Principal', phone: '+53 5200-1122', isMain: true }
 ];
 
 const INITIAL_CATEGORIES: Category[] = [
@@ -1474,18 +1472,24 @@ export const useStore = create<AppState>()(
   // Suppliers
   suppliers: [],
   addSupplier: (s) => {
-    set(state => ({ suppliers: [...state.suppliers, { ...s, products: s.products || [] }] }));
+    const newSupplier = { ...s, products: s.products || [] };
+    set(state => ({ suppliers: [...state.suppliers, newSupplier] }));
+    pushSupplierToSupabase(newSupplier).catch(() => {});
   },
   updateSupplier: (id, s) => {
     set(state => ({ suppliers: state.suppliers.map(x => x.id === id ? { ...x, ...s } : x) }));
+    const updated = get().suppliers.find(x => x.id === id);
+    if (updated) pushSupplierToSupabase(updated).catch(() => {});
   },
   deleteSupplier: (id) => {
     set(state => ({ suppliers: state.suppliers.filter(x => x.id !== id) }));
+    deleteSupplierFromSupabase(id).catch(() => {});
   },
 
   supplierOrders: [],
   createSupplierOrder: (o) => {
     set(state => ({ supplierOrders: [o, ...state.supplierOrders] }));
+    pushSupplierOrderToSupabase(o).catch(() => {});
   },
   updateSupplierOrder: (id, o) => {
     set(state => {
@@ -1498,6 +1502,10 @@ export const useStore = create<AppState>()(
       }
       return { supplierOrders: updated };
     });
+    const updatedOrder = get().supplierOrders.find(x => x.id === id);
+    if (updatedOrder) {
+      pushSupplierOrderToSupabase(updatedOrder).catch(() => {});
+    }
   },
 
   inventoryAudits: [],
@@ -1709,6 +1717,8 @@ export const useStore = create<AppState>()(
             users: data.users && data.users.length > 0 ? data.users : state.users,
             bankCards: data.bankCards && data.bankCards.length > 0 ? data.bankCards : state.bankCards,
             customers: data.customers && data.customers.length > 0 ? data.customers : state.customers,
+            suppliers: data.suppliers && data.suppliers.length > 0 ? data.suppliers : state.suppliers,
+            supplierOrders: data.supplierOrders && data.supplierOrders.length > 0 ? data.supplierOrders : state.supplierOrders,
             currencies: data.currencies && data.currencies.length > 0 ? data.currencies : state.currencies,
             transactions: data.transactions && data.transactions.length > 0 ? data.transactions : state.transactions,
             cashSessions: data.cashSessions && data.cashSessions.length > 0 ? data.cashSessions : state.cashSessions,

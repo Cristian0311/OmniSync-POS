@@ -80,17 +80,22 @@ export default function Reports() {
 
   const formatMoney = (amount: number, code: string = baseCurrency.code) => {
     const currency = currencies.find(c => c.code === code) || baseCurrency;
-    const formatted = amount.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return `${currency.symbol} ${formatted}`;
+    const hasDecimals = amount % 1 !== 0;
+    const formatted = amount.toLocaleString('es-CU', {
+      minimumFractionDigits: hasDecimals ? 2 : 0,
+      maximumFractionDigits: 2
+    });
+    return `${currency.symbol}${formatted} ${currency.code}`;
   };
 
   const MultiCurrencyTotal = ({ amount, className = "" }: { amount: number, className?: string }) => (
     <div className={`flex flex-col gap-0.5 mt-1 ${className}`}>
       {currencies.map(c => {
         const converted = c.isBase ? amount : amount / (c.rateToBase || 1);
+        const hasDecimals = converted % 1 !== 0;
         return (
           <div key={c.code} className={cn("flex justify-between items-center text-[10px]", c.isBase ? "font-black text-slate-900" : "font-bold text-slate-500")}>
-            <span>{c.symbol} {converted.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span>{c.symbol} {converted.toLocaleString('es-CU', { minimumFractionDigits: hasDecimals ? 2 : 0, maximumFractionDigits: 2 })}</span>
             <span className="text-[8px]">{c.code}</span>
           </div>
         );

@@ -110,8 +110,8 @@ export default function POS() {
     if (trimmed) {
       return (users || []).find(u => (u.name || '').toLowerCase() === trimmed) || null;
     }
-    return currentUser?.role !== 'admin' ? currentUser : null;
-  }, [sessionWorkerName, users, currentUser]);
+    return null;
+  }, [sessionWorkerName, users]);
 
   const isWorkerIndependent = detectedWorker?.isIndependent === true;
   const workerAssignedBranchId = detectedWorker?.assignedBranchId || (
@@ -162,13 +162,6 @@ export default function POS() {
       setSessionBranchId(workerAssignedBranchId);
     }
   }, [workerAssignedBranchId]);
-
-  // Auto-fill sessionWorkerName if logged in as employee
-  useEffect(() => {
-    if (currentUser && currentUser.role !== 'admin' && !sessionWorkerName) {
-      setSessionWorkerName(currentUser.name);
-    }
-  }, [currentUser]);
 
   useEffect(() => {
     if (sessionWorkerName) {
@@ -2175,73 +2168,43 @@ export default function POS() {
               </div>
               
               <form onSubmit={handleOpenSession} className="space-y-4">
-                {currentUser?.role === 'admin' ? (
-                  <div className="text-left space-y-3">
-                    <div>
-                      <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                        Seleccionar Vendedor del Turno
-                      </label>
-                      <select
-                        value={sessionWorkerName}
-                        onChange={e => setSessionWorkerName(e.target.value)}
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
-                        required
-                      >
-                        <option value="">-- Seleccionar Trabajador / IDN --</option>
-                        {users.filter(u => u.role !== 'admin' || u.isIndependent).map(u => (
-                          <option key={u.id} value={u.name}>
-                            {u.name} {u.isIndependent ? '(Vendedor IDN)' : '(Empleado)'}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                        Contraseña del Vendedor Seleccionado
-                      </label>
-                      <input
-                        type="password"
-                        required
-                        value={sessionPassword}
-                        onChange={e => setSessionPassword(e.target.value)}
-                        placeholder="Ingresa la contraseña del trabajador"
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                      />
-                    </div>
+                <div className="text-left space-y-3">
+                  <div>
+                    <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                      Seleccionar Vendedor / Empleado del Turno
+                    </label>
+                    <select
+                      value={sessionWorkerName}
+                      onChange={e => {
+                        setSessionWorkerName(e.target.value);
+                        setSessionPassword("");
+                      }}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
+                      required
+                    >
+                      <option value="">-- Seleccionar Trabajador / IDN --</option>
+                      {(users || []).filter(u => u.isActive !== false).map(u => (
+                        <option key={u.id} value={u.name}>
+                          {u.name} {u.isIndependent ? '(Vendedor IDN)' : (u.role === 'admin' ? '(Administrador)' : '(Empleado)')}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100 text-left flex items-center justify-between">
-                      <div>
-                        <p className="text-[11px] font-black text-slate-900 uppercase">{currentUser?.name || 'Empleado'}</p>
-                        <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">
-                          {currentUser?.isIndependent ? 'Vendedor Independiente (IDN)' : 'Empleado Autorizado'}
-                        </p>
-                      </div>
-                      <span className={cn(
-                        "px-2.5 py-1 rounded-full text-[8px] font-black uppercase tracking-wider",
-                        currentUser?.isIndependent ? "bg-amber-100 text-amber-800" : "bg-indigo-100 text-indigo-800"
-                      )}>
-                        {currentUser?.isIndependent ? 'IDN' : 'Activo'}
-                      </span>
-                    </div>
 
-                    <div className="text-left">
-                      <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                        Contraseña para Abrir Caja
-                      </label>
-                      <input
-                        type="password"
-                        required
-                        value={sessionPassword}
-                        onChange={e => setSessionPassword(e.target.value)}
-                        placeholder="Ingresa tu contraseña"
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                      />
-                    </div>
+                  <div>
+                    <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                      Contraseña del Vendedor Seleccionado
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={sessionPassword}
+                      onChange={e => setSessionPassword(e.target.value)}
+                      placeholder={detectedWorker ? `Ingresa la contraseña de ${detectedWorker.name}` : "Ingresa la contraseña del trabajador"}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                    />
                   </div>
-                )}
+                </div>
 
                 {isWorkerIndependent && (
                   <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-left">
