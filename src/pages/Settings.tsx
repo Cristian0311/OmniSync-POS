@@ -484,6 +484,28 @@ export default function Settings() {
                     />
                   </div>
                 </div>
+
+                {/* Contraseña de Acceso */}
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/70 space-y-2 sm:col-span-2">
+                  <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">
+                    Contraseña de Acceso al Punto de Venta
+                  </span>
+                  <input 
+                    type="text"
+                    value={selectedUserForConfig.password || ''}
+                    onChange={e => {
+                      const newPass = e.target.value;
+                      const updated = { ...selectedUserForConfig, password: newPass };
+                      setSelectedUserForConfig(updated);
+                      updateUser(selectedUserForConfig.id, { password: newPass });
+                    }}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    placeholder="Escribe la contraseña para este empleado..."
+                  />
+                  <p className="text-[9px] font-medium text-slate-500">
+                    * Esta contraseña será solicitada obligatoriamente para abrir turnos y autorizar operaciones.
+                  </p>
+                </div>
               </div>
 
               {/* Branch Permissions Section */}

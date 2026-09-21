@@ -1549,12 +1549,19 @@ export default function POS() {
     }
 
     // Verificar contraseña obligatoria del trabajador
-    if (workerToAssign.password && workerToAssign.password.trim().length > 0) {
-      if (!sessionPassword || sessionPassword.trim() !== workerToAssign.password.trim()) {
-        setPosError(`Contraseña incorrecta para ${workerToAssign.name}`);
-        setTimeout(() => setPosError(""), 3000);
-        return;
-      }
+    const requiredPassword = (workerToAssign.password || '').trim();
+    const enteredPassword = (sessionPassword || '').trim();
+
+    if (!requiredPassword) {
+      setPosError(`El empleado ${workerToAssign.name} no tiene contraseña asignada. El administrador debe asignarle una en Configuración -> Usuarios.`);
+      setTimeout(() => setPosError(""), 4000);
+      return;
+    }
+
+    if (enteredPassword !== requiredPassword) {
+      setPosError(`Contraseña incorrecta para ${workerToAssign.name}. Acceso denegado.`);
+      setTimeout(() => setPosError(""), 4000);
+      return;
     }
 
     const workerName = workerToAssign?.name || trimmedWorkerName || currentUser?.name || 'Vendedor';
@@ -2051,16 +2058,29 @@ export default function POS() {
 
   return (
     <div className="h-full flex flex-col min-h-0 relative">
+      {/* Global High-Priority Toast Overlay */}
       {(posError || posSuccess) && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4">
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] max-w-md w-full px-4 animate-in fade-in slide-in-from-top-4 duration-300">
           {posError && (
-            <div className="bg-red-500 text-white px-6 py-3 rounded-full shadow-lg font-bold text-sm tracking-wide">
-              {posError}
+            <div className="bg-rose-600 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center justify-between gap-3 border border-rose-500">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                <span className="text-xs font-black uppercase tracking-wide leading-tight">{posError}</span>
+              </div>
+              <button onClick={() => setPosError("")} className="p-1 hover:bg-white/10 rounded-lg text-white/80 hover:text-white shrink-0">
+                <X className="w-4 h-4" />
+              </button>
             </div>
           )}
           {posSuccess && (
-            <div className="bg-emerald-500 text-white px-6 py-3 rounded-full shadow-lg font-bold text-sm tracking-wide">
-              {posSuccess}
+            <div className="bg-emerald-600 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center justify-between gap-3 border border-emerald-500">
+              <div className="flex items-center gap-3">
+                <CheckCircle className="w-5 h-5 shrink-0" />
+                <span className="text-xs font-black uppercase tracking-wide leading-tight">{posSuccess}</span>
+              </div>
+              <button onClick={() => setPosSuccess("")} className="p-1 hover:bg-white/10 rounded-lg text-white/80 hover:text-white shrink-0">
+                <X className="w-4 h-4" />
+              </button>
             </div>
           )}
         </div>
@@ -2167,6 +2187,30 @@ export default function POS() {
                 </span>
               </div>
               
+              {/* Inline Modal Alert */}
+              {posError && (
+                <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold flex items-center justify-between gap-2 animate-in fade-in zoom-in-95">
+                  <div className="flex items-center gap-2 text-left">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span className="text-[11px] font-bold">{posError}</span>
+                  </div>
+                  <button type="button" onClick={() => setPosError("")} className="p-1 hover:bg-rose-100 rounded-lg text-rose-500 shrink-0">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+              {posSuccess && (
+                <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs font-bold flex items-center justify-between gap-2 animate-in fade-in zoom-in-95">
+                  <div className="flex items-center gap-2 text-left">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="text-[11px] font-bold">{posSuccess}</span>
+                  </div>
+                  <button type="button" onClick={() => setPosSuccess("")} className="p-1 hover:bg-emerald-100 rounded-lg text-emerald-500 shrink-0">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               <form onSubmit={handleOpenSession} className="space-y-4">
                 <div className="text-left space-y-3">
                   <div>

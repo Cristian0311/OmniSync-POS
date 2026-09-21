@@ -879,11 +879,11 @@ export async function clearSupabaseData() {
 
   for (const table of tables) {
     try {
-      // Use a filter that matches everything to bypass "delete all" protection if enabled
-      const { error } = await supabase.from(table).delete().neq('id', 'non-existent-id-to-delete-all');
-      if (error) console.warn(`Error clearing table ${table}:`, error.message);
+      // Usar filtro .not('id', 'is', null) para borrar todos los registros sin errores de sintaxis de UUID
+      const { error } = await supabase.from(table).delete().not('id', 'is', null);
+      if (error) console.debug(`[clearSupabaseData] Tabla ${table}:`, error.message);
     } catch (e) {
-      console.warn(`Exception clearing table ${table}:`, e);
+      console.debug(`[clearSupabaseData] Excepción en ${table}:`, e);
     }
   }
 }

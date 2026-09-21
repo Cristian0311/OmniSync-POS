@@ -610,6 +610,13 @@ export const useStore = create<AppState>()(
     // 1. Clear Supabase
     await clearSupabaseData();
 
+    // Clear local storage cache
+    try {
+      localStorage.clear();
+    } catch (e) {
+      /* ignore */
+    }
+
     // 2. Reset local state to absolute minimal (only first admin and main branch)
     const minUsers = [INITIAL_USERS[0]];
     const minBranches = [INITIAL_BRANCHES[0]];
