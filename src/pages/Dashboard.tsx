@@ -8,15 +8,28 @@ export default function Dashboard() {
   const { branches, currentBranchId, setCurrentBranch, transactions, getBaseCurrency, currencies, inventory, products, customers } = useStore();
   const baseCurrency = getBaseCurrency();
 
-  const formatMoney = (amount: number, symbol: string = baseCurrency.symbol) => {
-    const formatted = amount.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const isCupCode = (code: string) => code === 'CUP' || code === 'MN' || code === 'CUC' || code === '₱';
+
+  const formatMoney = (amount: number, symbol: string = baseCurrency.symbol, code: string = baseCurrency.code) => {
+    const isCup = isCupCode(code) || isCupCode(symbol);
+    const formatted = isCup
+      ? Math.round(amount).toLocaleString('es-CU')
+      : amount.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return `${symbol} ${formatted}`;
   };
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const isToday = (dateStr: string) => {
+    if (!dateStr) return false;
+    const d = new Date(dateStr);
+    const now = new Date();
+    return d.getFullYear() === now.getFullYear() &&
+           d.getMonth() === now.getMonth() &&
+           d.getDate() === now.getDate();
+  };
+
   const todayTransactions = useMemo(() => 
-    transactions.filter(t => t.date.startsWith(todayStr) && t.branchId === currentBranchId),
-    [transactions, todayStr, currentBranchId]
+    transactions.filter(t => isToday(t.date) && t.branchId === currentBranchId),
+    [transactions, currentBranchId]
   );
 
   const totalSalesToday = todayTransactions.reduce((sum, t) => sum + t.total, 0);
@@ -121,7 +134,7 @@ export default function Dashboard() {
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Evolución Semanal</h3>
-              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em]">{todayStr}</p>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em]">Últimos 7 días</p>
             </div>
             <div className="text-right">
               <p className="text-lg font-black text-indigo-600">{formatMoney(last7DaysData.reduce((sum, d) => sum + d.total, 0))}</p>
@@ -159,7 +172,7 @@ export default function Dashboard() {
               <div key={sale.code} className="bg-white/5 p-3 rounded-2xl border border-white/5 flex items-center justify-between group hover:bg-white/10 transition-all">
                 <div>
                   <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">{sale.code}</p>
-                  <p className="text-lg font-black">{formatMoney(sale.amount, sale.symbol)}</p>
+                  <p className="text-lg font-black">{formatMoney(sale.amount, sale.symbol, sale.code)}</p>
                 </div>
                 <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center font-black text-[9px] text-slate-400">
                   {sale.code}
@@ -293,21 +306,21 @@ export default function Dashboard() {
 
 function MetricCard({ title, value, icon: Icon, trend, positive, color }: any) {
   return (
-    <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
-      <div className="flex justify-between items-start mb-3">
-        <div className={cn("p-2 rounded-xl text-white", color)}>
-          <Icon className="w-4 h-4" />
+    <div className="bg-white p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all flex flex-col justify-between min-w-0 overflow-hidden">
+      <div className="flex justify-between items-start mb-2 sm:mb-3 gap-1">
+        <div className={cn("p-1.5 sm:p-2 rounded-xl text-white shrink-0", color)}>
+          <Icon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
         </div>
         <div className={cn(
-          "px-2 py-0.5 rounded-lg text-[7px] font-black uppercase tracking-widest",
+          "px-1.5 sm:px-2 py-0.5 rounded-lg text-[7px] font-black uppercase tracking-widest shrink-0",
           positive ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
         )}>
           {trend}
         </div>
       </div>
-      <div>
-        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">{title}</p>
-        <h4 className="text-lg font-black text-slate-900 tracking-tight">{value}</h4>
+      <div className="min-w-0">
+        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5 truncate">{title}</p>
+        <h4 className="text-sm sm:text-base lg:text-lg font-black text-slate-900 tracking-tight truncate">{value}</h4>
       </div>
     </div>
   );

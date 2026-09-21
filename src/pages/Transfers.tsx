@@ -30,8 +30,7 @@ export default function Transfers() {
     inventory, 
     transferInventoryBatch, 
     transfers, 
-    currentBranchId, 
-    fetchProductStockRealtime 
+    currentBranchId
   } = useStore();
 
   const [showAddModal, setShowAddModal] = useState(false);
@@ -44,8 +43,6 @@ export default function Transfers() {
   const [variantQuantities, setVariantQuantities] = useState<{ [key: string]: number }>({});
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isCheckingRealtimeStock, setIsCheckingRealtimeStock] = useState(false);
-  const [realtimeCheckSuccess, setRealtimeCheckSuccess] = useState(false);
 
   const effectiveFromBranchId = formData.fromBranchId || (branches.length > 0 ? branches[0].id : '');
   const effectiveToBranchId = formData.toBranchId;
@@ -54,27 +51,11 @@ export default function Transfers() {
   const fromBranch = branches.find(b => b.id === effectiveFromBranchId);
   const toBranch = branches.find(b => b.id === effectiveToBranchId);
 
-  // Trigger real-time stock refresh when product or branch changes in modal
-  const refreshProductStock = async (prodId: string) => {
-    if (!prodId) return;
-    setIsCheckingRealtimeStock(true);
-    setRealtimeCheckSuccess(false);
-    try {
-      await fetchProductStockRealtime(prodId);
-      setRealtimeCheckSuccess(true);
-      setTimeout(() => setRealtimeCheckSuccess(false), 2000);
-    } catch (e) {
-      console.error("Error refreshing realtime stock:", e);
-    } finally {
-      setIsCheckingRealtimeStock(false);
-    }
-  };
-
   useEffect(() => {
-    if (showAddModal && formData.productId) {
-      refreshProductStock(formData.productId);
+    if (showAddModal) {
+      // Logic when modal opens (resetting etc)
     }
-  }, [showAddModal, formData.productId, effectiveFromBranchId]);
+  }, [showAddModal]);
 
   // Calculate live available stock in source branch
   const hasVariants = (selectedProduct?.availableSizes?.length || 0) + (selectedProduct?.availableColors?.length || 0) > 0;
@@ -430,17 +411,6 @@ export default function Transfers() {
                     <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">
                       Producto a Transferir
                     </label>
-                    {selectedProduct && (
-                      <button
-                        type="button"
-                        onClick={() => refreshProductStock(selectedProduct.id)}
-                        disabled={isCheckingRealtimeStock}
-                        className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-                      >
-                        <RefreshCw className={`w-3 h-3 ${isCheckingRealtimeStock ? 'animate-spin' : ''}`} />
-                        {isCheckingRealtimeStock ? 'Verificando en Supabase...' : 'Actualizar Stock en Vivo'}
-                      </button>
-                    )}
                   </div>
 
                   <select 
@@ -462,28 +432,17 @@ export default function Transfers() {
                   </select>
                 </div>
 
-                {/* Live Real-time Stock Inspector Card */}
+                {/* Stock Info Summary */}
                 {selectedProduct && (
-                  <div className="p-4 bg-gradient-to-r from-slate-50 via-slate-50 to-indigo-50/40 rounded-2xl border border-slate-200 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Boxes className="w-4 h-4 text-indigo-600" />
-                        <span className="text-xs font-black uppercase text-slate-800">
-                          Inspector de Stock en Tiempo Real
-                        </span>
-                      </div>
-                      
-                      {realtimeCheckSuccess && (
-                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" /> Supabase sincronizado
-                        </span>
-                      )}
+                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Boxes className="w-4 h-4 text-indigo-600" />
+                      <span className="text-xs font-black uppercase text-slate-800">
+                        Información de Stock
+                      </span>
                     </div>
 
-                    {/* Stock Metrics Row */}
                     <div className="grid grid-cols-2 gap-3">
-                      
-                      {/* Origin Stock */}
                       <div className={`p-3 rounded-xl border ${
                         totalSourceStock > 0 
                           ? 'bg-white border-emerald-200' 
@@ -498,16 +457,10 @@ export default function Transfers() {
                           }`}>
                             {totalSourceStock}
                           </span>
-                          <span className="text-xs font-bold text-slate-500">uds disponibles</span>
+                          <span className="text-xs font-bold text-slate-500">uds</span>
                         </div>
-                        {totalSourceStock === 0 && (
-                          <span className="text-[9px] font-black text-rose-600 block mt-0.5">
-                            ⚠️ Sin stock en este almacén
-                          </span>
-                        )}
                       </div>
 
-                      {/* Destination Stock */}
                       <div className="p-3 rounded-xl bg-white border border-indigo-200">
                         <span className="text-[10px] font-bold text-slate-500 uppercase block">
                           Destino ({toBranch?.name || 'Seleccionar'})
@@ -516,29 +469,10 @@ export default function Transfers() {
                           <span className="text-xl font-black text-indigo-700">
                             {effectiveToBranchId ? totalTargetStock : '-'}
                           </span>
-                          <span className="text-xs font-bold text-slate-500">uds actuales</span>
+                          <span className="text-xs font-bold text-slate-500">uds</span>
                         </div>
-                        <span className="text-[9px] font-bold text-slate-400 block mt-0.5">
-                          {effectiveToBranchId ? `Recibirá: +${totalTransferring} uds` : 'Elige destino'}
-                        </span>
                       </div>
-
                     </div>
-
-                    {/* Live Transfer Simulation Preview */}
-                    {effectiveToBranchId && totalTransferring > 0 && (
-                      <div className="p-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <TrendingDown className="w-3.5 h-3.5 text-rose-300" />
-                          <span>Origen queda en: <strong>{Math.max(0, totalSourceStock - totalTransferring)} uds</strong></span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <TrendingUp className="w-3.5 h-3.5 text-emerald-300" />
-                          <span>Destino queda en: <strong>{totalTargetStock + totalTransferring} uds</strong></span>
-                        </div>
-                      </div>
-                    )}
-
                   </div>
                 )}
 

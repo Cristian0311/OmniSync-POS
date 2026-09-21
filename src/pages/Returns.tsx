@@ -69,7 +69,7 @@ export default function Returns() {
   const isExpired = (expiryDate: string) => new Date(expiryDate) < new Date();
 
   return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300 h-full flex flex-col">
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300 lg:h-full flex flex-col">
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-xl font-black text-slate-900 tracking-tight uppercase">Gestión de Post-Venta</h2>

@@ -13,7 +13,9 @@ export default function Banks() {
   const [editingCard, setEditingCard] = useState<BankCard | null>(null);
   const [formData, setFormData] = useState<Partial<BankCard>>({
     name: "",
-    bank: "",
+    bank: "BPA",
+    accountNumber: "",
+    phone: "",
     lastFour: "",
     balance: 0,
     currency: getBaseCurrency().code,
@@ -34,17 +36,26 @@ export default function Banks() {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanAccount = (formData.accountNumber || '').replace(/\s/g, '');
+    const derivedLastFour = cleanAccount.length >= 4 ? cleanAccount.slice(-4) : (formData.lastFour || '');
+
+    const cardPayload: Partial<BankCard> = {
+      ...formData,
+      accountNumber: cleanAccount,
+      lastFour: derivedLastFour
+    };
+
     if (editingCard) {
-      updateBankCard(editingCard.id, formData);
+      updateBankCard(editingCard.id, cardPayload);
     } else {
       addBankCard({
         id: generateId('CRD'),
-        ...(formData as BankCard)
+        ...(cardPayload as BankCard)
       });
     }
     setShowAddModal(false);
     setEditingCard(null);
-    setFormData({ name: "", bank: "", lastFour: "", balance: 0, currency: getBaseCurrency().code, isActive: true });
+    setFormData({ name: "", bank: "BPA", accountNumber: "", phone: "", lastFour: "", balance: 0, currency: getBaseCurrency().code, isActive: true });
   };
 
   const handleTransfer = (e: React.FormEvent) => {
@@ -149,7 +160,7 @@ export default function Banks() {
              
              <div className="flex justify-between items-end relative z-10">
                <div className="min-w-0">
-                 <p className="text-[7px] font-black uppercase tracking-widest opacity-50 mb-0.5">Nombre</p>
+                 <p className="text-[7px] font-black uppercase tracking-widest opacity-50 mb-0.5">Nombre {card.phone ? `• Tel: ${card.phone}` : ''}</p>
                  <p className="text-[10px] font-bold tracking-widest uppercase truncate">{card.name}</p>
                </div>
                <div className="text-right">
@@ -206,11 +217,11 @@ export default function Banks() {
                   return (
                     <tr key={t.id} className="hover:bg-slate-50/50">
                       <td className="px-6 py-4 text-sm font-bold text-slate-600">{new Date(t.date).toLocaleString()}</td>
-                      <td className="px-6 py-4 text-sm font-black text-slate-900">{card?.name || 'Desconocida'}</td>
+                      <td className="px-6 py-4 text-sm font-black text-slate-900">{card?.name || card?.bankName || card?.bank || 'Desconocida'}</td>
                       <td className="px-6 py-4">
                         <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${isIncome ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
                           {isIncome ? <ArrowDownRight size={12} /> : <ArrowUpRight size={12} />}
-                          {t.type.replace('_', ' ')}
+                          {(t.type || '').replace('_', ' ')}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-sm font-bold text-slate-500">{t.description}</td>
@@ -236,30 +247,66 @@ export default function Banks() {
             
             <form onSubmit={handleSave} className="p-6 space-y-6">
               <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Nombre de la Cuenta / Tarjeta</label>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Nombre o Titular de la Cuenta</label>
                 <input 
                   type="text" 
                   required
                   value={formData.name}
                   onChange={e => setFormData({...formData, name: e.target.value})}
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold"
-                  placeholder="Ej: Cuenta BHD Principal"
+                  placeholder="Ej: Titular / Negocio Principal"
                 />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Banco Emisor (Cuba)</label>
+                  <select
+                    value={formData.bank}
+                    onChange={e => setFormData({...formData, bank: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold"
+                  >
+                    <option value="BPA">BPA (Banco Popular de Ahorro)</option>
+                    <option value="BANDEC">BANDEC (Banco de Crédito y Comercio)</option>
+                    <option value="Banco Metropolitano">Banco Metropolitano (Banmet)</option>
+                    <option value="EnZona">EnZona / BFI</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Teléfono de Confirmación</label>
+                  <input 
+                    type="text" 
+                    placeholder="Ej: 5355555555"
+                    value={formData.phone || ''}
+                    onChange={e => setFormData({...formData, phone: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold"
+                  />
+                  <p className="text-[8px] text-slate-400 mt-1">Requerido para autollenado en Transfermóvil</p>
+                </div>
               </div>
 
               <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Banco</label>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Número de Tarjeta / Cuenta (16 dígitos)</label>
                 <input 
                   type="text" 
-                  required
-                  value={formData.bank}
-                  onChange={e => setFormData({...formData, bank: e.target.value})}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold"
-                  placeholder="Ej: Banco BHD"
+                  maxLength={19}
+                  placeholder="9202 xxxx xxxx xxxx"
+                  value={formData.accountNumber || ''}
+                  onChange={e => {
+                    const raw = e.target.value.replace(/\D/g, '').slice(0, 16);
+                    const formatted = raw.replace(/(\d{4})(?=\d)/g, '$1 ');
+                    setFormData({
+                      ...formData,
+                      accountNumber: formatted,
+                      lastFour: raw.slice(-4)
+                    });
+                  }}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono font-bold tracking-wider"
                 />
+                <p className="text-[8px] text-slate-400 mt-1">Número de tarjeta o cuenta para recibir transferencias (Transfermóvil / EnZona)</p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Moneda</label>
                   <select 
@@ -272,17 +319,6 @@ export default function Banks() {
                     <option value="USD">USD</option>
                     <option value="EUR">EUR</option>
                   </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Últimos 4 Dígitos</label>
-                  <input 
-                    type="text"
-                    maxLength={4}
-                    value={formData.lastFour}
-                    onChange={e => setFormData({...formData, lastFour: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold"
-                    placeholder="Ej: 4567"
-                  />
                 </div>
                 <div>
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Saldo Inicial</label>

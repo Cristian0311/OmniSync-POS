@@ -36,19 +36,12 @@ export default function CustomerShop() {
     inventory,
     branches,
     catalogConfig,
-    storeConfig,
-    initializeFromSupabase
+    storeConfig
   } = useStore();
   const baseCurrency = getBaseCurrency();
   const [cart, setCart] = useState<CartItem[]>([]);
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    initializeFromSupabase().finally(() => {
-      setIsLoading(false);
-    });
-  }, [initializeFromSupabase]);
+  const [isLoading, setIsLoading] = useState(false);
 
   const visibleBranches = useMemo(() => {
     if (!catalogConfig.visibleBranches || catalogConfig.visibleBranches.length === 0) return branches;
@@ -192,11 +185,11 @@ export default function CustomerShop() {
             <QRCodeSVG value={orderCode} size={220} level="H" />
           </div>
 
-          {catalogConfig.whatsappNumber && (
+          {catalogConfig?.whatsappNumber && (
             <button
               onClick={() => {
                 const text = `¡Hola! Tengo un pedido nuevo (QR generado en tienda).\nCódigo de pedido: ${orderCode}`;
-                window.open(`https://wa.me/${catalogConfig.whatsappNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
+                window.open(`https://wa.me/${String(catalogConfig.whatsappNumber || '').replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
               }}
               className="w-full mb-3 py-3.5 bg-emerald-600 text-white rounded-xl font-semibold text-sm hover:bg-emerald-700 transition-colors shadow-sm active:scale-95 flex justify-center items-center gap-2"
             >
@@ -538,9 +531,9 @@ export default function CustomerShop() {
                         Tel: {storeConfig.phone || 'No configurado'}<br/>
                         Email: info@mitienda.com
                       </p>
-                      {catalogConfig.whatsappNumber && (
+                      {catalogConfig?.whatsappNumber && (
                          <a 
-                           href={`https://wa.me/${catalogConfig.whatsappNumber.replace(/[^0-9]/g, '')}`}
+                           href={`https://wa.me/${String(catalogConfig.whatsappNumber || '').replace(/[^0-9]/g, '')}`}
                            target="_blank"
                            rel="noreferrer"
                            className="inline-flex items-center gap-1.5 mt-2 text-sm text-emerald-600 font-medium hover:underline"

@@ -46,7 +46,7 @@ export default function Login() {
 
         {/* Login Card */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 md:p-8">
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
@@ -59,19 +59,19 @@ export default function Login() {
             )}
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">Email</label>
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-600">Correo Electrónico / Usuario</label>
               <input 
-                type="email" 
+                type="text" 
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm placeholder:text-slate-400 text-slate-900 shadow-sm"
-                placeholder="usuario@empresa.com"
+                placeholder="ejemplo@correo.com o tu usuario"
               />
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">Contraseña</label>
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-600">Contraseña</label>
               <input 
                 type="password" 
                 required
@@ -85,15 +85,15 @@ export default function Login() {
             <button 
               type="submit"
               disabled={isLoading}
-              className="w-full py-2.5 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm flex items-center justify-center gap-2 mt-2 disabled:opacity-70 disabled:cursor-not-allowed"
+              className="w-full py-2.5 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 transition-colors shadow-sm flex items-center justify-center gap-2 mt-2 disabled:opacity-70 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
             >
               {isLoading ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                  <span>Sincronizando datos...</span>
+                  <span>Iniciando sesión...</span>
                 </>
               ) : (
-                "Iniciar sesión"
+                "Entrar al Sistema"
               )}
             </button>
           </form>

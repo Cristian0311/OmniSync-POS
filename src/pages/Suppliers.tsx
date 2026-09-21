@@ -30,12 +30,9 @@ export default function Suppliers() {
   
   const [formData, setFormData] = useState<Partial<Supplier>>({
     name: "",
-    email: "",
     phone: "",
-    typeOfMerchandise: "",
-    rating: 5,
-    rnc: "",
-    address: ""
+    address: "",
+    products: []
   });
 
   const [editingOrder, setEditingOrder] = useState<SupplierOrder | null>(null);
@@ -81,7 +78,7 @@ export default function Suppliers() {
 
   const filteredSuppliers = suppliers.filter(s => 
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.typeOfMerchandise.toLowerCase().includes(searchTerm.toLowerCase())
+    (s.typeOfMerchandise || "").toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -93,7 +90,7 @@ export default function Suppliers() {
     }
     setShowAddModal(false);
     setSelectedSupplier(null);
-    setFormData({ name: "", email: "", phone: "", typeOfMerchandise: "", rating: 5, rnc: "", address: "" });
+    setFormData({ name: "", phone: "", address: "", products: [] });
   };
 
   const handleOrderSubmit = (e: React.FormEvent) => {
@@ -186,28 +183,55 @@ export default function Suppliers() {
                     </div>
                     <div>
                       <h3 className="text-xs font-black text-slate-900 uppercase tracking-tight">{s.name}</h3>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase">{s.typeOfMerchandise}</p>
+                      <p className="text-[9px] font-bold text-slate-400 uppercase">
+                        {s.products && s.products.length > 0 ? `${s.products.length} productos asociados` : (s.typeOfMerchandise || 'Proveedor')}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-0.5">
                     {[...Array(5)].map((_, i) => (
-                      <Star key={i} className={cn("w-3 h-3", i < s.rating ? "fill-amber-400 text-amber-400" : "text-slate-200")} />
+                      <Star key={i} className={cn("w-3 h-3", i < (s.rating || 5) ? "fill-amber-400 text-amber-400" : "text-slate-200")} />
                     ))}
                   </div>
                 </div>
 
-                <div className="space-y-2 mb-4">
+                <div className="space-y-1.5 mb-3">
                   <div className="flex items-center gap-2 text-[10px] text-slate-600 font-bold">
-                    <Phone className="w-3 h-3 text-slate-400" /> {s.phone}
+                    <Phone className="w-3 h-3 text-slate-400 shrink-0" /> {s.phone}
                   </div>
-                  <div className="flex items-center gap-2 text-[10px] text-slate-600 font-bold">
-                    <Mail className="w-3 h-3 text-slate-400" /> {s.email}
-                  </div>
+                  {s.address && (
+                    <div className="flex items-center gap-2 text-[10px] text-slate-600 font-bold">
+                      <MapPin className="w-3 h-3 text-slate-400 shrink-0" /> {s.address}
+                    </div>
+                  )}
+                  {s.email && (
+                    <div className="flex items-center gap-2 text-[10px] text-slate-600 font-bold">
+                      <Mail className="w-3 h-3 text-slate-400 shrink-0" /> {s.email}
+                    </div>
+                  )}
                 </div>
+
+                {/* List of associated merchandise/products */}
+                {s.products && s.products.length > 0 && (
+                  <div className="mb-4 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                    <p className="text-[8px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Mercancía asignada ({s.products.length})</p>
+                    <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                      {s.products.map((sp, idx) => {
+                        const prod = products.find(p => p.id === sp.productId);
+                        return (
+                          <span key={idx} className="text-[8px] font-bold bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md flex items-center gap-1">
+                            {prod?.name || 'Producto'}
+                            {sp.purchasePrice ? <span className="text-indigo-600 font-black">({baseCurrency.symbol} {sp.purchasePrice})</span> : null}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex gap-2">
                   <button 
-                    onClick={() => { setSelectedSupplier(s); setFormData(s); setShowAddModal(true); }}
+                    onClick={() => { setSelectedSupplier(s); setFormData({ ...s, products: s.products || [] }); setShowAddModal(true); }}
                     className="flex-1 py-2 bg-slate-50 text-slate-600 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-indigo-50 hover:text-indigo-600 transition-all"
                   >
                     Editar
@@ -295,40 +319,140 @@ export default function Suppliers() {
         </div>
       </div>
 
-      {/* Modal Add Supplier */}
+      {/* Modal Add / Edit Supplier */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-slate-900/50 z-50 flex justify-center items-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-              <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">{selectedSupplier ? 'Editar Proveedor' : 'Nuevo Proveedor'}</h2>
-              <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X className="w-5 h-5" /></button>
+        <div className="fixed inset-0 bg-slate-900/50 z-50 flex justify-center items-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <div>
+                <h2 className="text-base font-black text-slate-900 uppercase tracking-tight">{selectedSupplier ? 'Editar Proveedor' : 'Nuevo Proveedor'}</h2>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Información de contacto y mercancía</p>
+              </div>
+              <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-slate-200/60 rounded-full transition-colors"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre de la Empresa</label>
-                  <input type="text" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
+            
+            <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Nombre del Proveedor</label>
+                <input 
+                  type="text" 
+                  required 
+                  placeholder="Ej: Distribuidora Central S.R.L."
+                  value={formData.name || ''} 
+                  onChange={e => setFormData({...formData, name: e.target.value})} 
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900" 
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Número de Teléfono</label>
+                  <input 
+                    type="text" 
+                    required 
+                    placeholder="Ej: +53 52345678"
+                    value={formData.phone || ''} 
+                    onChange={e => setFormData({...formData, phone: e.target.value})} 
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900" 
+                  />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">RNC / Cédula</label>
-                  <input type="text" value={formData.rnc} onChange={e => setFormData({...formData, rnc: e.target.value})} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Teléfono</label>
-                  <input type="text" required value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none" />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Correo Electrónico</label>
-                  <input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none" />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Tipo de Mercancía</label>
-                  <input type="text" required value={formData.typeOfMerchandise} onChange={e => setFormData({...formData, typeOfMerchandise: e.target.value})} placeholder="Ej: Electrónicos, Ropa, etc." className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none" />
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Dirección</label>
+                  <input 
+                    type="text" 
+                    placeholder="Ej: Calle 23 e/ L y M, Vedado"
+                    value={formData.address || ''} 
+                    onChange={e => setFormData({...formData, address: e.target.value})} 
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900" 
+                  />
                 </div>
               </div>
-              <button type="submit" className="w-full py-3.5 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all mt-4">
-                {selectedSupplier ? 'Guardar Cambios' : 'Registrar Proveedor'}
-              </button>
+
+              {/* Selector de Mercancía desde el inventario */}
+              <div className="pt-2">
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest">Mercancía Asociada (Inventario)</label>
+                    <p className="text-[9px] font-bold text-slate-400">Productos que vende este proveedor y costo opcional</p>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      const current = formData.products || [];
+                      setFormData({
+                        ...formData,
+                        products: [...current, { productId: products[0]?.id || '', purchasePrice: 0 }]
+                      });
+                    }}
+                    className="px-2.5 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-indigo-100 transition-all flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" /> Agregar Producto
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-48 overflow-y-auto p-1 bg-slate-50/70 rounded-2xl border border-slate-100">
+                  {(!formData.products || formData.products.length === 0) ? (
+                    <div className="text-center py-4 text-slate-400 text-[10px] font-bold uppercase tracking-wider">
+                      Sin productos asignados todavía. Toca "Agregar Producto" para asociar mercancía.
+                    </div>
+                  ) : (
+                    formData.products.map((item, idx) => (
+                      <div key={idx} className="flex flex-col sm:flex-row items-center gap-2 p-2 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                        <select 
+                          value={item.productId}
+                          onChange={e => {
+                            const updated = [...(formData.products || [])];
+                            updated[idx] = { ...updated[idx], productId: e.target.value };
+                            setFormData({ ...formData, products: updated });
+                          }}
+                          className="flex-1 w-full bg-slate-50 border border-slate-200 text-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none"
+                        >
+                          <option value="">Selecciona un producto del inventario...</option>
+                          {products.map(p => (
+                            <option key={p.id} value={p.id}>{p.name} {p.sku ? `(${p.sku})` : ''}</option>
+                          ))}
+                        </select>
+                        <div className="flex items-center gap-2 w-full sm:w-auto">
+                          <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 w-full sm:w-32">
+                            <span className="text-[9px] font-bold text-slate-400">{baseCurrency.symbol}</span>
+                            <input 
+                              type="number" 
+                              step="0.01"
+                              placeholder="Precio compra"
+                              value={item.purchasePrice !== undefined && item.purchasePrice !== 0 ? item.purchasePrice : ''}
+                              onChange={e => {
+                                const updated = [...(formData.products || [])];
+                                updated[idx] = { ...updated[idx], purchasePrice: parseFloat(e.target.value) || 0 };
+                                setFormData({ ...formData, products: updated });
+                              }}
+                              className="w-full bg-transparent text-xs font-bold text-slate-800 outline-none placeholder:text-slate-400"
+                            />
+                          </div>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              const updated = (formData.products || []).filter((_, i) => i !== idx);
+                              setFormData({ ...formData, products: updated });
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-2 flex gap-2">
+                <button type="button" onClick={() => setShowAddModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all">
+                  Cancelar
+                </button>
+                <button type="submit" className="flex-1 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100">
+                  {selectedSupplier ? 'Guardar Cambios' : 'Registrar Proveedor'}
+                </button>
+              </div>
             </form>
           </div>
         </div>

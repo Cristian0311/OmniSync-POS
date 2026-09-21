@@ -52,7 +52,7 @@ export default function Customers() {
   };
 
   return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500 h-full flex flex-col pb-8">
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500 lg:h-full flex flex-col pb-8">
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div className="flex items-center gap-2">
           <h2 className="text-xl font-black text-slate-900 tracking-tight uppercase">Directorio de Clientes</h2>
@@ -80,8 +80,8 @@ export default function Customers() {
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex-1 flex flex-col">
-        <div className="overflow-x-auto">
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex-1 flex flex-col min-h-[400px]">
+        <div className="overflow-auto flex-1">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100">

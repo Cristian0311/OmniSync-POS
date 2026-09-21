@@ -22,53 +22,12 @@ import Banks from "./pages/Banks";
 import { useStore } from "./store/useStore";
 
 export default function App() {
-  const { currentUser, users, isInitialized, setOfflineStatus, isOffline, syncPendingTransactions, processSyncQueue, initializeFromSupabase, setupRealtimeSubscriptions } = useStore();
+  const { currentUser, isInitialized, syncWithSupabase } = useStore();
 
   useEffect(() => {
-    initializeFromSupabase();
-    const cleanup = setupRealtimeSubscriptions();
-    
-    const handleOnline = () => {
-      console.log('[Network] Online detected - reconciling database with local storage and processing offline queue...');
-      setOfflineStatus(false);
-      syncPendingTransactions();
-      processSyncQueue();
-      initializeFromSupabase();
-    };
-    const handleOffline = () => {
-      console.log('[Network] Offline detected - POS running in local resilient offline mode.');
-      setOfflineStatus(true);
-    };
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    // Initial check
-    if (navigator.onLine) {
-      if (isOffline) {
-        setOfflineStatus(false);
-      }
-      syncPendingTransactions();
-      processSyncQueue();
-    } else if (!navigator.onLine && !isOffline) {
-      setOfflineStatus(true);
-    }
-
-    // Window focus trigger to ensure any pending items are processed
-    const handleFocus = () => {
-      if (navigator.onLine && !isOffline) {
-        processSyncQueue();
-      }
-    };
-    window.addEventListener('focus', handleFocus);
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('focus', handleFocus);
-      cleanup();
-    };
-  }, [setOfflineStatus, syncPendingTransactions, processSyncQueue, initializeFromSupabase, isOffline, setupRealtimeSubscriptions]);
+    // Sincronizar automáticamente con Supabase al iniciar la aplicación (una sola vez)
+    useStore.getState().syncWithSupabase().catch(() => {});
+  }, []);
 
   if (!isInitialized) {
     return (

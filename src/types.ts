@@ -1,5 +1,5 @@
 export interface Currency {
-  code: 'CUP' | 'USD' | 'EUR';
+  code: 'CUP' | 'USD' | 'EUR' | 'MN';
   name: string;
   symbol: string;
   rateToBase: number; // Exchange rate relative to base currency (e.g., 1 USD = 320 CUP)
@@ -12,12 +12,16 @@ export interface Branch {
   address?: string;
   phone?: string;
   isMain?: boolean;
+  isActive?: boolean;
 }
 
 export interface Category {
   id: string;
   name: string;
   department: string; // e.g., 'Electrodomésticos', 'Ferretería', 'Ropa', 'Calzado'
+  description?: string;
+  color?: string;
+  image?: string;
 }
 
 export interface Product {
@@ -32,8 +36,8 @@ export interface Product {
   color: string; // Tailwind class para UI
   
   // Commission settings
-  commissionType: 'percentage' | 'fixed';
-  commissionValue: number;
+  commissionValue: number; // Cup fijo de comisión por producto
+  commissionType?: 'percentage' | 'fixed';
 
   // Enterprise fields
   unit?: string; // 'unidad', 'kg', 'm', 'par', etc.
@@ -44,6 +48,7 @@ export interface Product {
   hasSerial?: boolean; // Tracking individual units
   isKit?: boolean; // Is it a bundle of other products?
   kitComponents?: { productId: string; quantity: number }[];
+  kitItems?: any[];
   
   // Dynamic attributes
   warrantyDays?: number;
@@ -69,6 +74,8 @@ export interface CartItem {
   id: string; // ID único para la fila del carrito
   product: Product;
   quantity: number;
+  price: number; // Precio al que se vendió
+  total: number; // Subtotal (quantity * price)
   serialNumber?: string; // Si hasSerial es true
   warrantyCode?: string;
   selectedSize?: string;
@@ -77,7 +84,7 @@ export interface CartItem {
 }
 
 export interface Payment {
-  currencyCode: 'CUP' | 'USD' | 'EUR';
+  currencyCode: 'CUP' | 'USD' | 'EUR' | 'MN';
   amount: number; // Monto pagado en esa moneda
   exchangeRate: number; // Tasa de cambio al momento de la venta
   method: 'cash' | 'transfer';
@@ -106,9 +113,11 @@ export interface Transaction {
   branchId: string;
   userId: string; // The user who processed the transaction
   sellerEmployeeIds?: string[]; // IDs of employees involved in the sale for commission splitting
+  cashierName?: string; // Explicit name of the cashier/seller for the shift
   date: string;
-  subtotal: number; // In base currency (CUP)
-  tax: number; // In base currency
+  subtotal?: number; // In base currency (CUP)
+  tax?: number; // In base currency
+  discount?: number;
   total: number; // In base currency
   payments: Payment[]; // Pagos múltiples combinados
   items: CartItem[];
@@ -119,6 +128,8 @@ export interface Transaction {
   changeGiven?: number; // In base currency
   changePayments?: Payment[]; // Multicurrency change details
   sessionId?: string; // ID of the cash session/turno in which the transaction was created
+  notes?: string;
+  paymentMethod?: string;
 }
 
 export interface ReturnItem {
@@ -131,6 +142,7 @@ export interface ReturnItem {
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   type: 'refund' | 'warranty_exchange';
   notes?: string;
+  variantLabel?: string;
 }
 
 export interface Customer {
@@ -147,6 +159,7 @@ export interface CashRegisterSession {
   openedAt: string;
   closedAt?: string;
   openingBalance: number;
+  openingAmount?: number;
   closingBalances?: Payment[];
   expectedBalance?: number;
   status: 'open' | 'closed';
@@ -155,6 +168,7 @@ export interface CashRegisterSession {
   workingEmployeeIds?: string[]; // IDs of employees working this session
   movements?: CashMovement[];
   closingDate?: string;
+  notes?: string;
 }
 
 export interface CashMovement {
@@ -172,13 +186,24 @@ export interface User {
   email: string;
   role: 'admin' | 'employee';
   password?: string;
-  commissionRate: number; // Legacy global commission (optional)
-  baseSalary: number;
-  salesGoal?: number; // Salario fijo
+  baseSalary: number; // Salario base o CUP fijo por día
+  salesGoal?: number;
+  commissionRate?: number;
   phone?: string;
   branchId?: string; // Sucursal asignada
   supervisorId?: string; // Supervisor (empleado principal)
   allowedBranches?: string[]; // Sucursales donde el usuario puede operar
+  permissions?: string[];
+  isActive?: boolean;
+  isIndependent?: boolean; // Vendedor independiente (paga costo fijo, no recibe salario/comisión)
+  assignedBranchId?: string; // Almacén exclusivo asignado para IDN
+}
+
+export interface IDNSettlementPrice {
+  id: string;
+  userId: string;
+  productId: string;
+  settlementPrice: number;
 }
 
 export interface PendingOrder {
@@ -233,12 +258,12 @@ export interface InventoryTransfer {
 export interface Supplier {
   id: string;
   name: string;
-  rnc?: string;
-  email: string;
   phone: string;
   address?: string;
-  typeOfMerchandise: string;
-  rating: number; // 1-5
+  email?: string;
+  rating?: number;
+  products?: { productId: string; purchasePrice?: number }[];
+  typeOfMerchandise?: string; // Mantener por compatibilidad si es necesario
 }
 
 export interface SupplierOrder {
@@ -262,11 +287,17 @@ export interface SupplierOrder {
 
 export interface BankCard {
   id: string;
-  name: string; // e.g. "Tarjeta Banreservas Principal"
-  bank: string;
+  name?: string; // e.g. "Tarjeta Banreservas Principal"
+  bank?: string;
+  bankName?: string;
+  cardHolder?: string;
+  accountNumber?: string;
+  phone?: string; // Teléfono asociado para confirmación (Transfermóvil)
   lastFour?: string;
+  lastFourDigits?: string;
   balance: number;
   currency: string;
+  color?: string;
   isActive: boolean;
 }
 
