@@ -27,6 +27,13 @@ import {
 import React, { useState, useEffect } from "react";
 import { cn } from "../lib/utils";
 import { useStore } from "../store/useStore";
+import { 
+  CheckCircle2, 
+  AlertTriangle, 
+  X, 
+  Info, 
+  AlertCircle 
+} from "lucide-react";
 
 const adminNavItems = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -50,7 +57,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const { currentUser, logout } = useStore();
+  const { currentUser, logout, notifications, removeNotification } = useStore();
   const location = useLocation();
   const isPosPage = location.pathname === "/pos";
 
@@ -78,7 +85,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     currentUser?.role === "admin" ? adminNavItems : cashierNavItems;
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-gray-50 flex flex-col md:flex-row">
+    <div className="h-screen w-screen overflow-hidden bg-gray-50 flex flex-col md:flex-row relative">
+      {/* Sistema de Notificaciones Globales */}
+      <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
+        {notifications.map((n) => (
+          <div 
+            key={n.id} 
+            className={cn(
+              "pointer-events-auto min-w-[280px] p-4 rounded-2xl shadow-2xl border flex items-center gap-3 animate-in slide-in-from-right-4 duration-300",
+              n.type === 'success' ? "bg-emerald-50 border-emerald-100 text-emerald-800" :
+              n.type === 'error' ? "bg-rose-50 border-rose-100 text-rose-800" :
+              n.type === 'warning' ? "bg-amber-50 border-amber-100 text-amber-800" :
+              "bg-indigo-50 border-indigo-100 text-indigo-800"
+            )}
+          >
+            <div className="shrink-0">
+              {n.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+              {n.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-500" />}
+              {n.type === 'warning' && <AlertTriangle className="w-5 h-5 text-amber-500" />}
+              {n.type === 'info' && <Info className="w-5 h-5 text-indigo-500" />}
+            </div>
+            <div className="flex-1 text-[11px] font-black uppercase tracking-tight leading-tight">
+              {n.message}
+            </div>
+            <button 
+              onClick={() => removeNotification(n.id)}
+              className="shrink-0 p-1 hover:bg-black/5 rounded-full transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
       {/* Mobile Top Bar (Only when not on POS or if POS wants it) */}
       {!isPosPage && (
         <div className="md:hidden bg-indigo-600 text-white p-3.5 flex justify-between items-center shadow-md shrink-0">

@@ -20,351 +20,26 @@ const INITIAL_USERS: User[] = [
     email: 'cristianmarco2003@gmail.com',
     role: 'admin',
     password: '03111166702',
-    baseSalary: 25000,
-    salesGoal: 1000000,
-    branchId: 'b-central',
-    allowedBranches: ['b-central', 'b-almacen-1', 'b-vedado', 'b-playa'],
-    permissions: ['pos_access', 'reports_access', 'inventory_access', 'admin_access', 'cash_audit'],
-    isActive: true
-  },
-  {
-    id: 'employee-1',
-    name: 'Trabajador General',
-    email: 'trabajador@gmail.com',
-    role: 'employee',
-    password: '03111166702',
-    baseSalary: 12000,
-    salesGoal: 350000,
-    branchId: 'b-central',
-    allowedBranches: ['b-central', 'b-vedado'],
-    permissions: ['pos_access'],
-    isActive: true
-  },
-  {
-    id: 'user-alejandro',
-    name: 'Alejandro Martínez',
-    email: 'alejandro.vedado@gmail.com',
-    role: 'employee',
-    password: '03111166702',
-    baseSalary: 16000,
-    salesGoal: 500000,
-    branchId: 'b-vedado',
-    allowedBranches: ['b-vedado'],
-    permissions: ['pos_access'],
-    isActive: true
-  },
-  {
-    id: 'user-beatriz',
-    name: 'Beatriz Navarro',
-    email: 'beatriz.central@gmail.com',
-    role: 'employee',
-    password: '03111166702',
-    baseSalary: 15000,
-    salesGoal: 450000,
+    baseSalary: 0,
+    salesGoal: 0,
     branchId: 'b-central',
     allowedBranches: ['b-central'],
-    permissions: ['pos_access'],
+    permissions: ['pos_access', 'reports_access', 'inventory_access', 'admin_access', 'cash_audit'],
     isActive: true
   }
 ];
 
 const INITIAL_BRANCHES: Branch[] = [
-  { id: 'b-central', name: 'Sucursal Principal', address: 'Calle Principal', phone: '+53 5200-1122', isMain: true }
+  { id: 'b-central', name: 'Sucursal Principal', address: '', phone: '', isMain: true }
 ];
 
-const INITIAL_CATEGORIES: Category[] = [
-  { id: 'cat-telefonia', name: 'Smartphones y Telefonía', department: 'Dispositivos' },
-  { id: 'cat-accesorios', name: 'Accesorios y Audio', department: 'Electrónica' },
-  { id: 'cat-computo', name: 'Laptops e Informática', department: 'Computación' },
-  { id: 'cat-repuestos', name: 'Repuestos y Baterías', department: 'Taller' },
-  { id: 'cat-servicios', name: 'Servicios Técnicos y Software', department: 'Servicios' }
-];
+const INITIAL_CATEGORIES: Category[] = [];
 
-const INITIAL_PRODUCTS: Product[] = [
-  {
-    id: 'prod-ip15pm',
-    name: 'iPhone 15 Pro Max 256GB Titanio Natural',
-    sku: 'IP15PM-256-NAT',
-    barcode: '195949038291',
-    costPrice: 285000,
-    price: 340000,
-    margin: 19.3,
-    categoryId: 'cat-telefonia',
-    color: 'bg-slate-600',
-    commissionValue: 3000,
-    unit: 'unidad',
-    status: 'active',
-    minStockAlert: 3,
-    hasSerial: true,
-    warrantyDays: 90,
-    isKit: false,
-    deviceColor: 'Titanio Natural',
-    availableSizes: ['256GB', '512GB', '1TB'],
-    availableColors: ['Natural', 'Azul', 'Negro', 'Blanco']
-  },
-  {
-    id: 'prod-s24u',
-    name: 'Samsung Galaxy S24 Ultra 512GB Gray',
-    sku: 'S24U-512-GRY',
-    barcode: '880609538192',
-    costPrice: 260000,
-    price: 315000,
-    margin: 21.15,
-    categoryId: 'cat-telefonia',
-    color: 'bg-zinc-700',
-    commissionValue: 2500,
-    unit: 'unidad',
-    status: 'active',
-    minStockAlert: 3,
-    hasSerial: true,
-    warrantyDays: 90,
-    isKit: false,
-    deviceColor: 'Titanium Gray',
-    availableSizes: ['256GB', '512GB'],
-    availableColors: ['Gray', 'Black', 'Violet']
-  },
-  {
-    id: 'prod-rn13p',
-    name: 'Xiaomi Redmi Note 13 Pro+ 5G 256GB',
-    sku: 'RN13P-256-BLK',
-    barcode: '694181275482',
-    costPrice: 68000,
-    price: 88000,
-    margin: 29.41,
-    categoryId: 'cat-telefonia',
-    color: 'bg-purple-600',
-    commissionValue: 1500,
-    unit: 'unidad',
-    status: 'active',
-    minStockAlert: 5,
-    hasSerial: true,
-    warrantyDays: 60,
-    isKit: false,
-    deviceColor: 'Midnight Black',
-    availableSizes: ['256GB', '512GB'],
-    availableColors: ['Midnight Black', 'Aurora Purple']
-  },
-  {
-    id: 'prod-airpods2',
-    name: 'Apple AirPods Pro (2da Generación USB-C)',
-    sku: 'APP2-USBC-WHT',
-    barcode: '195949052679',
-    costPrice: 46000,
-    price: 62000,
-    margin: 34.78,
-    categoryId: 'cat-accesorios',
-    color: 'bg-emerald-600',
-    commissionValue: 1000,
-    unit: 'unidad',
-    status: 'active',
-    minStockAlert: 5,
-    hasSerial: true,
-    warrantyDays: 30,
-    isKit: false,
-    deviceColor: 'Blanco',
-    availableSizes: ['Estándar'],
-    availableColors: ['Blanco']
-  },
-  {
-    id: 'prod-charger20w',
-    name: 'Cargador Rápido 20W USB-C Power Delivery',
-    sku: 'CHG-20W-PD',
-    barcode: '742701928374',
-    costPrice: 2200,
-    price: 4800,
-    margin: 118.18,
-    categoryId: 'cat-accesorios',
-    color: 'bg-blue-500',
-    commissionValue: 200,
-    unit: 'unidad',
-    status: 'active',
-    minStockAlert: 15,
-    hasSerial: false,
-    warrantyDays: 30,
-    isKit: false,
-    deviceColor: 'Blanco',
-    availableSizes: ['20W', '35W'],
-    availableColors: ['Blanco', 'Negro']
-  },
-  {
-    id: 'prod-cable-c',
-    name: 'Cable USB-C a USB-C Trenzado 60W 2 Metros',
-    sku: 'CBL-CC-2M-BLK',
-    barcode: '742701928481',
-    costPrice: 1100,
-    price: 2600,
-    margin: 136.36,
-    categoryId: 'cat-accesorios',
-    color: 'bg-amber-600',
-    commissionValue: 150,
-    unit: 'unidad',
-    status: 'active',
-    minStockAlert: 20,
-    hasSerial: false,
-    warrantyDays: 15,
-    isKit: false,
-    deviceColor: 'Negro',
-    availableSizes: ['1m', '2m'],
-    availableColors: ['Negro', 'Gris']
-  },
-  {
-    id: 'prod-case-mag',
-    name: 'Funda Case MagSafe Silicona ShockProof',
-    sku: 'CS-MAG-SIL',
-    barcode: '742701928599',
-    costPrice: 1400,
-    price: 3500,
-    margin: 150.0,
-    categoryId: 'cat-accesorios',
-    color: 'bg-rose-500',
-    commissionValue: 200,
-    unit: 'unidad',
-    status: 'active',
-    minStockAlert: 20,
-    hasSerial: false,
-    warrantyDays: 7,
-    isKit: false,
-    deviceColor: 'Transparente',
-    availableSizes: ['iPhone 15 Pro Max', 'iPhone 15 Pro'],
-    availableColors: ['Transparente', 'Negro Mate', 'Azul Marino']
-  },
-  {
-    id: 'prod-glass-9d',
-    name: 'Protector Cerámico Cristal Templado 9D',
-    sku: 'GLS-9D-PRIV',
-    barcode: '742701928612',
-    costPrice: 700,
-    price: 1900,
-    margin: 171.42,
-    categoryId: 'cat-accesorios',
-    color: 'bg-indigo-500',
-    commissionValue: 100,
-    unit: 'unidad',
-    status: 'active',
-    minStockAlert: 25,
-    hasSerial: false,
-    warrantyDays: 7,
-    isKit: false,
-    deviceColor: 'Privacidad',
-    availableSizes: ['Full Cover'],
-    availableColors: ['Transparente', 'Privacidad']
-  },
-  {
-    id: 'prod-bat-ip11',
-    name: 'Batería Reemplazo Original iPhone 11 (3110 mAh)',
-    sku: 'BAT-IP11-OEM',
-    barcode: '742701928723',
-    costPrice: 5800,
-    price: 11500,
-    margin: 98.27,
-    categoryId: 'cat-repuestos',
-    color: 'bg-teal-600',
-    commissionValue: 600,
-    unit: 'unidad',
-    status: 'active',
-    minStockAlert: 8,
-    hasSerial: true,
-    warrantyDays: 60,
-    isKit: false,
-    deviceColor: 'OEM',
-    availableSizes: ['3110 mAh'],
-    availableColors: ['Estándar']
-  },
-  {
-    id: 'prod-serv-maint',
-    name: 'Servicio Mantenimiento General y Cambio de Pasta',
-    sku: 'SRV-MAINT-GEN',
-    barcode: '000000000001',
-    costPrice: 600,
-    price: 4500,
-    margin: 650.0,
-    categoryId: 'cat-servicios',
-    color: 'bg-violet-600',
-    commissionValue: 500,
-    unit: 'servicio',
-    status: 'active',
-    minStockAlert: 1,
-    hasSerial: false,
-    warrantyDays: 15,
-    isKit: false,
-    deviceColor: 'Taller',
-    availableSizes: ['Completo'],
-    availableColors: ['N/A']
-  }
-];
+const INITIAL_PRODUCTS: Product[] = [];
 
-const INITIAL_INVENTORY: InventoryLevel[] = [
-  { id: 'inv-1', productId: 'prod-ip15pm', branchId: 'b-central', variantLabel: '256GB - Natural', quantity: 8, minQuantity: 2 },
-  { id: 'inv-2', productId: 'prod-s24u', branchId: 'b-central', variantLabel: '512GB - Gray', quantity: 6, minQuantity: 2 },
-  { id: 'inv-3', productId: 'prod-rn13p', branchId: 'b-central', variantLabel: '256GB - Black', quantity: 14, minQuantity: 3 },
-  { id: 'inv-4', productId: 'prod-airpods2', branchId: 'b-central', variantLabel: 'Estándar', quantity: 12, minQuantity: 3 },
-  { id: 'inv-5', productId: 'prod-charger20w', branchId: 'b-central', variantLabel: '20W - Blanco', quantity: 45, minQuantity: 10 },
-  { id: 'inv-6', productId: 'prod-cable-c', branchId: 'b-central', variantLabel: '2m - Negro', quantity: 60, minQuantity: 15 },
-  { id: 'inv-7', productId: 'prod-case-mag', branchId: 'b-central', variantLabel: 'iPhone 15 Pro Max', quantity: 35, minQuantity: 8 },
-  { id: 'inv-8', productId: 'prod-glass-9d', branchId: 'b-central', variantLabel: 'Full Cover', quantity: 75, minQuantity: 15 },
-  { id: 'inv-9', productId: 'prod-bat-ip11', branchId: 'b-central', variantLabel: '3110 mAh', quantity: 10, minQuantity: 2 },
-  { id: 'inv-10', productId: 'prod-serv-maint', branchId: 'b-central', variantLabel: 'Servicio', quantity: 999, minQuantity: 1 },
+const INITIAL_INVENTORY: InventoryLevel[] = [];
 
-  // Almacén Berroa
-  { id: 'inv-11', productId: 'prod-ip15pm', branchId: 'b-almacen-1', variantLabel: '256GB - Natural', quantity: 25, minQuantity: 5 },
-  { id: 'inv-12', productId: 'prod-s24u', branchId: 'b-almacen-1', variantLabel: '512GB - Gray', quantity: 20, minQuantity: 5 },
-  { id: 'inv-13', productId: 'prod-rn13p', branchId: 'b-almacen-1', variantLabel: '256GB - Black', quantity: 40, minQuantity: 10 },
-  { id: 'inv-14', productId: 'prod-airpods2', branchId: 'b-almacen-1', variantLabel: 'Estándar', quantity: 30, minQuantity: 5 },
-  { id: 'inv-15', productId: 'prod-charger20w', branchId: 'b-almacen-1', variantLabel: '20W - Blanco', quantity: 150, minQuantity: 25 },
-  { id: 'inv-16', productId: 'prod-cable-c', branchId: 'b-almacen-1', variantLabel: '2m - Negro', quantity: 200, minQuantity: 30 },
-  { id: 'inv-17', productId: 'prod-case-mag', branchId: 'b-almacen-1', variantLabel: 'iPhone 15 Pro Max', quantity: 120, minQuantity: 20 },
-  { id: 'inv-18', productId: 'prod-glass-9d', branchId: 'b-almacen-1', variantLabel: 'Full Cover', quantity: 300, minQuantity: 50 },
-  { id: 'inv-19', productId: 'prod-bat-ip11', branchId: 'b-almacen-1', variantLabel: '3110 mAh', quantity: 50, minQuantity: 10 },
-
-  // Vedado & Playa
-  { id: 'inv-20', productId: 'prod-ip15pm', branchId: 'b-vedado', variantLabel: '256GB - Natural', quantity: 4, minQuantity: 1 },
-  { id: 'inv-21', productId: 'prod-charger20w', branchId: 'b-vedado', variantLabel: '20W - Blanco', quantity: 25, minQuantity: 5 },
-  { id: 'inv-22', productId: 'prod-ip15pm', branchId: 'b-playa', variantLabel: '256GB - Natural', quantity: 5, minQuantity: 1 },
-  { id: 'inv-23', productId: 'prod-charger20w', branchId: 'b-playa', variantLabel: '20W - Blanco', quantity: 30, minQuantity: 5 }
-];
-
-const INITIAL_BANK_CARDS: BankCard[] = [
-  {
-    id: 'bc-cup-bpa',
-    bankName: 'BPA Transfermóvil (CUP)',
-    cardHolder: 'MARÉ INVERSIONES S.U.R.L',
-    lastFourDigits: '8910',
-    currency: 'CUP',
-    balance: 350000,
-    color: 'from-blue-600 to-indigo-800',
-    isActive: true
-  },
-  {
-    id: 'bc-cup-bandec',
-    bankName: 'BANDEC EnZona (CUP)',
-    cardHolder: 'MARÉ INVERSIONES S.U.R.L',
-    lastFourDigits: '4421',
-    currency: 'CUP',
-    balance: 185000,
-    color: 'from-cyan-600 to-blue-700',
-    isActive: true
-  },
-  {
-    id: 'bc-cup-banmet',
-    bankName: 'BANMET Pago Móvil (CUP)',
-    cardHolder: 'MARÉ COMERCIAL',
-    lastFourDigits: '6732',
-    currency: 'CUP',
-    balance: 95000,
-    color: 'from-indigo-600 to-purple-800',
-    isActive: true
-  },
-  {
-    id: 'bc-usd-mlc',
-    bankName: 'BPA Cuenta MLC / USD',
-    cardHolder: 'MARÉ IMPORT & EXPORT',
-    lastFourDigits: '1234',
-    currency: 'USD',
-    balance: 4250,
-    color: 'from-emerald-600 to-teal-800',
-    isActive: true
-  }
-];
+const INITIAL_BANK_CARDS: BankCard[] = [];
 
 const INITIAL_FISCAL_CONFIGS: FiscalConfig[] = [
   { id: crypto.randomUUID(), type: 'B01', name: 'Crédito Fiscal', prefix: 'B01', current: 1, limit: 1000, active: true },
@@ -549,6 +224,11 @@ interface AppState {
   seedDemoProducts: () => void;
 
   isInitialized: boolean;
+  
+  // Notificaciones Globales
+  notifications: { id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }[];
+  addNotification: (message: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
+  removeNotification: (id: string) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -1015,6 +695,11 @@ export const useStore = create<AppState>()(
       products: state.products.filter(p => !ids.includes(p.id)),
       inventory: state.inventory.filter(i => !ids.includes(i.productId))
     }));
+    
+    // Sync to Supabase
+    ids.forEach(id => {
+      deleteProductFromSupabase(id);
+    });
   },
   batchUpdateProducts: (ids, updates) => {
     set((state) => ({
@@ -1621,28 +1306,7 @@ export const useStore = create<AppState>()(
     }
   },
 
-  bankCards: [
-    {
-      id: 'bank-1',
-      name: 'Tarjeta CUP Principal',
-      bank: 'Banco Metropolitano',
-      accountNumber: '9225 1234 5678 9012',
-      phone: '5351234567',
-      balance: 50000,
-      currency: 'CUP',
-      isActive: true
-    },
-    {
-      id: 'bank-2',
-      name: 'Tarjeta USD/MLC',
-      bank: 'BANDEC',
-      accountNumber: '9202 8765 4321 0987',
-      phone: '5357654321',
-      balance: 1500,
-      currency: 'USD',
-      isActive: true
-    }
-  ],
+  bankCards: INITIAL_BANK_CARDS,
   addBankCard: (card) => {
     set(state => ({ bankCards: [...state.bankCards, card] }));
     pushBankCardToSupabase(card).catch(() => {});
@@ -1763,6 +1427,24 @@ export const useStore = create<AppState>()(
       bankCards: INITIAL_BANK_CARDS,
       currencies: INITIAL_CURRENCIES
     });
+  },
+
+  notifications: [],
+  addNotification: (message, type = 'info') => {
+    const id = crypto.randomUUID();
+    set(state => ({
+      notifications: [...state.notifications, { id, message, type }]
+    }));
+    setTimeout(() => {
+      set(state => ({
+        notifications: state.notifications.filter(n => n.id !== id)
+      }));
+    }, 4000);
+  },
+  removeNotification: (id) => {
+    set(state => ({
+      notifications: state.notifications.filter(n => n.id !== id)
+    }));
   },
 
   isInitialized: true

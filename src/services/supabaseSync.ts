@@ -539,13 +539,76 @@ export async function safeUpsert(
           fkCol = 'product_id';
         } else if (table === 'users' && (error.details?.includes('branches') || error.message?.includes('branch'))) {
           fkCol = 'branch_id';
+        } else if (table === 'inventory' && (error.details?.includes('branches') || error.message?.includes('branch') || error.message?.includes('branches'))) {
+          fkCol = 'branch_id';
+        } else if (table === 'inventory' && (error.details?.includes('products') || error.message?.includes('product') || error.message?.includes('products'))) {
+          fkCol = 'product_id';
         }
       }
       if (fkCol && currentRow[fkCol] !== undefined && currentRow[fkCol] !== null) {
-        console.debug(`[safeUpsert] Llave foránea '${fkCol}' inválida en '${table}'. Reintentando con null.`);
-        currentRow[fkCol] = null;
+        const fkVal = currentRow[fkCol];
+        console.debug(`[safeUpsert] Llave foránea '${fkCol}' con valor '${fkVal}' falta en la tabla padre.`);
+        
+        try {
+          if (fkCol === 'branch_id') {
+            const storeBranch = useStore.getState().branches.find(b => b.id === fkVal);
+            if (storeBranch) {
+              await supabase.from('branches').upsert({
+                id: storeBranch.id,
+                name: storeBranch.name,
+                address: storeBranch.address || null,
+                phone: storeBranch.phone || null
+              });
+            } else {
+              // Si no existe, reasignar a la principal para no romper la integridad
+              const mainBranchId = useStore.getState().branches[0]?.id || 'b-central';
+              console.warn(`[safeUpsert] Reasignando sucursal inexistente '${fkVal}' a '${mainBranchId}'`);
+              currentRow[fkCol] = mainBranchId;
+            }
+          } else if (fkCol === 'product_id') {
+            const storeProduct = useStore.getState().products.find(p => p.id === fkVal);
+            if (storeProduct) {
+              await supabase.from('products').upsert({
+                id: storeProduct.id,
+                name: storeProduct.name,
+                sku: storeProduct.sku,
+                cost_price: storeProduct.costPrice || 0,
+                price: storeProduct.price || 0
+              });
+            } else {
+              // Si el producto no existe en absoluto, no podemos inventarlo sin ensuciar
+              console.warn(`[safeUpsert] Registro huérfano detectado para producto '${fkVal}'. Abortando push.`);
+              return { data: null, error };
+            }
+          } else if (fkCol === 'category_id') {
+            const storeCategory = useStore.getState().categories.find(c => c.id === fkVal);
+            if (storeCategory) {
+              await supabase.from('categories').upsert({
+                id: storeCategory.id,
+                name: storeCategory.name
+              });
+            } else {
+              currentRow[fkCol] = useStore.getState().categories[0]?.id || null;
+            }
+          }
+        } catch (autoErr) {
+          console.warn('[safeUpsert] Falló la recuperación de integridad:', autoErr);
+          return { data: null, error };
+        }
         continue;
       }
+    }
+
+    // 2b. Error de Clave Única Duplicada (error 23505)
+    if (error.code === '23505') {
+      if (table === 'users' && (error.message?.includes('users_email_key') || error.details?.includes('email') || currentRow.email)) {
+        console.debug(`[safeUpsert] Email duplicado '${currentRow.email}' en 'users'. Reintentando con email único.`);
+        const base = (currentRow.email || 'user@system.local').split('@')[0];
+        currentRow.email = `${base}_${Math.floor(1000 + Math.random() * 9000)}@system.local`;
+        continue;
+      }
+      // Si hay un conflicto de clave única genérico, podemos intentar ignorarlo o continuar
+      return { data: null, error };
     }
 
     // 3. Error de sintaxis UUID (22P02)
@@ -853,7 +916,9 @@ export async function clearSupabaseData() {
   const supabase = getSupabase();
   if (!supabase) return;
 
-  // List of tables to clear, in order to respect FK constraints if possible
+  console.debug("[clearSupabaseData] Iniciando limpieza total de Supabase...");
+
+  // List of tables to clear, in order to respect FK constraints (dependents first)
   const tables = [
     'inventory',
     'transactions',
@@ -877,15 +942,25 @@ export async function clearSupabaseData() {
     'suppliers'
   ];
 
-  for (const table of tables) {
-    try {
-      // Usar filtro .not('id', 'is', null) para borrar todos los registros sin errores de sintaxis de UUID
-      const { error } = await supabase.from(table).delete().not('id', 'is', null);
-      if (error) console.debug(`[clearSupabaseData] Tabla ${table}:`, error.message);
-    } catch (e) {
-      console.debug(`[clearSupabaseData] Excepción en ${table}:`, e);
+  // Realizar 2 pasadas para asegurar que las restricciones de llave foránea no bloqueen todo
+  for (let pass = 1; pass <= 2; pass++) {
+    console.debug(`[clearSupabaseData] Pasada de eliminación #${pass}`);
+    for (const table of tables) {
+      try {
+        // Intentar borrar usando diferentes filtros comunes
+        await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from(table).delete().not('id', 'is', null);
+        
+        // Para tablas sin 'id' (si hubiera) o como respaldo
+        if (table === 'inventory') {
+          await supabase.from(table).delete().neq('quantity', -999999);
+        }
+      } catch (e) {
+        console.debug(`[clearSupabaseData] Error en pasada ${pass} tabla ${table}:`, e);
+      }
     }
   }
+  console.debug("[clearSupabaseData] Limpieza completada.");
 }
 
 export async function pushUserToSupabase(user: User) {

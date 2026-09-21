@@ -4,10 +4,80 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="google" content="notranslate" />
-    <title>MARÉ POS - Sistema de Punto de Venta e Inventario</title>
-    <meta name="description" content="Sistema POS, catálogo y gestión de inventario para MARÉ" />
-    <meta property="og:title" content="MARÉ POS - Sistema de Punto de Venta" />
-    <meta property="og:description" content="Sistema POS, catálogo y gestión de inventario para MARÉ" />
+    <title>MARÉ POS - Sistema de Gestión</title>
+    <meta name="description" content="Sistema de gestión minorista MARÉ" />
+    <meta property="og:title" content="MARÉ POS" />
+    <meta property="og:description" content="Gestión de inventario y ventas" />
+    <script>
+      // Ultimate Console Sanitizer for MARÉ POS
+      (function() {
+        const originalLog = window.console.log;
+        const originalError = window.console.error;
+        const originalWarn = window.console.warn;
+        const originalInfo = window.console.info;
+        const originalDebug = window.console.debug;
+        
+        const noiseKeywords = [
+          '[vite]', 'WebSocket', 'GenerateAccessToken', 'firebase', 
+          'favicon.ico', 'manifest.json', 'Failed to load resource',
+          'Extension', 'Chrome', 'Mojo', 'DevTools', 'Heartbeat',
+          'connection reset', 'HMR', 'hot update', 'sockjs-node'
+        ];
+
+        const shouldSuppress = (args) => {
+          if (!args[0]) return false;
+          const msg = String(args[0]);
+          return noiseKeywords.some(keyword => msg.includes(keyword));
+        };
+
+        window.console.log = function(...args) {
+          if (shouldSuppress(args)) return;
+          originalLog.apply(console, args);
+        };
+
+        window.console.error = function(...args) {
+          if (shouldSuppress(args)) return;
+          originalError.apply(console, args);
+        };
+        
+        window.console.warn = function(...args) {
+          if (shouldSuppress(args)) return;
+          originalWarn.apply(console, args);
+        };
+
+        window.console.info = function(...args) {
+          if (shouldSuppress(args)) return;
+          originalInfo.apply(console, args);
+        };
+
+        window.console.debug = function(...args) {
+          if (shouldSuppress(args)) return;
+          originalDebug.apply(console, args);
+        };
+
+        // Silence unhandled rejections from environment
+        window.addEventListener('unhandledrejection', function(e) {
+          if (e.reason && e.reason.message && noiseKeywords.some(k => e.reason.message.includes(k))) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+          }
+        }, true);
+
+        // Silence resource errors (404s for icons/manifests)
+        window.addEventListener('error', function(e) {
+          if (e.target && (e.target.tagName === 'IMG' || e.target.tagName === 'LINK')) {
+            if (e.target.src && noiseKeywords.some(k => e.target.src.includes(k))) {
+              e.stopImmediatePropagation();
+              e.preventDefault();
+            }
+          }
+          if (e.message && noiseKeywords.some(k => e.message.includes(k))) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+          }
+        }, true);
+      })();
+    </script>
   </head>
   <body class="notranslate" translate="no">
     <div id="root" class="notranslate" translate="no"></div>

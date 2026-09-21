@@ -15,7 +15,7 @@ export default function Inventory() {
     products, inventory, branches, addProduct, updateProduct, 
     transferInventory, setInventoryQuantity, deleteProduct, deleteCategory,
     transfers, categories, batchDeleteProducts, batchUpdateProducts, getBaseCurrency, currencies,
-    currentUser
+    currentUser, addNotification
   } = useStore();
   const currentBranchId = currentUser?.branchId || branches[0]?.id || '';
   const baseCurrency = getBaseCurrency();
@@ -34,17 +34,17 @@ export default function Inventory() {
 
   const handleTransfer = async (productId: string, fromBranchId: string) => {
     if (!targetBranchId || transferQuantity <= 0) {
-      alert("Selecciona una sucursal destino y una cantidad válida.");
+      addNotification("Selecciona una sucursal destino y una cantidad válida.", 'warning');
       return;
     }
     
     const success = await transferInventory(productId, fromBranchId, targetBranchId, transferQuantity, transferVariant);
     if (success) {
-      alert("Transferencia completada con éxito.");
+      addNotification("Transferencia completada con éxito.", 'success');
       setTransferQuantity(0);
       setTargetBranchId("");
     } else {
-      alert("Error al realizar la transferencia. Verifica el stock disponible.");
+      addNotification("Error al realizar la transferencia. Verifica el stock disponible.", 'error');
     }
   };
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -90,7 +90,7 @@ export default function Inventory() {
     
     setShowBatchPriceModal(false);
     setSelectedItems([]);
-    alert(`Se han actualizado ${selectedItems.length} precios.`);
+    addNotification(`Se han actualizado ${selectedItems.length} precios.`, 'success');
   };
 
   // Form State
@@ -125,7 +125,7 @@ export default function Inventory() {
     e.preventDefault();
     if (editingProduct) {
       updateProduct(editingProduct.id, formData);
-      alert("Producto actualizado correctamente.");
+      addNotification("Producto actualizado correctamente.", 'success');
     } else {
       const { initialQuantity, initialBranchId, initialVariant, initialVariantQuantities, ...productData } = formData;
       const finalBranchId = initialBranchId || (branches?.length > 0 ? branches[0].id : "");
@@ -543,9 +543,24 @@ export default function Inventory() {
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden shrink-0 border border-slate-200">
                           {item.image ? (
-                            <img src={item.image} alt={item.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            <img 
+                              src={item.image} 
+                              alt={item.name} 
+                              className="w-full h-full object-cover" 
+                              referrerPolicy="no-referrer" 
+                              onError={(e) => {
+                                e.currentTarget.onerror = null;
+                                e.currentTarget.src = '';
+                                e.currentTarget.style.display = 'none';
+                              }}
+                            />
                           ) : (
                             <div className={cn("w-full h-full opacity-20", item.color)} />
+                          )}
+                          {!item.image && (
+                            <span className="absolute text-[10px] font-black text-slate-400 uppercase">
+                              {item.name.substring(0, 2)}
+                            </span>
                           )}
                         </div>
                         <div className="flex flex-col min-w-0">
@@ -673,11 +688,26 @@ export default function Inventory() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 overflow-y-auto pr-2 flex-1 min-h-[400px]">
             {inventoryView.map((item) => (
               <div key={item.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group relative">
-                <div className="h-40 bg-slate-100 relative">
+                <div className="h-40 bg-slate-100 relative flex items-center justify-center">
                   {item.image ? (
-                    <img src={item.image} alt={item.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <img 
+                      src={item.image} 
+                      alt={item.name} 
+                      className="w-full h-full object-cover" 
+                      referrerPolicy="no-referrer" 
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = '';
+                        e.currentTarget.style.display = 'none';
+                      }}
+                    />
                   ) : (
                     <div className={cn("w-full h-full opacity-20", item.color)} />
+                  )}
+                  {!item.image && (
+                    <span className="absolute text-2xl font-black text-slate-300 uppercase">
+                      {item.name.substring(0, 2)}
+                    </span>
                   )}
                   <div className="absolute top-3 left-3 flex flex-col gap-1">
                     <span className={cn(

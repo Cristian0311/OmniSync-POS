@@ -80,6 +80,18 @@ export default function Dashboard() {
         </div>
         
         <div className="flex items-center gap-2">
+          <button 
+            onClick={() => {
+              if (window.confirm("¿Estás seguro de que deseas limpiar TODOS los datos locales y empezar de cero? Esta acción no se puede deshacer.")) {
+                useStore.getState().clearAllData().then(() => {
+                  window.location.reload();
+                });
+              }
+            }}
+            className="bg-rose-50 text-rose-600 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-rose-100 transition-colors border border-rose-100"
+          >
+            Limpiar Todo
+          </button>
           <select 
             value={currentBranchId}
             onChange={(e) => setCurrentBranch(e.target.value)}

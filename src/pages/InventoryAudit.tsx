@@ -20,14 +20,28 @@ import {
 import { cn } from "../lib/utils";
 
 export default function InventoryAuditPage() {
-  const { products, inventory, inventoryAudits, createInventoryAudit, completeInventoryAudit, branches, currentBranchId, currentUser } = useStore();
+  const { 
+    products, 
+    inventory, 
+    inventoryAudits, 
+    createInventoryAudit, 
+    completeInventoryAudit, 
+    branches, 
+    currentBranchId, 
+    currentUser,
+    transfers,
+    transactions
+  } = useStore();
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedAudit, setSelectedAudit] = useState<InventoryAudit | null>(null);
   const [auditStep, setAuditStep] = useState<'setup' | 'counting'>('setup');
+  const [showIntelligence, setShowIntelligence] = useState<string | null>(null);
   
   // State for new audit
   const [auditBranchId, setAuditBranchId] = useState(currentBranchId);
   const [auditItems, setAuditItems] = useState<{ productId: string; productName: string; expected: number; counted: number }[]>([]);
+  const [searchAuditQuery, setSearchAuditQuery] = useState("");
+  const [isBlindCount, setIsBlindCount] = useState(false);
 
   const activeAudit = useMemo(() => inventoryAudits.find(a => a.status === 'pending' && a.branchId === auditBranchId), [inventoryAudits, auditBranchId]);
 
@@ -39,7 +53,7 @@ export default function InventoryAuditPage() {
         productId: i.productId,
         productName: products.find(p => p.id === i.productId)?.name || 'Producto',
         expected: i.quantity,
-        counted: i.quantity // Initialize with expected for convenience, user will edit
+        counted: isBlindCount ? 0 : i.quantity
       }));
 
     const newAudit: InventoryAudit = {
@@ -202,6 +216,23 @@ export default function InventoryAuditPage() {
                       {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                     </select>
                   </div>
+                  
+                  <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                    <div className="flex-1">
+                      <h4 className="text-[10px] font-black text-slate-900 uppercase">Conteo Ciego</h4>
+                      <p className="text-[8px] font-bold text-slate-400 uppercase leading-tight">Esconder stock esperado para obligar conteo real</p>
+                    </div>
+                    <button 
+                      onClick={() => setIsBlindCount(!isBlindCount)}
+                      className={cn(
+                        "w-10 h-5 rounded-full transition-all relative flex items-center px-1",
+                        isBlindCount ? "bg-indigo-600" : "bg-slate-300"
+                      )}
+                    >
+                      <div className={cn("w-3 h-3 bg-white rounded-full shadow-sm transition-all", isBlindCount ? "ml-5" : "ml-0")} />
+                    </button>
+                  </div>
+
                   <button 
                     onClick={handleStartAudit}
                     className="w-full py-4 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
@@ -212,10 +243,47 @@ export default function InventoryAuditPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center gap-4">
-                    <Search className="w-4 h-4 text-slate-400" />
-                    <input type="text" placeholder="Buscar producto en la auditoría..." className="bg-transparent border-none text-xs font-bold w-full focus:ring-0 outline-none" />
+                  <div className="flex flex-col sm:flex-row items-center gap-4">
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center gap-4 flex-1">
+                      <Search className="w-4 h-4 text-slate-400" />
+                      <input 
+                        type="text" 
+                        placeholder="Buscar producto en la auditoría..." 
+                        className="bg-transparent border-none text-xs font-bold w-full focus:ring-0 outline-none" 
+                        value={searchAuditQuery}
+                        onChange={e => setSearchAuditQuery(e.target.value)}
+                      />
+                    </div>
+                    
+                    <button 
+                      onClick={() => {
+                        const filtered = auditItems.filter(i => i.productName.toLowerCase().includes(searchAuditQuery.toLowerCase()));
+                        const newItems = [...auditItems];
+                        filtered.forEach(f => {
+                          const idx = newItems.findIndex(ni => ni.productId === f.productId);
+                          if (idx !== -1) newItems[idx].counted = f.expected;
+                        });
+                        setAuditItems(newItems);
+                      }}
+                      className="px-4 py-4 bg-emerald-50 text-emerald-600 rounded-2xl text-[9px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-all border border-emerald-100 flex items-center gap-2 whitespace-nowrap"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Confirmar Coincidencias en Filtro
+                    </button>
                   </div>
+
+                  {/* Alerta de Discrepancias Críticas */}
+                  {auditItems.some(i => Math.abs(i.counted - i.expected) > 5) && (
+                    <div className="bg-rose-50 border border-rose-100 p-3 rounded-2xl flex items-center gap-3 animate-pulse">
+                      <AlertTriangle className="w-5 h-5 text-rose-500" />
+                      <div>
+                        <h4 className="text-[10px] font-black text-rose-900 uppercase">Discrepancias Críticas Detectadas</h4>
+                        <p className="text-[8px] font-bold text-rose-600 uppercase leading-tight">
+                          Hay productos con más de 5 unidades de diferencia. Revise el rastreo inteligente.
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="border border-slate-100 rounded-2xl overflow-hidden">
                     <table className="w-full text-left border-collapse">
@@ -228,34 +296,143 @@ export default function InventoryAuditPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
-                        {auditItems.map((item, idx) => {
+                        {auditItems.filter(i => i.productName.toLowerCase().includes(searchAuditQuery.toLowerCase())).map((item, idx) => {
+                          const realIdx = auditItems.findIndex(ai => ai.productId === item.productId);
                           const diff = item.counted - item.expected;
                           return (
                             <tr key={item.productId} className="hover:bg-slate-50/50 transition-colors">
                               <td className="px-4 py-3">
                                 <div className="text-[10px] font-black text-slate-900 uppercase">{item.productName}</div>
                               </td>
-                              <td className="px-4 py-3 text-center text-[10px] font-black text-slate-400">{item.expected}</td>
-                              <td className="px-4 py-3 text-center">
-                                <input 
-                                  type="number" 
-                                  value={item.counted}
-                                  disabled={selectedAudit?.status === 'completed'}
-                                  onChange={e => {
-                                    const newItems = [...auditItems];
-                                    newItems[idx].counted = parseInt(e.target.value) || 0;
-                                    setAuditItems(newItems);
-                                  }}
-                                  className="w-16 px-2 py-1 bg-white border border-slate-200 rounded text-center text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500/20"
-                                />
+                              <td className="px-4 py-3 text-center text-[10px] font-black text-slate-400">
+                                {isBlindCount && selectedAudit?.status !== 'completed' ? '???' : item.expected}
                               </td>
-                              <td className="px-4 py-3 text-right">
-                                <span className={cn(
-                                  "text-[10px] font-black uppercase",
-                                  diff === 0 ? "text-slate-400" : diff > 0 ? "text-emerald-600" : "text-rose-600"
-                                )}>
-                                  {diff > 0 ? '+' : ''}{diff}
-                                </span>
+                              <td className="px-4 py-3 text-center">
+                                <div className="flex items-center justify-center gap-2">
+                                  <button 
+                                    onClick={() => {
+                                      const newItems = [...auditItems];
+                                      newItems[realIdx].counted = Math.max(0, newItems[realIdx].counted - 1);
+                                      setAuditItems(newItems);
+                                    }}
+                                    className="w-6 h-6 flex items-center justify-center bg-slate-100 rounded-lg text-slate-600 hover:bg-slate-200"
+                                  >
+                                    -
+                                  </button>
+                                  <input 
+                                    type="number" 
+                                    value={item.counted}
+                                    disabled={selectedAudit?.status === 'completed'}
+                                    onChange={e => {
+                                      const newItems = [...auditItems];
+                                      newItems[realIdx].counted = parseInt(e.target.value) || 0;
+                                      setAuditItems(newItems);
+                                    }}
+                                    className="w-16 px-2 py-1 bg-white border border-slate-200 rounded text-center text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                  />
+                                  <button 
+                                    onClick={() => {
+                                      const newItems = [...auditItems];
+                                      newItems[realIdx].counted += 1;
+                                      setAuditItems(newItems);
+                                    }}
+                                    className="w-6 h-6 flex items-center justify-center bg-slate-100 rounded-lg text-slate-600 hover:bg-slate-200"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-right relative">
+                                <div className="flex items-center justify-end gap-2">
+                                  <span className={cn(
+                                    "text-[10px] font-black uppercase",
+                                    (isBlindCount && selectedAudit?.status !== 'completed') ? "text-slate-200" : (diff === 0 ? "text-slate-400" : diff > 0 ? "text-emerald-600" : "text-rose-600")
+                                  )}>
+                                    {(isBlindCount && selectedAudit?.status !== 'completed') ? '???' : `${diff > 0 ? '+' : ''}${diff}`}
+                                  </span>
+                                  
+                                  {diff !== 0 && selectedAudit?.status !== 'completed' && (
+                                    <button 
+                                      onClick={() => setShowIntelligence(showIntelligence === item.productId ? null : item.productId)}
+                                      className="p-1 hover:bg-amber-50 rounded-lg text-amber-500 transition-colors"
+                                      title="Analizar posible causa"
+                                    >
+                                      <AlertTriangle className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+
+                                {showIntelligence === item.productId && (
+                                  <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-[100] text-left animate-in fade-in slide-in-from-top-2 duration-200">
+                                    <div className="flex items-center justify-between mb-3">
+                                      <div className="flex items-center gap-2">
+                                        <div className="p-1.5 bg-amber-100 rounded-lg">
+                                          <TrendingDown className="w-3 h-3 text-amber-600" />
+                                        </div>
+                                        <h4 className="text-[10px] font-black text-slate-900 uppercase">Análisis Inteligente</h4>
+                                      </div>
+                                      <button onClick={() => setShowIntelligence(null)} className="text-slate-400 hover:text-slate-600">
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                    
+                                    <div className="space-y-4">
+                                      {/* Movimientos Recientes */}
+                                      <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Rastreo de Movimientos</span>
+                                          <span className="text-[7px] font-bold text-slate-300 uppercase">Últ. 30 días</span>
+                                        </div>
+                                        
+                                        {transfers
+                                          .filter(t => t.productId === item.productId && (t.fromBranchId === auditBranchId || t.toBranchId === auditBranchId))
+                                          .length > 0 ? (
+                                            transfers
+                                              .filter(t => t.productId === item.productId && (t.fromBranchId === auditBranchId || t.toBranchId === auditBranchId))
+                                              .slice(0, 3)
+                                              .map(t => (
+                                                <div key={t.id} className="bg-slate-50 p-2 rounded-xl border border-slate-100">
+                                                  <div className="flex justify-between items-center mb-1">
+                                                    <span className={cn(
+                                                      "text-[7px] font-black px-1.5 py-0.5 rounded",
+                                                      t.fromBranchId === auditBranchId ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"
+                                                    )}>
+                                                      {t.fromBranchId === auditBranchId ? 'SALIDA' : 'ENTRADA'}
+                                                    </span>
+                                                    <span className="text-[7px] font-bold text-slate-400 uppercase">{new Date(t.date).toLocaleDateString()}</span>
+                                                  </div>
+                                                  <div className="text-[9px] font-black text-slate-700 uppercase">
+                                                    {t.quantity} un. {t.fromBranchId === auditBranchId ? `a ${t.toBranchName}` : `de ${t.fromBranchName}`}
+                                                  </div>
+                                                  <div className={cn(
+                                                    "text-[7px] font-bold uppercase mt-1",
+                                                    t.status === 'pending' ? "text-amber-500" : "text-slate-400"
+                                                  )}>
+                                                    Estado: {t.status === 'pending' ? 'PENDIENTE DE RECIBIR ⚠️' : 'COMPLETADO'}
+                                                  </div>
+                                                </div>
+                                              ))
+                                          ) : (
+                                            <div className="text-[8px] font-bold text-slate-400 uppercase italic py-2">Sin transferencias recientes</div>
+                                          )}
+                                      </div>
+
+                                      {/* Resumen de Problema */}
+                                      <div className="bg-indigo-50/50 p-3 rounded-xl border border-indigo-100">
+                                        <h5 className="text-[8px] font-black text-indigo-900 uppercase mb-1">Diagnóstico Sugerido</h5>
+                                        <p className="text-[9px] font-medium text-indigo-700 leading-tight">
+                                          {diff < 0 ? (
+                                            transfers.some(t => t.productId === item.productId && t.fromBranchId === auditBranchId && t.status === 'pending')
+                                              ? "⚠️ Faltante probablemente causado por transferencias que salieron pero no han sido confirmadas en destino."
+                                              : "🔴 Posible pérdida desconocida. Verifique si hubo ventas manuales no registradas o errores de despacho."
+                                          ) : (
+                                            "🟢 Sobrante detectado. Probablemente mercancía recibida físicamente pero no cargada en el sistema (Factura pendiente)."
+                                          )}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
                               </td>
                             </tr>
                           );

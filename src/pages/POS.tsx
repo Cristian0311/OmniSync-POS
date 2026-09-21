@@ -10,7 +10,7 @@ import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { InfoTooltip } from "../components/InfoTooltip";
 
 export default function POS() {
-  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, transactions, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity } = useStore();
+  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, transactions, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification } = useStore();
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
   const [searchQuery, setSearchQuery] = useState("");
   const [showConfigModal, setShowConfigModal] = useState(false);
@@ -258,12 +258,7 @@ export default function POS() {
         setInventoryQuantity(product.id, branchId, physicalCount);
       }
 
-      if (settlementDetails.length === 0) {
-        setPosError("No se detectaron ventas (el inventario físico coincide con el sistema).");
-        setIsProcessingIDN(false);
-        setShowConfirmIDNModal(false);
-        return;
-      }
+      // Permitir liquidación con 0 ventas o 0 CUP de acuerdo a la solicitud del usuario
 
       const txNum = ((transactions || []).length + 1).toString().padStart(2, '0');
       const transaction: Transaction = {
@@ -1413,7 +1408,7 @@ export default function POS() {
     }
     
     if (!phone) {
-      alert("Número de teléfono inválido.");
+      addNotification("Número de teléfono inválido.", 'error');
       return;
     }
     
@@ -1427,7 +1422,7 @@ export default function POS() {
   const handleEmailReceipt = (tx: Transaction) => {
     const customer = useStore.getState().customers.find(c => c.id === tx.customerId);
     if (!customer?.email) {
-      alert("El cliente no tiene un correo registrado.");
+      addNotification("El cliente no tiene un correo registrado.", 'warning');
       return;
     }
     const storeName = useStore.getState().storeConfig.storeName;
@@ -1866,7 +1861,7 @@ export default function POS() {
 
             <button 
               onClick={handleCloseIDNAccount}
-              disabled={isProcessingIDN || currentTotalToPay === 0 || !branchId}
+              disabled={isProcessingIDN || !branchId}
               className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white px-8 py-3.5 rounded-xl font-black text-xs uppercase transition-all shadow-lg shadow-amber-600/20 active:scale-95 disabled:opacity-40 flex items-center justify-center gap-2 cursor-pointer"
             >
               {isProcessingIDN ? (
@@ -1969,19 +1964,25 @@ export default function POS() {
                   <span>Producto / Cantidad</span>
                   <span>Monto Liquidado</span>
                 </div>
-                {showIDNReceiptModal.details.map((item: any, idx: number) => (
-                  <div key={idx} className="flex justify-between items-center bg-white p-2 rounded-xl border border-slate-100 text-xs">
-                    <div>
-                      <p className="font-black text-slate-900 uppercase text-[11px]">{item.name}</p>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase">
-                        {item.qty} uds × {baseCurrency.symbol}{item.price.toLocaleString()} CUP
-                      </p>
-                    </div>
-                    <span className="font-mono font-black text-amber-700 text-xs">
-                      {baseCurrency.symbol}{item.subtotal.toLocaleString()} CUP
-                    </span>
+                {showIDNReceiptModal.details.length === 0 ? (
+                  <div className="text-center py-6 text-slate-400 text-[10px] uppercase font-black tracking-widest bg-white rounded-xl border border-dashed border-slate-200">
+                    Sin ventas registradas en este turno
                   </div>
-                ))}
+                ) : (
+                  showIDNReceiptModal.details.map((item: any, idx: number) => (
+                    <div key={idx} className="flex justify-between items-center bg-white p-2 rounded-xl border border-slate-100 text-xs">
+                      <div>
+                        <p className="font-black text-slate-900 uppercase text-[11px]">{item.name}</p>
+                        <p className="text-[9px] font-bold text-slate-400 uppercase">
+                          {item.qty} uds × {baseCurrency.symbol}{item.price.toLocaleString()} CUP
+                        </p>
+                      </div>
+                      <span className="font-mono font-black text-amber-700 text-xs">
+                        {baseCurrency.symbol}{item.subtotal.toLocaleString()} CUP
+                      </span>
+                    </div>
+                  ))
+                )}
               </div>
 
               {/* Gran Total */}
@@ -3578,18 +3579,6 @@ export default function POS() {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Admin IDN Switcher Button */}
-          {currentUser?.role === 'admin' && (
-            <button
-              type="button"
-              onClick={() => setPosViewMode('idn')}
-              className="px-2 sm:px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border border-amber-500/40 active:scale-95 shadow-sm"
-              title="Ir a Liquidación de Vendedores Independientes (IDN)"
-            >
-              <Package className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden sm:inline">Modo IDN</span>
-            </button>
-          )}
           {/* Quick Barcode/QR Camera Scanner */}
           <button
             type="button"
@@ -3732,7 +3721,17 @@ export default function POS() {
 
                     <div className="w-full h-24 sm:h-28 bg-slate-50 rounded-lg mb-1.5 flex items-center justify-center overflow-hidden relative border border-slate-100">
                       {product.image ? (
-                        <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" referrerPolicy="no-referrer" />
+                        <img 
+                          src={product.image} 
+                          alt={product.name} 
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
+                          referrerPolicy="no-referrer" 
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = '';
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
                       ) : (
                         <div className={cn("w-full h-full opacity-20 flex items-center justify-center font-black text-slate-500 text-xl", product.color)}>
                           {product.name.substring(0, 2).toUpperCase()}
@@ -3832,7 +3831,16 @@ export default function POS() {
                 <div key={item.id} className="p-2 rounded-xl bg-slate-50/80 border border-slate-200/60 hover:bg-white transition-colors flex gap-2.5">
                   <div className="w-11 h-11 bg-white rounded-lg overflow-hidden shrink-0 border border-slate-200/80">
                     {item.product.image ? (
-                      <img src={item.product.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <img 
+                        src={item.product.image} 
+                        className="w-full h-full object-cover" 
+                        referrerPolicy="no-referrer" 
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = '';
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
                     ) : (
                       <div className={cn("w-full h-full opacity-20 flex items-center justify-center font-bold text-[10px] text-slate-600", item.product.color)}>
                         {item.product.name.substring(0, 2).toUpperCase()}
