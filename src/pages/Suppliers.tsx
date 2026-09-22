@@ -146,7 +146,7 @@ export default function Suppliers() {
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
           <button 
-            onClick={() => { setSelectedSupplier(null); setFormData({ name: "", email: "", phone: "", typeOfMerchandise: "", rating: 5, rnc: "", address: "" }); setShowAddModal(true); }}
+            onClick={() => { setSelectedSupplier(null); setFormData({ name: "", phone: "", address: "", products: [] }); setShowAddModal(true); }}
             className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2"
           >
             <Plus size={14} />

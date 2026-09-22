@@ -3,11 +3,14 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
-// Register Service Worker for Offline-First PWA support
+// Register Service Worker for Offline-First PWA support with immediate auto-refresh
 import { registerSW } from 'virtual:pwa-register';
 
 const updateSW = registerSW({
-  onNeedRefresh() {},
+  immediate: true,
+  onNeedRefresh() {
+    updateSW(true);
+  },
   onOfflineReady() {
     console.log("App is ready for offline use.");
   },

@@ -8,6 +8,7 @@ import { useStore } from "../store/useStore";
 import { Product, Payment, Transaction, CashRegisterSession } from "../types";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { InfoTooltip } from "../components/InfoTooltip";
+import { getOfflineQueueCount, processOfflineQueue } from "../services/offlineSync";
 
 export default function POS() {
   const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, transactions, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification } = useStore();
@@ -36,17 +37,47 @@ export default function POS() {
 
 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [pendingOfflineCount, setPendingOfflineCount] = useState(getOfflineQueueCount());
+  const [isSyncingOffline, setIsSyncingOffline] = useState(false);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const updateCount = () => setPendingOfflineCount(getOfflineQueueCount());
+    const handleOnline = () => {
+      setIsOnline(true);
+      updateCount();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      updateCount();
+    };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('offline_queue_updated', updateCount);
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('offline_queue_updated', updateCount);
     };
   }, []);
+
+  const handleManualSync = async () => {
+    if (!isOnline) {
+      addNotification('No hay conexión a internet actualmente.', 'warning');
+      return;
+    }
+    setIsSyncingOffline(true);
+    try {
+      const res = await processOfflineQueue();
+      setPendingOfflineCount(res.remaining);
+      if (res.processed > 0) {
+        addNotification(`Sincronización manual: ${res.processed} operaciones subidas a la base de datos.`, 'info');
+      } else if (res.remaining === 0) {
+        addNotification('Todo está al día y sincronizado con Supabase.', 'info');
+      }
+    } finally {
+      setIsSyncingOffline(false);
+    }
+  };
   
   // Cash Management State
   const [showCashManagementModal, setShowCashManagementModal] = useState(false);
@@ -374,7 +405,7 @@ export default function POS() {
     setShowIDNReceiptModal(null);
     setIdnPhysicalCounts({});
     setShowConfirmIDNModal(false);
-    setPosViewMode('normal');
+    setPosViewMode('standard');
     setSessionWorkerName("");
     setSessionPassword("");
     setPosSuccess("Liquidación completada. Sesión cerrada.");
@@ -1793,6 +1824,7 @@ export default function POS() {
                               min="0"
                               max={inv.quantity}
                               value={idnPhysicalCounts[inv.productId] ?? inv.quantity}
+                              onFocus={(e) => e.target.select()}
                               onChange={(e) => setIdnPhysicalCounts({ ...idnPhysicalCounts, [inv.productId]: Math.max(0, Number(e.target.value)) })}
                               className={cn(
                                 "w-20 px-2 py-1.5 border rounded-lg text-center text-xs font-black outline-none focus:ring-2",
@@ -2310,6 +2342,7 @@ export default function POS() {
                           min="0"
                           step="0.01"
                           value={openingAmount}
+                          onFocus={(e) => e.target.select()}
                           onChange={e => setOpeningAmount(e.target.value)}
                           className="w-full pl-14 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-xl text-lg font-black text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                           placeholder="0.00"
@@ -2730,6 +2763,7 @@ export default function POS() {
                       type="number"
                       step="0.01"
                       autoFocus
+                      onFocus={(e) => e.target.select()}
                       value={(() => {
                         const amt = paymentLines.find(l => l.id === activePaymentLineId)?.amount;
                         return (amt === undefined || Number.isNaN(amt)) ? '' : amt;
@@ -2837,6 +2871,7 @@ export default function POS() {
                           step="0.01" 
                           required
                           value={movementData.amount}
+                          onFocus={(e) => e.target.select()}
                           onChange={e => setMovementData({...movementData, amount: e.target.value})}
                           className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-[10px] font-black outline-none focus:ring-2 focus:ring-indigo-500"
                           placeholder="0.00"
@@ -3399,6 +3434,7 @@ export default function POS() {
                               type="number" 
                               min="0" step="0.01"
                               value={closingBalances[`${c.code}-cash`] || ''}
+                              onFocus={(e) => e.target.select()}
                               onChange={(e) => setClosingBalances({ ...closingBalances, [`${c.code}-cash`]: parseFloat(e.target.value) || 0 })}
                               className="w-full bg-transparent border-none focus:ring-0 outline-none font-black text-slate-900 text-sm p-0"
                               placeholder="0.00"
@@ -3416,6 +3452,7 @@ export default function POS() {
                           type="number" 
                           min="0" step="0.01"
                           value={closingBalances['CUP-transfer'] || ''}
+                          onFocus={(e) => e.target.select()}
                           onChange={(e) => setClosingBalances({ ...closingBalances, 'CUP-transfer': parseFloat(e.target.value) || 0 })}
                           className="w-full bg-transparent border-none focus:ring-0 outline-none font-black text-slate-900 text-sm p-0"
                           placeholder="0.00"
@@ -3560,7 +3597,7 @@ export default function POS() {
           <div className="hidden sm:flex items-center gap-1.5 text-slate-400 text-[10px] font-bold">
             <span>•</span>
             <span className="truncate max-w-[160px] text-slate-300 flex items-center gap-1.5">
-              {branches.find(b => b.id === currentBranchId)?.name || 'Sucursal Principal'}
+              {branches.find(b => b.id === currentBranchId)?.name || branches[0]?.name || 'Sucursal General'}
               {isBranchLocked && (
                 <span className="flex items-center gap-0.5 bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded text-[8px] border border-amber-500/30">
                   <Lock className="w-2.5 h-2.5" /> Bloqueado
@@ -3580,6 +3617,38 @@ export default function POS() {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Offline / Online Sync Status Badge */}
+          <button
+            type="button"
+            onClick={handleManualSync}
+            disabled={isSyncingOffline}
+            className={cn(
+              "px-2 sm:px-2.5 py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border active:scale-95",
+              !isOnline
+                ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                : pendingOfflineCount > 0
+                ? "bg-indigo-600/30 text-indigo-300 border-indigo-500/40 hover:bg-indigo-600/50 cursor-pointer"
+                : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+            )}
+            title={pendingOfflineCount > 0 ? "Haz clic para sincronizar cambios pendientes con la nube" : (isOnline ? "Conectado a la base de datos" : "Sin conexión - guardando ventas localmente")}
+          >
+            {isSyncingOffline ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+            ) : isOnline ? (
+              <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <WifiOff className="w-3.5 h-3.5 text-amber-400" />
+            )}
+            <span className="hidden sm:inline">
+              {!isOnline ? "Offline" : (pendingOfflineCount > 0 ? (isSyncingOffline ? "Subiendo..." : "Subir") : "Online")}
+            </span>
+            {pendingOfflineCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[8px] font-black bg-amber-500 text-white shrink-0">
+                {pendingOfflineCount}
+              </span>
+            )}
+          </button>
+
           {/* Quick Barcode/QR Camera Scanner */}
           <button
             type="button"

@@ -3,6 +3,9 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const STORAGE_URL_KEY = 'mare_supabase_url';
 const STORAGE_ANON_KEY = 'mare_supabase_anon_key';
 
+export const DEFAULT_SUPABASE_URL = 'https://mszojsqwilfqqcaycxch.supabase.co';
+export const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1zem9qc3F3aWxmcXFjYXljeGNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4MzkzODksImV4cCI6MjA5ODQxNTM4OX0.BSdhqmNwEMT5exDnu7H_gY_TSLSgzy1Cs4V2V2gSnvc';
+
 export function getSupabaseCredentials() {
   const envUrl = import.meta.env.VITE_SUPABASE_URL || '';
   const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -10,8 +13,8 @@ export function getSupabaseCredentials() {
   const storedUrl = localStorage.getItem(STORAGE_URL_KEY) || '';
   const storedKey = localStorage.getItem(STORAGE_ANON_KEY) || '';
 
-  const url = storedUrl || envUrl;
-  const anonKey = storedKey || envKey;
+  const url = storedUrl || envUrl || DEFAULT_SUPABASE_URL;
+  const anonKey = storedKey || envKey || DEFAULT_SUPABASE_ANON_KEY;
 
   return { url, anonKey, isConfigured: Boolean(url && anonKey) };
 }

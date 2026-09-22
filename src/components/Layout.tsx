@@ -22,11 +22,13 @@ import {
   FileText,
   Clock,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  RefreshCw
 } from "lucide-react";
 import React, { useState, useEffect } from "react";
 import { cn } from "../lib/utils";
 import { useStore } from "../store/useStore";
+import { getOfflineQueueCount, processOfflineQueue } from "../services/offlineSync";
 import { 
   CheckCircle2, 
   AlertTriangle, 
@@ -57,7 +59,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const { currentUser, logout, notifications, removeNotification, storeConfig } = useStore();
+  const [pendingOfflineCount, setPendingOfflineCount] = useState(getOfflineQueueCount());
+  const [isSyncingOffline, setIsSyncingOffline] = useState(false);
+  const { currentUser, logout, notifications, removeNotification, storeConfig, syncWithSupabase, addNotification } = useStore();
   const location = useLocation();
   const isPosPage = location.pathname === "/pos";
 
@@ -71,15 +75,39 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }, [storeConfig.darkMode]);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const updateCount = () => setPendingOfflineCount(getOfflineQueueCount());
+    const handleOnline = () => {
+      setIsOnline(true);
+      updateCount();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      updateCount();
+    };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('offline_queue_updated', updateCount);
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('offline_queue_updated', updateCount);
     };
   }, []);
+
+  const handleManualSync = async () => {
+    if (!isOnline || isSyncingOffline) return;
+    setIsSyncingOffline(true);
+    try {
+      const res = await processOfflineQueue();
+      setPendingOfflineCount(res.remaining);
+      await syncWithSupabase();
+      addNotification("Sincronización con la nube completada con éxito", 'success');
+    } catch {
+      addNotification("Error al sincronizar con Supabase", 'error');
+    } finally {
+      setIsSyncingOffline(false);
+    }
+  };
 
   // Auto-collapse sidebar on POS page to maximize tablet space
   useEffect(() => {
@@ -197,13 +225,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         <div className={cn("shrink-0 p-3 bg-secondary border-t border-subtle", sidebarCollapsed && "md:p-2 md:items-center")}>
           <div className={cn("mb-2", sidebarCollapsed && "md:hidden")}>
-            <div className={cn(
-              "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider transition-colors",
-              isOnline ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400" : "bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400"
-            )}>
-              {isOnline ? <Wifi className="w-3 h-3 shrink-0" /> : <WifiOff className="w-3 h-3 shrink-0" />}
-              <span className="truncate">{isOnline ? "Online" : "Offline"}</span>
-            </div>
+            <button
+              type="button"
+              onClick={handleManualSync}
+              disabled={isSyncingOffline || !isOnline}
+              className={cn(
+                "w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all border",
+                !isOnline
+                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                  : pendingOfflineCount > 0
+                  ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20 cursor-pointer"
+                  : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+              )}
+              title={pendingOfflineCount > 0 ? "Clic para sincronizar datos pendientes con Supabase" : undefined}
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                {isSyncingOffline ? (
+                  <RefreshCw className="w-3 h-3 animate-spin shrink-0 text-indigo-500" />
+                ) : isOnline ? (
+                  <Wifi className="w-3 h-3 shrink-0" />
+                ) : (
+                  <WifiOff className="w-3 h-3 shrink-0" />
+                )}
+                <span className="truncate">
+                  {!isOnline ? "Modo Offline" : (pendingOfflineCount > 0 ? (isSyncingOffline ? "Subiendo..." : "Sincronizar") : "Online")}
+                </span>
+              </div>
+              {pendingOfflineCount > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 rounded-full text-[7px] font-black bg-amber-500 text-white shrink-0">
+                  {pendingOfflineCount}
+                </span>
+              )}
+            </button>
           </div>
 
           <div className={cn("flex items-center gap-2 mb-2", sidebarCollapsed && "md:justify-center md:mb-1")}>

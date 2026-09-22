@@ -8,6 +8,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-d
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import { useStore } from "./store/useStore";
+import { initOfflineSyncWatcher } from "./services/offlineSync";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 // Code-splitting de rutas para acelerar inicio en tablets y reducir consumo de memoria
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -38,8 +40,13 @@ export default function App() {
   const { currentUser, isInitialized } = useStore();
 
   useEffect(() => {
-    // Sincronizar automáticamente con Supabase al iniciar la aplicación (una sola vez)
+    // Sincronizar con Supabase al iniciar la aplicación
     useStore.getState().syncWithSupabase().catch(() => {});
+    // Inicializar el monitor y sincronizador automático offline
+    const cleanupWatcher = initOfflineSyncWatcher();
+    return () => {
+      cleanupWatcher();
+    };
   }, []);
 
   if (!isInitialized) {
@@ -51,34 +58,36 @@ export default function App() {
   }
 
   return (
-    <Router>
-      <Suspense fallback={<PageLoading />}>
-        <Routes>
-          <Route path="/shop" element={<CustomerShop />} />
-          
-          <Route path="/*" element={
-            !currentUser ? <Login /> : (
-              <Layout>
-                <Suspense fallback={<PageLoading />}>
-                  <Routes>
-                    <Route path="/" element={currentUser.role === 'admin' ? <Dashboard /> : <Navigate to="/pos" replace />} />
-                    <Route path="/pos" element={<POS />} />
-                    <Route path="/transfers" element={currentUser.role === 'admin' ? <Transfers /> : <Navigate to="/pos" replace />} />
-                    <Route path="/inventory" element={currentUser.role === 'admin' ? <Inventory /> : <Navigate to="/pos" replace />} />
-                    <Route path="/inventory-audit" element={currentUser.role === 'admin' ? <InventoryAudit /> : <Navigate to="/pos" replace />} />
-                    <Route path="/suppliers" element={currentUser.role === 'admin' ? <Suppliers /> : <Navigate to="/pos" replace />} />
-                    <Route path="/banks" element={currentUser.role === 'admin' ? <Banks /> : <Navigate to="/pos" replace />} />
-                    <Route path="/returns" element={currentUser.role === 'admin' ? <Returns /> : <Navigate to="/pos" replace />} />
-                    <Route path="/customers" element={currentUser.role === 'admin' ? <Customers /> : <Navigate to="/pos" replace />} />
-                    <Route path="/reports" element={currentUser.role === 'admin' ? <Reports /> : <Navigate to="/pos" replace />} />
-                    <Route path="/settings" element={currentUser.role === 'admin' ? <Settings /> : <Navigate to="/pos" replace />} />
-                  </Routes>
-                </Suspense>
-              </Layout>
-            )
-          } />
-        </Routes>
-      </Suspense>
-    </Router>
+    <ErrorBoundary>
+      <Router>
+        <Suspense fallback={<PageLoading />}>
+          <Routes>
+            <Route path="/shop" element={<CustomerShop />} />
+            
+            <Route path="/*" element={
+              !currentUser ? <Login /> : (
+                <Layout>
+                  <Suspense fallback={<PageLoading />}>
+                    <Routes>
+                      <Route path="/" element={currentUser.role === 'admin' ? <Dashboard /> : <Navigate to="/pos" replace />} />
+                      <Route path="/pos" element={<POS />} />
+                      <Route path="/transfers" element={currentUser.role === 'admin' ? <Transfers /> : <Navigate to="/pos" replace />} />
+                      <Route path="/inventory" element={currentUser.role === 'admin' ? <Inventory /> : <Navigate to="/pos" replace />} />
+                      <Route path="/inventory-audit" element={currentUser.role === 'admin' ? <InventoryAudit /> : <Navigate to="/pos" replace />} />
+                      <Route path="/suppliers" element={currentUser.role === 'admin' ? <Suppliers /> : <Navigate to="/pos" replace />} />
+                      <Route path="/banks" element={currentUser.role === 'admin' ? <Banks /> : <Navigate to="/pos" replace />} />
+                      <Route path="/returns" element={currentUser.role === 'admin' ? <Returns /> : <Navigate to="/pos" replace />} />
+                      <Route path="/customers" element={currentUser.role === 'admin' ? <Customers /> : <Navigate to="/pos" replace />} />
+                      <Route path="/reports" element={currentUser.role === 'admin' ? <Reports /> : <Navigate to="/pos" replace />} />
+                      <Route path="/settings" element={currentUser.role === 'admin' ? <Settings /> : <Navigate to="/pos" replace />} />
+                    </Routes>
+                  </Suspense>
+                </Layout>
+              )
+            } />
+          </Routes>
+        </Suspense>
+      </Router>
+    </ErrorBoundary>
   );
 }

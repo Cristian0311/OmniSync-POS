@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { ArrowLeftRight, PackagePlus, AlertCircle, Search, ShieldCheck, X, DollarSign, Trash2, Edit, History, Package, TrendingUp, Filter, Download, Plus, ArrowRightLeft, LayoutGrid, List, Settings2, Tag } from "lucide-react";
+import { ArrowLeftRight, PackagePlus, AlertCircle, Search, ShieldCheck, X, DollarSign, Trash2, Edit, History, Package, TrendingUp, Filter, Download, Plus, ArrowRightLeft, LayoutGrid, List, Settings2, Tag, Building2 } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { cn, generateId } from "../lib/utils";
 import { Product, Category } from "../types";
@@ -50,7 +50,7 @@ export default function Inventory() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
-  const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
+  const [stockFilter, setStockFilter] = useState<'all' | 'in_stock' | 'low' | 'out'>('all');
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'products' | 'transfers' | 'labels' | 'abc' | 'restock'>('products');
   const [showBatchPriceModal, setShowBatchPriceModal] = useState(false);
@@ -262,7 +262,9 @@ export default function Inventory() {
       filtered = filtered.filter(p => p.categoryId === selectedCategory);
     }
 
-    if (stockFilter === 'low') {
+    if (stockFilter === 'in_stock') {
+      filtered = filtered.filter(p => p.totalStock > 0);
+    } else if (stockFilter === 'low') {
       filtered = filtered.filter(p => p.isLowStock);
     } else if (stockFilter === 'out') {
       filtered = filtered.filter(p => p.totalStock === 0);
@@ -271,23 +273,41 @@ export default function Inventory() {
     return filtered;
   }, [products, inventory, searchQuery, selectedBranch, selectedCategory, stockFilter]);
 
-  const formatMoney = (amount: number, currency = baseCurrency) => {
+  const formatMoney = (amount: number, currency = baseCurrency, withCode = true) => {
     const converted = currency.isBase ? amount : amount / (currency.rateToBase || 1);
     const formatted = converted.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (withCode) {
+      return `${currency.code} ${currency.symbol}${formatted}`;
+    }
     return `${currency.symbol} ${formatted}`;
   };
 
   const MultiCurrencyDisplay = ({ amount }: { amount: number }) => {
     const baseCurr = currencies.find(c => c.isBase) || baseCurrency;
     const secondaryCurr = currencies.filter(c => !c.isBase);
+    const convertedBase = baseCurr.isBase ? amount : amount / (baseCurr.rateToBase || 1);
+    const formattedBase = convertedBase.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
     return (
-      <div className="mt-0.5">
-        <div className="text-[11px] font-black text-primary leading-tight truncate">
-          {formatMoney(amount, baseCurr)}
+      <div className="mt-0.5 space-y-0.5">
+        <div className="text-[11px] font-black text-primary leading-tight truncate flex items-center gap-1">
+          <span className="text-[7.5px] font-black px-1 py-0.2 rounded bg-indigo-100/70 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 uppercase tracking-tighter">
+            {baseCurr.code}
+          </span>
+          <span>{baseCurr.symbol}{formattedBase}</span>
         </div>
         {secondaryCurr.length > 0 && (
-          <div className="text-[7.5px] font-bold text-muted truncate">
-            {secondaryCurr.map(c => formatMoney(amount, c)).join(' · ')}
+          <div className="text-[8px] font-bold text-muted flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            {secondaryCurr.map(c => {
+              const val = amount / (c.rateToBase || 1);
+              const formattedVal = val.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              return (
+                <span key={c.code} className="inline-flex items-center gap-0.5 whitespace-nowrap">
+                  <span className="text-[6.5px] font-black uppercase text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-0.5 py-0.2 rounded">{c.code}</span>
+                  <span className="text-[7.5px]">{c.symbol}{formattedVal}</span>
+                </span>
+              );
+            })}
           </div>
         )}
       </div>
@@ -434,11 +454,12 @@ export default function Inventory() {
             <select 
               value={stockFilter}
               onChange={(e) => setStockFilter(e.target.value as any)}
-              className="px-2.5 py-1.5 bg-subtle border border-base text-primary rounded-xl text-[10px] font-bold outline-none hover:bg-secondary transition-colors cursor-pointer appearance-none min-w-[90px]"
+              className="px-2.5 py-1.5 bg-subtle border border-base text-primary rounded-xl text-[10px] font-bold outline-none hover:bg-secondary transition-colors cursor-pointer appearance-none min-w-[100px]"
             >
               <option value="all">Stock: Todo</option>
+              <option value="in_stock">Solo con Stock (&gt;0)</option>
               <option value="low">Bajo Stock</option>
-              <option value="out">Sin Exist.</option>
+              <option value="out">Sin Exist. (0)</option>
             </select>
           </div>
         </div>
@@ -498,9 +519,9 @@ export default function Inventory() {
       {activeTab === 'transfers' && <TransferHistory />}
       {activeTab === 'products' && (
         viewMode === 'table' ? (
-          <div className="bg-secondary rounded-[2rem] shadow-sm border border-base overflow-hidden flex-1 flex flex-col min-h-[500px]">
-          <div className="overflow-auto flex-1 h-full custom-scrollbar">
-            <table className="w-full text-left border-collapse table-fixed min-w-[900px]">
+          <div className="bg-secondary rounded-[2rem] shadow-sm border border-base overflow-hidden flex-1 flex flex-col min-h-[500px] w-full">
+          <div className="overflow-x-auto overflow-y-auto flex-1 h-full custom-scrollbar w-full">
+            <table className="w-full text-left border-collapse table-fixed min-w-[950px]">
               <thead>
                 <tr className="bg-secondary border-b border-base sticky top-0 z-30 shadow-sm translate-y-[-1px]">
                   <th className="w-14 px-4 py-3 bg-secondary">
@@ -565,7 +586,11 @@ export default function Inventory() {
                         <div className="flex flex-col min-w-0">
                           <div className="text-xs font-black text-primary uppercase tracking-tighter truncate flex items-center gap-1.5">
                             {item.name}
-                            {item.isLowStock && <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" title="Bajo Stock" />}
+                            {item.isLowStock && (
+                              <span title="Bajo Stock" className="inline-flex items-center">
+                                <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                              </span>
+                            )}
                           </div>
                           <span className="text-[9px] text-muted font-bold uppercase truncate">{categories.find(c => c.id === item.categoryId)?.name || 'General'}</span>
                         </div>
@@ -1027,6 +1052,7 @@ export default function Inventory() {
                                       <input 
                                         type="number" min="0" 
                                         value={formData.initialVariantQuantities?.[variant] || ''} 
+                                        onFocus={(e) => e.target.select()}
                                         onChange={e => setFormData({...formData, initialVariantQuantities: {...(formData.initialVariantQuantities || {}), [variant]: parseInt(e.target.value) || 0}})}
                                         className="w-16 px-2 py-1 bg-slate-50 rounded-lg text-center text-xs font-bold outline-none" 
                                         placeholder="0"
@@ -1036,10 +1062,12 @@ export default function Inventory() {
                                 </div>
                               ) : (
                                 <input 
-                                  type="number" min="0" value={formData.initialQuantity || ''} 
-                                  onChange={e => setFormData({...formData, initialQuantity: parseInt(e.target.value) || 0})} 
+                                  type="number" min="0" 
+                                  value={formData.initialQuantity === 0 ? '' : (formData.initialQuantity || '')} 
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={e => setFormData({...formData, initialQuantity: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0)})} 
                                   className="w-full px-4 py-3 bg-white border border-emerald-100 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/20" 
-                                  placeholder="Cantidad Inicial" 
+                                  placeholder="0" 
                                 />
                               )}
                             </div>
@@ -1062,11 +1090,27 @@ export default function Inventory() {
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-1.5">
                             <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Costo de Compra (CUP)</label>
-                            <input type="number" required value={formData.costPrice ?? 0} onChange={e => handleCostPriceChange(parseFloat(e.target.value) || 0, formData.price || 0)} className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-black outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                            <input 
+                              type="number" 
+                              required 
+                              value={formData.costPrice === 0 ? '' : (formData.costPrice ?? '')} 
+                              placeholder="0.00"
+                              onFocus={(e) => e.target.select()}
+                              onChange={e => handleCostPriceChange(e.target.value === '' ? 0 : (parseFloat(e.target.value) || 0), formData.price || 0)} 
+                              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-black outline-none focus:ring-2 focus:ring-indigo-500/20" 
+                            />
                           </div>
                           <div className="space-y-1.5">
                             <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Precio de Venta (CUP)</label>
-                            <input type="number" required value={formData.price ?? 0} onChange={e => handleCostPriceChange(formData.costPrice || 0, parseFloat(e.target.value) || 0)} className="w-full px-4 py-3 bg-indigo-50 border border-indigo-200 rounded-2xl text-sm font-black text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                            <input 
+                              type="number" 
+                              required 
+                              value={formData.price === 0 ? '' : (formData.price ?? '')} 
+                              placeholder="0.00"
+                              onFocus={(e) => e.target.select()}
+                              onChange={e => handleCostPriceChange(formData.costPrice || 0, e.target.value === '' ? 0 : (parseFloat(e.target.value) || 0))} 
+                              className="w-full px-4 py-3 bg-indigo-50 border border-indigo-200 rounded-2xl text-sm font-black text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-500/20" 
+                            />
                           </div>
                         </div>
 
@@ -1084,8 +1128,12 @@ export default function Inventory() {
                             <InfoTooltip text="Monto fijo en CUP que recibe el vendedor por cada unidad vendida de este producto." />
                           </div>
                           <input 
-                            type="number" min="0" value={formData.commissionValue ?? 0} 
-                            onChange={e => setFormData({...formData, commissionValue: parseFloat(e.target.value) || 0})} 
+                            type="number" 
+                            min="0" 
+                            value={formData.commissionValue === 0 ? '' : (formData.commissionValue ?? '')} 
+                            placeholder="0.00"
+                            onFocus={(e) => e.target.select()}
+                            onChange={e => setFormData({...formData, commissionValue: e.target.value === '' ? 0 : (parseFloat(e.target.value) || 0)})} 
                             className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-black outline-none focus:ring-2 focus:ring-indigo-500/20" 
                           />
                         </div>
@@ -1099,11 +1147,27 @@ export default function Inventory() {
                         <div className="space-y-4">
                           <div className="space-y-1.5">
                             <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Días de Garantía</label>
-                            <input type="number" min="0" value={formData.warrantyDays ?? 0} onChange={e => setFormData({...formData, warrantyDays: parseInt(e.target.value) || 0})} className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-black outline-none" placeholder="0 = Sin garantía" />
+                            <input 
+                              type="number" 
+                              min="0" 
+                              value={formData.warrantyDays === 0 ? '' : (formData.warrantyDays ?? '')} 
+                              placeholder="0 = Sin garantía"
+                              onFocus={(e) => e.target.select()}
+                              onChange={e => setFormData({...formData, warrantyDays: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0)})} 
+                              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-black outline-none" 
+                            />
                           </div>
                           <div className="space-y-1.5">
                             <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Stock Mínimo para Alertas</label>
-                            <input type="number" min="0" value={formData.minStockAlert ?? 5} onChange={e => setFormData({...formData, minStockAlert: parseInt(e.target.value) || 5})} className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-black outline-none" />
+                            <input 
+                              type="number" 
+                              min="0" 
+                              value={formData.minStockAlert === 0 ? '' : (formData.minStockAlert ?? '')} 
+                              placeholder="5"
+                              onFocus={(e) => e.target.select()}
+                              onChange={e => setFormData({...formData, minStockAlert: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0)})} 
+                              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-black outline-none" 
+                            />
                           </div>
                         </div>
                       </div>
@@ -1136,83 +1200,113 @@ export default function Inventory() {
       {/* (Categoría funcionalidad eliminada) */}
 
       {managingStockProduct && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex justify-center items-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-lg flex flex-col shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden">
-            <div className="flex justify-between items-center p-6 border-b border-slate-100 bg-slate-50/50">
-              <div>
-                <h2 className="text-xl font-bold text-slate-900">Gestionar Stock</h2>
-                <p className="text-xs text-slate-500 font-medium">{managingStockProduct.name}</p>
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex justify-center items-center p-3 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-2xl flex flex-col shadow-2xl border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-200 overflow-hidden max-h-[90vh]">
+            <div className="flex justify-between items-center px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-600 flex items-center justify-center shrink-0">
+                  <PackagePlus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight">Gestionar Stock</h2>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium truncate max-w-[280px] sm:max-w-md">{managingStockProduct.name}</p>
+                </div>
               </div>
-              <button onClick={() => setManagingStockProduct(null)} className="text-slate-400 hover:text-slate-600 transition-colors p-2 rounded-full hover:bg-slate-200">
-                <X className="w-5 h-5" />
+              <button 
+                onClick={() => setManagingStockProduct(null)} 
+                className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
             
-            <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto custom-scrollbar">
-              <div className="space-y-4">
-                <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-                  <PackagePlus className="w-3.5 h-3.5 text-slate-400" />
-                  Ajuste Manual por Sucursal
-                </h3>
+            <div className="p-4 overflow-y-auto custom-scrollbar flex-1 bg-white dark:bg-slate-900">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {branches.map(branch => {
-                const productVariants = [
-                  undefined, 
-                  ...(managingStockProduct.availableSizes || []), 
-                  ...(managingStockProduct.availableColors || [])
-                ];
+                  const productVariants = [
+                    undefined, 
+                    ...(managingStockProduct.availableSizes || []), 
+                    ...(managingStockProduct.availableColors || [])
+                  ];
 
-                return (
-                  <div key={branch.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
-                    <p className="text-sm font-black text-slate-900 uppercase tracking-tight">{branch.name}</p>
-                    
-                    <div className="space-y-2">
-                      {productVariants.map(variant => {
-                        const level = inventory.find(i => 
-                          i.productId === managingStockProduct.id && 
-                          i.branchId === branch.id && 
-                          (i.variantLabel || '') === (variant || '')
-                        ) || { quantity: 0, minQuantity: 5 };
+                  // Calculate total in this branch
+                  const totalInBranch = productVariants.reduce((sum, v) => {
+                    const lev = inventory.find(i => 
+                      i.productId === managingStockProduct.id && 
+                      i.branchId === branch.id && 
+                      (i.variantLabel || '') === (v || '')
+                    );
+                    return sum + (lev?.quantity || 0);
+                  }, 0);
 
-                        return (
-                          <div key={variant || 'base'} className="flex items-center justify-between gap-4 bg-white p-3 rounded-xl border border-slate-200/50">
-                            <div className="flex-1">
-                              <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">
-                                {variant ? `Variante: ${variant}` : 'Producto Base'}
-                              </p>
-                              <div className="flex items-center gap-2 mt-1">
-                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Mínimo:</label>
+                  return (
+                    <div key={branch.id} className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-200 dark:border-slate-700/60 space-y-2.5 flex flex-col justify-between">
+                      <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-slate-200 dark:border-slate-700/60">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          <p className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight truncate">{branch.name}</p>
+                        </div>
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 shrink-0 border border-indigo-200/50 dark:border-indigo-800/50">
+                          {totalInBranch} uds
+                        </span>
+                      </div>
+                      
+                      <div className="space-y-1.5 flex-1">
+                        {productVariants.map(variant => {
+                          const level = inventory.find(i => 
+                            i.productId === managingStockProduct.id && 
+                            i.branchId === branch.id && 
+                            (i.variantLabel || '') === (variant || '')
+                          ) || { quantity: 0, minQuantity: 5 };
+
+                          return (
+                            <div key={variant || 'base'} className="flex items-center justify-between gap-2 bg-white dark:bg-slate-800/90 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 shadow-2xs">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[10px] font-bold text-slate-800 dark:text-slate-200 truncate">
+                                  {variant ? variant : 'Stock Base'}
+                                </p>
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  <label className="text-[8px] font-semibold text-slate-400 uppercase">Mín:</label>
+                                  <input 
+                                    type="number" 
+                                    min="0"
+                                    value={level.minQuantity === 0 ? '' : level.minQuantity} 
+                                    placeholder="0"
+                                    onFocus={(e) => e.target.select()}
+                                    onChange={(e) => setInventoryQuantity(managingStockProduct.id, branch.id, level.quantity, variant, e.target.value === '' ? 0 : (parseInt(e.target.value) || 0))}
+                                    className="w-10 px-1 py-0.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-[9px] text-slate-900 dark:text-slate-100 outline-none focus:ring-1 focus:ring-indigo-500 text-center font-bold"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span className="text-[9px] font-semibold text-slate-400 uppercase">Cant:</span>
                                 <input 
-                                  type="number" 
-                                  min="0"
-                                  value={level.minQuantity} 
-                                  onChange={(e) => setInventoryQuantity(managingStockProduct.id, branch.id, level.quantity, variant, parseInt(e.target.value) || 0)}
-                                  className="w-12 px-1.5 py-0.5 bg-slate-50 border border-slate-100 rounded text-[10px] outline-none"
+                                    type="number" 
+                                    min="0"
+                                    value={level.quantity === 0 ? '' : level.quantity} 
+                                    placeholder="0"
+                                    onFocus={(e) => e.target.select()}
+                                    onChange={(e) => setInventoryQuantity(managingStockProduct.id, branch.id, e.target.value === '' ? 0 : (parseInt(e.target.value) || 0), variant, level.minQuantity)}
+                                    className="w-16 px-2 py-1 bg-white dark:bg-slate-900 border border-indigo-400 dark:border-indigo-600 rounded-lg font-black text-indigo-600 dark:text-indigo-400 text-right outline-none text-xs focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                                 />
                               </div>
                             </div>
-                            <div className="flex flex-col items-end">
-                              <input 
-                                type="number" 
-                                min="0"
-                                value={level.quantity} 
-                                onChange={(e) => setInventoryQuantity(managingStockProduct.id, branch.id, parseInt(e.target.value) || 0, variant, level.minQuantity)}
-                                className="w-20 px-2 py-1 bg-white border border-indigo-200 rounded-lg font-black text-indigo-700 text-right outline-none text-xs"
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
             
-          <div className="p-5 border-t border-slate-100 bg-slate-50">
+            <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between gap-3">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                Almacenes: <strong className="text-slate-900 dark:text-slate-100 font-bold">{branches.length}</strong>
+              </span>
               <button 
                 onClick={() => setManagingStockProduct(null)} 
-                className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200"
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-colors shadow-sm active:scale-95"
               >
                 Cerrar y Guardar
               </button>
@@ -1254,6 +1348,7 @@ export default function Inventory() {
                 <input 
                   type="number" 
                   value={batchPriceAdjust.value || ''}
+                  onFocus={(e) => e.target.select()}
                   onChange={(e) => setBatchPriceAdjust({...batchPriceAdjust, value: parseFloat(e.target.value) || 0})}
                   className="w-32 px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500/20"
                   placeholder="0.00"
@@ -1366,7 +1461,7 @@ export default function Inventory() {
                       type="button"
                       onClick={() => {
                         setEditingCategory(null);
-                        setCategoryFormData({ name: "", department: "", color: "bg-slate-100", icon: "Tag" });
+                        setCategoryFormData({ name: "", department: "" });
                       }}
                       className="px-4 py-2 text-[10px] font-black uppercase text-slate-400"
                     >

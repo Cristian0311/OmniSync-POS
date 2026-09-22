@@ -130,11 +130,12 @@ export default function CustomerShop() {
       if (existing) {
         return prev.map((item) =>
           item.product.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
+            ? { ...item, quantity: item.quantity + 1, total: (item.quantity + 1) * item.price }
             : item,
         );
       }
-      return [...prev, { id: crypto.randomUUID(), product, quantity: 1 }];
+      const price = product.price || 0;
+      return [...prev, { id: crypto.randomUUID(), product, quantity: 1, price, total: price }];
     });
   };
 

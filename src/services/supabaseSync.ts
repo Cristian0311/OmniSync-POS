@@ -1,10 +1,12 @@
 import { getSupabase } from '../lib/supabase';
 import { useStore } from '../store/useStore';
+import { enqueueOfflineItem } from './offlineSync';
 import { 
   Product, Category, Branch, InventoryLevel, User, 
   BankCard, Customer, Currency, Transaction, CashRegisterSession,
   Warranty, ReturnItem, InventoryTransfer, IDNSettlementPrice,
-  TimeShift, Quote, BankTransaction, SupplierOrder, InventoryAudit, SalarySettlement, Supplier
+  TimeShift, Quote, BankTransaction, SupplierOrder, InventoryAudit, SalarySettlement, Supplier,
+  ReceiptConfig, StoreConfig
 } from '../types';
 
 export interface SyncResult {
@@ -46,7 +48,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     try {
       const { data, error } = await supabase.from('categories').select('*');
       if (error) throw error;
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         fetchedData.categories = data.map((c: any): Category => ({
           id: c.id,
           name: c.name,
@@ -62,7 +64,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     try {
       const { data, error } = await supabase.from('branches').select('*');
       if (error) throw error;
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         fetchedData.branches = data.map((b: any): Branch => ({
           id: b.id,
           name: b.name,
@@ -79,7 +81,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     try {
       const { data, error } = await supabase.from('products').select('*');
       if (error) throw error;
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         fetchedData.products = data.map((p: any): Product => ({
           id: p.id,
           name: p.name,
@@ -112,7 +114,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     try {
       const { data, error } = await supabase.from('inventory').select('*');
       if (error) throw error;
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         fetchedData.inventory = data.map((i: any): InventoryLevel => ({
           id: i.id,
           productId: i.product_id,
@@ -130,7 +132,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     try {
       const { data, error } = await supabase.from('users').select('*');
       if (error) throw error;
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         fetchedData.users = data.map((u: any): User => ({
           id: u.id,
           name: u.name,
@@ -156,7 +158,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     try {
       const { data, error } = await supabase.from('idn_settlement_prices').select('*');
       if (error) throw error;
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         fetchedData.idnSettlementPrices = data.map((p: any): IDNSettlementPrice => ({
           id: p.id,
           userId: p.user_id,
@@ -172,7 +174,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     try {
       const { data, error } = await supabase.from('bank_cards').select('*');
       if (error) throw error;
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         fetchedData.bankCards = data.map((bc: any): BankCard => ({
           id: bc.id,
           name: bc.name || bc.card_holder || bc.bank_name || 'Tarjeta Bancaria',
@@ -197,7 +199,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     try {
       const { data, error } = await supabase.from('customers').select('*');
       if (error) throw error;
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         fetchedData.customers = data.map((c: any): Customer => ({
           id: c.id,
           name: c.name,
@@ -214,7 +216,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     try {
       const { data, error } = await supabase.from('currencies').select('*');
       if (error) throw error;
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         const allowedCodes = ['CUP', 'USD', 'EUR'];
         fetchedData.currencies = data
           .filter((c: any) => allowedCodes.includes(c.code))
@@ -233,7 +235,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     // 9. Transactions
     try {
       const { data, error } = await supabase.from('transactions').select('*').order('date', { ascending: false }).limit(500);
-      if (!error && data && data.length > 0) {
+      if (!error && data && Array.isArray(data)) {
         fetchedData.transactions = data.map((t: any): Transaction => ({
           id: t.id,
           date: t.date,
@@ -261,7 +263,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     // 10. Cash Sessions
     try {
       const { data, error } = await supabase.from('cash_sessions').select('*').order('opened_at', { ascending: false }).limit(200);
-      if (!error && data && data.length > 0) {
+      if (!error && data && Array.isArray(data)) {
         fetchedData.cashSessions = data.map((s: any): CashRegisterSession => {
           let notes = s.notes || '';
           let closingBalances = Array.isArray(s.closing_balances) ? s.closing_balances : [];
@@ -306,7 +308,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     // 11. Inventory Transfers
     try {
       const { data, error } = await supabase.from('inventory_transfers').select('*').order('date', { ascending: false });
-      if (!error && data && data.length > 0) {
+      if (!error && data && Array.isArray(data)) {
         fetchedData.transfers = data.map((t: any): InventoryTransfer => ({
           id: t.id,
           productId: t.product_id,
@@ -328,7 +330,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     // 12. Warranties
     try {
       const { data, error } = await supabase.from('warranties').select('*');
-      if (!error && data && data.length > 0) {
+      if (!error && data && Array.isArray(data)) {
         fetchedData.warranties = data.map((w: any): Warranty => ({
           id: w.id,
           productId: w.product_id,
@@ -347,7 +349,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     // 13. Returns
     try {
       const { data, error } = await supabase.from('returns').select('*').order('date', { ascending: false });
-      if (!error && data && data.length > 0) {
+      if (!error && data && Array.isArray(data)) {
         fetchedData.returns = data.map((r: any): ReturnItem => ({
           id: r.id,
           transactionId: r.transaction_id,
@@ -366,7 +368,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     // 14. Quotes
     try {
       const { data, error } = await supabase.from('quotes').select('*').order('date', { ascending: false });
-      if (!error && data && data.length > 0) {
+      if (!error && data && Array.isArray(data)) {
         fetchedData.quotes = data.map((q: any): Quote => ({
           id: q.id,
           branchId: q.branch_id,
@@ -386,7 +388,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     // 15. Time Shifts
     try {
       const { data, error } = await supabase.from('time_shifts').select('*').order('clock_in', { ascending: false });
-      if (!error && data && data.length > 0) {
+      if (!error && data && Array.isArray(data)) {
         fetchedData.timeShifts = data.map((s: any): TimeShift => ({
           id: s.id,
           userId: s.user_id,
@@ -400,7 +402,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     // 16. Salary Settlements
     try {
       const { data, error } = await supabase.from('salary_settlements').select('*').order('date', { ascending: false });
-      if (!error && data && data.length > 0) {
+      if (!error && data && Array.isArray(data)) {
         fetchedData.salarySettlements = data.map((s: any): SalarySettlement => ({
           id: s.id,
           userId: s.user_id,
@@ -419,7 +421,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     // 17. Suppliers
     try {
       const { data, error } = await supabase.from('suppliers').select('*');
-      if (!error && data && data.length > 0) {
+      if (!error && data && Array.isArray(data)) {
         fetchedData.suppliers = data.map((s: any): Supplier => ({
           id: s.id,
           name: s.name,
@@ -436,7 +438,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     // 18. Supplier Orders
     try {
       const { data, error } = await supabase.from('supplier_orders').select('*').order('date', { ascending: false });
-      if (!error && data && data.length > 0) {
+      if (!error && data && Array.isArray(data)) {
         fetchedData.supplierOrders = data.map((o: any): SupplierOrder => ({
           id: o.id,
           supplierId: o.supplier_id || o.supplierId,
@@ -451,6 +453,18 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
         }));
       }
     } catch (e) { /* ignore */ }
+
+    // 19. Global Settings (Receipt, Store, and Catalog Configs)
+    try {
+      const { data: setRes, error: setErr } = await supabase.from('settings').select('*').eq('id', 'global').maybeSingle();
+      if (!setErr && setRes) {
+        if (setRes.receipt_config) fetchedData.receiptConfig = setRes.receipt_config;
+        if (setRes.store_config) fetchedData.storeConfig = setRes.store_config;
+        if (setRes.catalog_config) fetchedData.catalogConfig = setRes.catalog_config;
+      }
+    } catch (e: any) {
+      errors.push(`Configuración de Tickets: ${e.message}`);
+    }
 
     const counts = {
       products: fetchedData.products?.length || 0,
@@ -691,8 +705,15 @@ export async function pushProductToSupabase(product: Product) {
 }
 
 export async function pushInventoryToSupabase(level: InventoryLevel) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineItem('inventory', level, `${level.productId}_${level.branchId}_${level.variantLabel || ''}`);
+    return;
+  }
   const supabase = getSupabase();
-  if (!supabase) return;
+  if (!supabase) {
+    enqueueOfflineItem('inventory', level, `${level.productId}_${level.branchId}_${level.variantLabel || ''}`);
+    return;
+  }
 
   try {
     const vLabel = level.variantLabel || '';
@@ -751,15 +772,26 @@ export async function pushInventoryToSupabase(level: InventoryLevel) {
       min_quantity: Number(level.minQuantity) || 0
     };
 
-    await safeUpsert(supabase, 'inventory', insertRow);
+    const res = await safeUpsert(supabase, 'inventory', insertRow);
+    if (res?.error) {
+      enqueueOfflineItem('inventory', level, `${level.productId}_${level.branchId}_${level.variantLabel || ''}`);
+    }
   } catch (e) {
-    console.warn("Supabase push inventory failed:", e);
+    console.warn("Supabase push inventory failed, encolando offline:", e);
+    enqueueOfflineItem('inventory', level, `${level.productId}_${level.branchId}_${level.variantLabel || ''}`);
   }
 }
 
 export async function pushTransactionToSupabase(tx: Transaction) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineItem('transaction', tx, tx.id);
+    return;
+  }
   const supabase = getSupabase();
-  if (!supabase) return;
+  if (!supabase) {
+    enqueueOfflineItem('transaction', tx, tx.id);
+    return;
+  }
 
   try {
     // Si la transacción está asociada a una sesión de caja, asegurar que la sesión esté en Supabase primero
@@ -794,15 +826,26 @@ export async function pushTransactionToSupabase(tx: Transaction) {
       seller_employee_ids: tx.sellerEmployeeIds || []
     };
 
-    await safeUpsert(supabase, 'transactions', row);
+    const res = await safeUpsert(supabase, 'transactions', row);
+    if (res?.error) {
+      enqueueOfflineItem('transaction', tx, tx.id);
+    }
   } catch (e) {
-    console.warn("Supabase push transaction failed:", e);
+    console.warn("Supabase push transaction failed, guardando en cola offline:", e);
+    enqueueOfflineItem('transaction', tx, tx.id);
   }
 }
 
 export async function pushCashSessionToSupabase(session: CashRegisterSession) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineItem('cash_session', session, session.id);
+    return;
+  }
   const supabase = getSupabase();
-  if (!supabase) return;
+  if (!supabase) {
+    enqueueOfflineItem('cash_session', session, session.id);
+    return;
+  }
 
   try {
     // Empaquetar datos extendidos en el campo notes para no provocar errores de columnas inexistentes
@@ -830,15 +873,26 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession) {
       working_employee_ids: session.workingEmployeeIds || []
     };
 
-    await safeUpsert(supabase, 'cash_sessions', row);
+    const res = await safeUpsert(supabase, 'cash_sessions', row);
+    if (res?.error) {
+      enqueueOfflineItem('cash_session', session, session.id);
+    }
   } catch (e) {
-    console.warn("Supabase push cash session failed:", e);
+    console.warn("Supabase push cash session failed, guardando en cola offline:", e);
+    enqueueOfflineItem('cash_session', session, session.id);
   }
 }
 
 export async function pushBranchToSupabase(branch: Branch) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineItem('branch', branch, branch.id);
+    return;
+  }
   const supabase = getSupabase();
-  if (!supabase) return;
+  if (!supabase) {
+    enqueueOfflineItem('branch', branch, branch.id);
+    return;
+  }
 
   try {
     const row = {
@@ -851,11 +905,13 @@ export async function pushBranchToSupabase(branch: Branch) {
     };
 
     const res = await safeUpsert(supabase, 'branches', row);
-    if (res.error) {
+    if (res?.error) {
       console.warn("Supabase push branch warning:", res.error);
+      enqueueOfflineItem('branch', branch, branch.id);
     }
   } catch (e) {
-    console.warn("Supabase push branch failed:", e);
+    console.warn("Supabase push branch failed, guardando en cola offline:", e);
+    enqueueOfflineItem('branch', branch, branch.id);
   }
 }
 
@@ -864,6 +920,11 @@ export async function deleteBranchFromSupabase(id: string) {
   if (!supabase) return;
 
   try {
+    // 1. Delete associated inventory in Supabase first so FK constraints or stale records don't resurrect
+    await supabase.from('inventory').delete().eq('branch_id', id);
+    // 2. Unassign branch from users in Supabase
+    await supabase.from('users').update({ branch_id: null, assigned_branch_id: null }).eq('branch_id', id);
+    // 3. Delete the branch row from Supabase
     await supabase.from('branches').delete().eq('id', id);
   } catch (e) {
     console.warn("Supabase delete branch failed:", e);
@@ -1038,8 +1099,15 @@ export async function deleteUserFromSupabase(id: string) {
 }
 
 export async function pushCustomerToSupabase(customer: Customer) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineItem('customer', customer, customer.id);
+    return;
+  }
   const supabase = getSupabase();
-  if (!supabase) return;
+  if (!supabase) {
+    enqueueOfflineItem('customer', customer, customer.id);
+    return;
+  }
 
   try {
     const row = {
@@ -1050,9 +1118,13 @@ export async function pushCustomerToSupabase(customer: Customer) {
       tax_id: customer.taxId || null
     };
 
-    await safeUpsert(supabase, 'customers', row);
+    const res = await safeUpsert(supabase, 'customers', row);
+    if (res?.error) {
+      enqueueOfflineItem('customer', customer, customer.id);
+    }
   } catch (e) {
-    console.warn("Supabase push customer failed:", e);
+    console.warn("Supabase push customer failed, encolando offline:", e);
+    enqueueOfflineItem('customer', customer, customer.id);
   }
 }
 
@@ -1353,6 +1425,62 @@ export async function pushSalarySettlementToSupabase(settlement: SalarySettlemen
     await safeUpsert(supabase, 'salary_settlements', row);
   } catch (e) {
     console.warn("Supabase push salary settlement failed:", e);
+  }
+}
+
+export async function pushReceiptConfigToSupabase(config: ReceiptConfig) {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('settings').upsert({
+      id: 'global',
+      receipt_config: config
+    });
+    if (error) {
+      console.warn("Supabase push receipt config failed:", error);
+      enqueueOfflineItem('receipt_config', config, 'global');
+    }
+  } catch (e) {
+    console.warn("Supabase push receipt config exception:", e);
+    enqueueOfflineItem('receipt_config', config, 'global');
+  }
+}
+
+export async function pushStoreConfigToSupabase(config: StoreConfig) {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('settings').upsert({
+      id: 'global',
+      store_config: config
+    });
+    if (error) {
+      console.warn("Supabase push store config failed:", error);
+    }
+  } catch (e) {
+    console.warn("Supabase push store config exception:", e);
+  }
+}
+
+export async function deleteTransactionFromSupabase(id: string) {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('transactions').delete().eq('id', id);
+    if (error) console.warn("Supabase delete transaction failed:", error);
+  } catch (e) {
+    console.warn("Supabase delete transaction exception:", e);
+  }
+}
+
+export async function deleteCashSessionFromSupabase(id: string) {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('cash_sessions').delete().eq('id', id);
+    if (error) console.warn("Supabase delete cash session failed:", error);
+  } catch (e) {
+    console.warn("Supabase delete cash session exception:", e);
   }
 }
 

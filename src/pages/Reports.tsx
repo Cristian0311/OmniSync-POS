@@ -3,7 +3,7 @@ import {
   TrendingUp, DollarSign, Calendar, Calculator, Package, User, Users, Smartphone, Eye,
   X, ArrowDownRight, History, Download, Printer, CheckCircle2, 
   Clock, AlertCircle, FileSpreadsheet, ChevronDown, Check,
-  Sparkles, Brain, ListChecks, ShieldAlert, Loader2
+  Sparkles, Brain, ListChecks, ShieldAlert, Loader2, Trash2
 } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { cn } from "../lib/utils";
@@ -120,6 +120,11 @@ export default function Reports() {
   const [printSessionId, setPrintSessionId] = useState<string | null>(null);
   const [selectedIDNTxModal, setSelectedIDNTxModal] = useState<import('../types').Transaction | null>(null);
   const [selectedIDNWorkerModal, setSelectedIDNWorkerModal] = useState<{ userId: string; workerName: string; branchName: string } | null>(null);
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<{
+    type: 'transaction' | 'session';
+    id: string;
+    label: string;
+  } | null>(null);
 
   // Filtro y resumen de transacciones de Vendedores Independientes (IDN)
   const idnTransactions = useMemo(() => {
@@ -131,10 +136,9 @@ export default function Reports() {
       } else if (sessionFilter === 'today') {
         if (dateObj.toLocaleDateString() !== new Date().toLocaleDateString()) return false;
       }
-      const worker = users.find(u => u.id === t.userId);
-      return t.id.startsWith('LIQ-IDN-') || t.notes === 'LIQUIDACION_IDN' || worker?.isIndependent === true;
+      return t.id.startsWith('LIQ-IDN-') || t.notes === 'LIQUIDACION_IDN' || (t.notes && t.notes.includes('IDN'));
     });
-  }, [transactions, users, selectedBranchFilter, selectedFilterDate, sessionFilter]);
+  }, [transactions, selectedBranchFilter, selectedFilterDate, sessionFilter]);
 
   const idnWorkerStats = useMemo(() => {
     const map = new Map<string, {
@@ -1204,6 +1208,17 @@ export default function Reports() {
                           >
                             <Printer className="w-3.5 h-3.5" />
                           </button>
+                          <button
+                            onClick={() => setDeleteConfirmTarget({ 
+                              type: 'session', 
+                              id: session.id, 
+                              label: `Turno ${sequentialTurn} - ${workerName} (${branchName})` 
+                            })}
+                            title="Eliminar Turno"
+                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 dark:text-rose-400 rounded-lg transition-all active:scale-95 border border-rose-200 dark:border-rose-800/40"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1512,15 +1527,28 @@ export default function Reports() {
                       </span>
                     </td>
                     <td className="px-3 py-2 text-center whitespace-nowrap">
-                      {session.status === 'closed' && (
+                      <div className="flex items-center justify-center gap-1.5">
+                        {session.status === 'closed' && (
+                          <button
+                            onClick={() => handlePrintShiftTicket(session.id)}
+                            title="Imprimir Ticket de Cierre"
+                            className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-all border border-slate-200 active:scale-95"
+                          >
+                            <Printer className="w-3 h-3" />
+                          </button>
+                        )}
                         <button
-                          onClick={() => handlePrintShiftTicket(session.id)}
-                          title="Imprimir Ticket de Cierre"
-                          className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-all border border-slate-200 active:scale-95"
+                          onClick={() => setDeleteConfirmTarget({ 
+                            type: 'session', 
+                            id: session.id, 
+                            label: `Sesión de Caja #${session.id} (${branches.find(b => b.id === session.branchId)?.name || 'Caja'})` 
+                          })}
+                          title="Eliminar Sesión"
+                          className="p-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-all active:scale-95 border border-rose-200"
                         >
-                          <Printer className="w-3 h-3" />
+                          <Trash2 className="w-3 h-3" />
                         </button>
-                      )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1806,6 +1834,17 @@ export default function Reports() {
                             >
                               <Smartphone className="w-3.5 h-3.5" />
                             </button>
+                            <button
+                              onClick={() => setDeleteConfirmTarget({ 
+                                type: 'transaction', 
+                                id: tx.id, 
+                                label: `Vale IDN #${tx.id} - ${workerName}` 
+                              })}
+                              title="Eliminar Vale"
+                              className="p-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-all border border-rose-200 active:scale-95 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -1939,6 +1978,21 @@ export default function Reports() {
                 >
                   <Smartphone className="w-4 h-4" />
                   RawBT
+                </button>
+                <button
+                  onClick={() => {
+                    const idToDelete = selectedIDNTxModal.id;
+                    setSelectedIDNTxModal(null);
+                    setDeleteConfirmTarget({
+                      type: 'transaction',
+                      id: idToDelete,
+                      label: `Vale IDN #${idToDelete}`
+                    });
+                  }}
+                  className="px-3 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border border-rose-200"
+                  title="Eliminar este Vale"
+                >
+                  <Trash2 className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => setSelectedIDNTxModal(null)}
@@ -2241,13 +2295,30 @@ export default function Reports() {
                       <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Total Ventas Turno</span>
                       <span className="text-base font-black text-indigo-600">{formatMoney(totalSalesInSession)}</span>
                     </div>
-                    <button
-                      onClick={() => handlePrintShiftTicket(session.id)}
-                      className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-sm"
-                    >
-                      <Printer className="w-4 h-4" />
-                      Imprimir Ticket Térmico
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const idToDelete = session.id;
+                          setExpandedSession(null);
+                          setDeleteConfirmTarget({
+                            type: 'session',
+                            id: idToDelete,
+                            label: `Turno ${sequentialTurn} (${session.workerName || 'Vendedor'})`
+                          });
+                        }}
+                        className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition-all border border-rose-200 active:scale-95"
+                        title="Eliminar este Turno"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handlePrintShiftTicket(session.id)}
+                        className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-sm"
+                      >
+                        <Printer className="w-4 h-4" />
+                        Imprimir Ticket Térmico
+                      </button>
+                    </div>
                   </div>
                 </>
               );
@@ -2581,6 +2652,50 @@ export default function Reports() {
                   <span>Descargar Excel (.xlsx)</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmación de Eliminación */}
+      {deleteConfirmTarget && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden p-5 border border-slate-200 animate-in zoom-in-95 space-y-4">
+            <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div className="text-center">
+              <h3 className="text-sm font-black text-slate-900 uppercase">¿Eliminar Registro?</h3>
+              <p className="text-xs font-semibold text-slate-600 mt-1">
+                {deleteConfirmTarget.label}
+              </p>
+              <p className="text-[11px] text-slate-400 mt-2">
+                Esta acción eliminará el registro de este dispositivo y de la base de datos en Supabase permanentemente.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <button
+                onClick={() => setDeleteConfirmTarget(null)}
+                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs uppercase tracking-wider transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  if (deleteConfirmTarget.type === 'transaction') {
+                    store.deleteTransaction(deleteConfirmTarget.id);
+                  } else if (deleteConfirmTarget.type === 'session') {
+                    store.deleteCashSession(deleteConfirmTarget.id);
+                  }
+                  if (expandedSession === deleteConfirmTarget.id) {
+                    setExpandedSession(null);
+                  }
+                  setDeleteConfirmTarget(null);
+                }}
+                className="py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-colors shadow-sm"
+              >
+                Eliminar
+              </button>
             </div>
           </div>
         </div>

@@ -1393,9 +1393,9 @@ export default function Settings() {
                             setPrinterStatus({ type: 'error', message: `Error: ${err.message}` });
                           }
                         }}
-                        className="w-full py-2 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-indigo-100 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95 cursor-pointer"
                       >
-                        <Printer size={14} />
+                        <Printer size={15} />
                         Ticket de Prueba
                       </button>
                     </div>
@@ -1781,9 +1781,18 @@ export default function Settings() {
                   Cancelar
                 </button>
                 <button
-                  onClick={() => {
-                    localStorage.clear();
-                    window.location.reload();
+                  onClick={async () => {
+                    try {
+                      localStorage.clear();
+                      sessionStorage.clear();
+                      if ('serviceWorker' in navigator) {
+                        const registrations = await navigator.serviceWorker.getRegistrations();
+                        for (const reg of registrations) {
+                          await reg.unregister();
+                        }
+                      }
+                    } catch (e) {}
+                    window.location.href = "/";
                   }}
                   className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-95"
                 >
