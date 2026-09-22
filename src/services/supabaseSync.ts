@@ -1024,6 +1024,35 @@ export async function clearSupabaseData() {
   console.debug("[clearSupabaseData] Limpieza completada.");
 }
 
+export async function clearHistoryFromSupabase() {
+  const supabase = getSupabase();
+  if (!supabase) return;
+
+  console.debug("[clearHistoryFromSupabase] Iniciando limpieza selectiva de Historial (Ventas/Turnos/Movimientos)...");
+
+  // Only tables related to history/reports - PERSIST MASTER DATA (products, branches, users)
+  const historyTables = [
+    'transactions',
+    'cash_sessions',
+    'cash_movements',
+    'bank_transactions',
+    'inventory_audits',
+    'salary_settlements',
+    'returns',
+    'warranties'
+  ];
+
+  for (const table of historyTables) {
+    try {
+      console.debug(`[clearHistoryFromSupabase] Limpiando ${table}...`);
+      const { error } = await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      if (error) throw error;
+    } catch (err) {
+      console.warn(`[clearHistoryFromSupabase] Error en tabla ${table}:`, err);
+    }
+  }
+}
+
 export async function pushUserToSupabase(user: User) {
   const supabase = getSupabase();
   if (!supabase) return;

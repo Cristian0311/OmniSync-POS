@@ -15,6 +15,7 @@ import {
 
 export default function Reports() {
   const store = useStore();
+
   const transactions = store.transactions || [];
   const cashSessions = store.cashSessions || [];
   const users = store.users || [];

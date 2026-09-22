@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Search, Wifi, WifiOff, RefreshCw, Plus, Minus, CreditCard, Receipt, Trash2, ShoppingCart, ShieldCheck, DollarSign, Banknote, QrCode, ArrowLeftRight, UserPlus, X, Lock, Unlock, Camera, AlertCircle, TrendingUp, Wallet, MessageSquare, Mail, HelpCircle, Calculator, ArrowRight, Package, User, RotateCcw, Printer, Bluetooth, Usb, Smartphone, Send, Copy, Check, CheckCircle, Share2, Store, ChevronDown, ChevronUp } from "lucide-react";
 import { Html5QrcodeScanner, Html5Qrcode } from "html5-qrcode";
 import { QRCodeCanvas } from "qrcode.react";
@@ -14,11 +14,28 @@ export default function POS() {
   const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, transactions, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification } = useStore();
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
   const [searchQuery, setSearchQuery] = useState("");
-  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [idnFilter, setIdnFilter] = useState("");
+  const [debouncedIdnFilter, setDebouncedIdnFilter] = useState("");
+  
+  // Debounce search query to improve performance on low-end tablets
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 200); // 200ms delay
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedIdnFilter(idnFilter);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [idnFilter]);
+
+  const [showConfigModal, setShowConfigModal] = useState(false);
   const [idnPhysicalCounts, setIdnPhysicalCounts] = useState<{ [productId: string]: number }>({});
   const [isProcessingIDN, setIsProcessingIDN] = useState(false);
-  const [idnFilter, setIdnFilter] = useState("");
   const [idnSelectedProductFilter, setIdnSelectedProductFilter] = useState("all");
 
   const [showIDNReceiptModal, setShowIDNReceiptModal] = useState<{
@@ -651,26 +668,30 @@ export default function POS() {
 
   // Barcode scanner moved lower
 
-  const filteredProducts = products.filter(p => {
-    // Filtrar por búsqueda
-    const query = searchQuery.toLowerCase().trim();
-    if (query) {
-      const matchesSearch = p.name.toLowerCase().includes(query) || 
-                            p.sku?.toLowerCase().includes(query) || 
-                            p.barcode?.toLowerCase().includes(query);
-      if (!matchesSearch) return false;
-    }
+  const filteredProducts = useMemo(() => {
+    return products.filter(p => {
+      // Filtrar por búsqueda usando el query con debounce
+      const query = debouncedSearchQuery.toLowerCase().trim();
+      if (query) {
+        const matchesSearch = p.name.toLowerCase().includes(query) || 
+                              p.sku?.toLowerCase().includes(query) || 
+                              p.barcode?.toLowerCase().includes(query);
+        if (!matchesSearch) return false;
+      }
 
-    // Filtrar por categoría
-    const matchesCategory = activeCategoryId === "Todos" || p.categoryId === activeCategoryId;
-    if (!matchesCategory) return false;
+      // Filtrar por categoría
+      const matchesCategory = activeCategoryId === "Todos" || p.categoryId === activeCategoryId;
+      if (!matchesCategory) return false;
 
-    // Filtrar por existencia en la sucursal actual
-    const branchStockTotal = inventory
-      .filter(i => i.productId === p.id && i.branchId === currentBranchId)
-      .reduce((sum, curr) => sum + curr.quantity, 0);
-    return branchStockTotal > 0;
-  }).sort((a, b) => a.name.localeCompare(b.name));
+      // Filtrar por existencia en la sucursal actual
+      const branchStockTotal = inventory
+        .filter(i => i.productId === p.id && i.branchId === currentBranchId)
+        .reduce((sum, curr) => sum + curr.quantity, 0);
+      return branchStockTotal > 0;
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 100); // Limit to 100 products for performance
+  }, [products, debouncedSearchQuery, activeCategoryId, inventory, currentBranchId]);
 
   const subtotalBase = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
   const taxBase = 0; // Configurable tax if needed
@@ -1624,12 +1645,14 @@ export default function POS() {
   if (shouldShowIDNView && currentSession) {
     const branchId = activeIDNBranchId;
     const branchInventory = (inventory || []).filter(i => i.branchId === branchId);
-    const filterLower = (idnFilter || '').toLowerCase().trim();
-    const filteredInventory = branchInventory.filter(inv => {
-      const p = (products || []).find(prod => prod.id === inv.productId);
-      return (p?.name || '').toLowerCase().includes(filterLower) || 
-             (p?.sku || '').toLowerCase().includes(filterLower);
-    });
+    const filterLower = (debouncedIdnFilter || '').toLowerCase().trim();
+    const filteredInventory = branchInventory
+      .filter(inv => {
+        const p = (products || []).find(prod => prod.id === inv.productId);
+        return (p?.name || '').toLowerCase().includes(filterLower) || 
+               (p?.sku || '').toLowerCase().includes(filterLower);
+      })
+      .slice(0, 100); // Limit to 100 products for performance
 
     let currentTotalToPay = 0;
     let currentTotalPublicSales = 0;
@@ -2123,34 +2146,34 @@ export default function POS() {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
           {lastClosedSession && !showOpenShiftModal ? (
             /* Pantalla visual de Turno Finalizado / Cierre */
-            <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-2xl text-center max-w-md w-full animate-in zoom-in-95 border border-white/20 my-auto">
-              <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-100 shadow-sm">
-                <CheckCircle className="w-8 h-8 text-emerald-600" />
+            <div className="bg-white p-5 sm:p-6 rounded-[2rem] shadow-2xl text-center max-w-md w-full animate-in zoom-in-95 border border-white/20 my-auto">
+              <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-3 border border-emerald-100 shadow-sm">
+                <CheckCircle className="w-6 h-6 text-emerald-600" />
               </div>
-              <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight leading-none mb-1">Turno Finalizado</h3>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight leading-none mb-1">Turno Finalizado</h3>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-3">
                 {lastClosedSession.id} • {lastClosedSession.workerName || 'Vendedor'}
               </p>
 
-              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 text-left space-y-2 mb-6">
-                <div className="flex justify-between items-center text-xs">
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3 text-left space-y-1.5 mb-4">
+                <div className="flex justify-between items-center text-[11px]">
                   <span className="text-slate-500 font-bold">Sucursal:</span>
                   <span className="font-black text-slate-900">{branches.find(b => b.id === lastClosedSession.branchId)?.name || 'Central'}</span>
                 </div>
-                <div className="flex justify-between items-center text-xs">
+                <div className="flex justify-between items-center text-[11px]">
                   <span className="text-slate-500 font-bold">Cierre:</span>
                   <span className="font-bold text-slate-700">{new Date(lastClosedSession.closingDate || lastClosedSession.closedAt || new Date()).toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-200">
+                <div className="flex justify-between items-center text-[11px] pt-1 border-t border-slate-200">
                   <span className="text-slate-500 font-bold">Fondo Inicial:</span>
                   <span className="font-mono font-bold text-slate-800">{formatMoney(lastClosedSession.openingBalance || 0, baseCurrency.symbol)}</span>
                 </div>
                 {lastClosedSession.closingBalances && lastClosedSession.closingBalances.length > 0 && (
-                  <div className="pt-2 border-t border-slate-200 space-y-1">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Arqueo Declarado</span>
+                  <div className="pt-1.5 border-t border-slate-200 space-y-1">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block">Arqueo Declarado</span>
                     {lastClosedSession.closingBalances.map((b, bIdx) => (
-                      <div key={bIdx} className="flex justify-between items-center text-xs">
-                        <span className="text-slate-600 capitalize">{b.currencyCode} ({b.method === 'transfer' ? 'Transferencia' : 'Efectivo'}):</span>
+                      <div key={bIdx} className="flex justify-between items-center text-[11px]">
+                        <span className="text-slate-600 capitalize">{b.currencyCode} ({b.method === 'transfer' ? 'Transferencia' : 'Efectivo'})::</span>
                         <span className="font-mono font-black text-emerald-700">{formatMoney(b.amount, currencies.find(c => c.code === b.currencyCode)?.symbol || '')}</span>
                       </div>
                     ))}
@@ -2159,20 +2182,20 @@ export default function POS() {
               </div>
 
               {/* Botones de impresión y acciones */}
-              <div className="space-y-2.5">
+              <div className="space-y-2">
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() => handlePrintClosureThermal(lastClosedSession)}
-                    className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                    className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-black text-[8px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95"
                   >
-                    <Printer className="w-3.5 h-3.5 text-slate-500" />
+                    <Printer className="w-3 h-3 text-slate-500" />
                     Ticket 58mm
                   </button>
                   <button
                     onClick={() => handlePrintClosureThermal(lastClosedSession, { preferRawBT: true })}
-                    className="py-2.5 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                    className="py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-black text-[8px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95"
                   >
-                    <Share2 className="w-3.5 h-3.5 text-indigo-500" />
+                    <Share2 className="w-3 h-3 text-indigo-500" />
                     RawBT (Móvil)
                   </button>
                 </div>
@@ -2180,9 +2203,9 @@ export default function POS() {
                 <button
                   type="button"
                   onClick={() => setShowOpenShiftModal(true)}
-                  className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
+                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[9px] uppercase tracking-widest transition-all shadow-lg shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
                 >
-                  <DollarSign className="w-4 h-4" />
+                  <DollarSign className="w-3.5 h-3.5" />
                   Abrir Nuevo Turno / Caja
                 </button>
 
@@ -2190,7 +2213,7 @@ export default function POS() {
                   <button 
                     type="button"
                     onClick={() => navigate('/')}
-                    className="w-full py-2.5 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
+                    className="w-full py-2 bg-slate-100 text-slate-600 rounded-xl font-black text-[8px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
                   >
                     Volver al Menú Principal
                   </button>
@@ -2198,28 +2221,30 @@ export default function POS() {
                   <button 
                     type="button"
                     onClick={() => logout()}
-                    className="w-full py-2.5 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
+                    className="w-full py-2 bg-slate-100 text-slate-600 rounded-xl font-black text-[8px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
                   >
                     Cerrar Sesión del Empleado
                   </button>
                 )}
               </div>
             </div>
+
           ) : (
             /* Modal Formulario de Apertura de Caja */
-            <div className="bg-white p-8 rounded-[2rem] shadow-2xl text-center max-w-sm w-full animate-in zoom-in-95 border border-white/20 my-auto">
-              <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                <DollarSign className="w-8 h-8 text-indigo-600" />
+            <div className="bg-white p-5 rounded-[2rem] shadow-2xl text-center max-w-sm w-full animate-in zoom-in-95 border border-white/20 my-auto">
+              <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                <DollarSign className="w-6 h-6 text-indigo-600" />
               </div>
-              <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight leading-none mb-3">Apertura de Caja</h3>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Fondo Inicial del Turno</p>
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight leading-none mb-2">Apertura de Caja</h3>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-3">Fondo Inicial del Turno</p>
               
-              <div className="flex justify-center mb-6">
-                <span className="flex items-center gap-1.5 text-[8px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100">
-                  <ShieldCheck className="w-3 h-3" />
+              <div className="flex justify-center mb-4">
+                <span className="flex items-center gap-1 text-[7px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                  <ShieldCheck className="w-2.5 h-2.5" />
                   Sistema Local Protegido
                 </span>
               </div>
+
               
               {/* Inline Modal Alert */}
               {posError && (
@@ -2245,10 +2270,10 @@ export default function POS() {
                 </div>
               )}
 
-              <form onSubmit={handleOpenSession} className="space-y-4">
-                <div className="text-left space-y-3">
+              <form onSubmit={handleOpenSession} className="space-y-3">
+                <div className="text-left space-y-2">
                   <div>
-                    <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                    <label className="block text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">
                       Seleccionar Vendedor / Empleado del Turno
                     </label>
                     <select
@@ -2257,7 +2282,7 @@ export default function POS() {
                         setSessionWorkerName(e.target.value);
                         setSessionPassword("");
                       }}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
                       required
                     >
                       <option value="">-- Seleccionar Trabajador / IDN --</option>
@@ -2270,7 +2295,7 @@ export default function POS() {
                   </div>
 
                   <div>
-                    <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                    <label className="block text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">
                       Contraseña del Vendedor Seleccionado
                     </label>
                     <input
@@ -2279,19 +2304,20 @@ export default function POS() {
                       value={sessionPassword}
                       onChange={e => setSessionPassword(e.target.value)}
                       placeholder={detectedWorker ? `Ingresa la contraseña de ${detectedWorker.name}` : "Ingresa la contraseña del trabajador"}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                     />
                   </div>
                 </div>
 
                 {isWorkerIndependent && (
-                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-left">
-                    <Package className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                    <p className="text-[9px] font-black text-amber-800 uppercase tracking-tight">
+                  <div className="p-2 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-1.5 text-left">
+                    <Package className="w-3 h-3 text-amber-600 shrink-0" />
+                    <p className="text-[8px] font-black text-amber-800 uppercase tracking-tight">
                       Vendedor Independiente (IDN) • Almacén exclusivo bloqueado
                     </p>
                   </div>
                 )}
+
 
                   {(allowedBranches || []).length > 0 ? (
                   <div className="space-y-4">

@@ -1385,8 +1385,26 @@ export default function Settings() {
                         onClick={async () => {
                           try {
                             const { printESCPOS } = await import('../lib/escpos');
+                            const randomProducts = [...products].sort(() => 0.5 - Math.random()).slice(0, 2);
+                            const productLines = randomProducts.map(p => `LEFT|${p.name.toUpperCase()} x1 ... $${p.price}`);
+                            
+                            const lines = [
+                              "CENTER|BOLD|" + (ticketConfig.businessName || "MI NEGOCIO"),
+                              "CENTER|" + (ticketConfig.businessAddress || "DIRECCIÓN DE PRUEBA"),
+                              "CENTER|TEL: " + (ticketConfig.businessPhone || "000-000-0000"),
+                              "---",
+                              "CENTER|BOLD|TICKET DE PRUEBA",
+                              "---",
+                              ...productLines,
+                              "---",
+                              "CENTER|BOLD|TOTAL: $0.00",
+                              "---",
+                              "CENTER|" + (ticketConfig.footerText || "¡GRACIAS POR SU COMPRA!"),
+                              "CENTER|VERSIÓN 2.0"
+                            ];
+
                             await printESCPOS({
-                              lines: ["CENTER|BOLD|MARÉ STORE", "CENTER|PRUEBA DIRECTA", "---", "BOLD|CONEXIÓN OK", "---"],
+                              lines: lines,
                               width: ticketConfig.printerWidth || '58mm'
                             });
                           } catch (err: any) {

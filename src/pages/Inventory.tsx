@@ -21,6 +21,15 @@ export default function Inventory() {
   const baseCurrency = getBaseCurrency();
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+
+  // Debounce search query to improve performance on low-end tablets
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
   
   useBarcodeScanner((barcode) => {
     setSearchQuery(barcode);
@@ -233,8 +242,10 @@ export default function Inventory() {
     }
   };
 
-  const inventoryView = useMemo(() => {
-    if (!products || !inventory) return [];
+  const [displayLimit, setDisplayLimit] = useState(200);
+
+  const inventoryData = useMemo(() => {
+    if (!products || !inventory) return { full: [], paginated: [] };
     let filtered = products.map(product => {
       const productLevels = inventory.filter(i => i.productId === product.id && (selectedBranch === 'all' || i.branchId === selectedBranch));
       
@@ -249,8 +260,8 @@ export default function Inventory() {
       };
     });
 
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
+    if (debouncedSearchQuery) {
+      const query = debouncedSearchQuery.toLowerCase();
       filtered = filtered.filter(item => 
         item.name.toLowerCase().includes(query) || 
         item.sku.toLowerCase().includes(query) || 
@@ -270,8 +281,13 @@ export default function Inventory() {
       filtered = filtered.filter(p => p.totalStock === 0);
     }
 
-    return filtered;
-  }, [products, inventory, searchQuery, selectedBranch, selectedCategory, stockFilter]);
+    return {
+      full: filtered,
+      paginated: filtered.slice(0, displayLimit)
+    };
+  }, [products, inventory, debouncedSearchQuery, selectedBranch, selectedCategory, stockFilter, displayLimit]);
+
+  const inventoryView = inventoryData.paginated;
 
   const formatMoney = (amount: number, currency = baseCurrency, withCode = true) => {
     const converted = currency.isBase ? amount : amount / (currency.rateToBase || 1);
@@ -315,16 +331,26 @@ export default function Inventory() {
   };
 
   const stats = useMemo(() => {
-    const activeProducts = inventoryView;
-    const totalProducts = activeProducts.length;
-    const totalStock = activeProducts.reduce((sum, p) => sum + p.totalStock, 0);
-    const lowStockCount = activeProducts.filter(p => p.isLowStock).length;
-    const totalCostValue = activeProducts.reduce((sum, p) => sum + (p.costPrice * p.totalStock), 0);
-    const totalSaleValue = activeProducts.reduce((sum, p) => sum + (p.price * p.totalStock), 0);
+    // If all branches, show stats for ALL products even if filtered (as requested)
+    const activeProducts = selectedBranch === 'all' ? inventoryData.full : inventoryData.full; 
+    // Wait, if I want ALL products even if NOT filtered by search/category:
+    let baseProducts = products.map(product => {
+      const productLevels = inventory.filter(i => i.productId === product.id && (selectedBranch === 'all' || i.branchId === selectedBranch));
+      const totalStock = productLevels.reduce((acc, curr) => acc + curr.quantity, 0);
+      return { ...product, totalStock };
+    });
+
+    const targetProducts = selectedBranch === 'all' ? baseProducts : inventoryData.full;
+
+    const totalProducts = targetProducts.length;
+    const totalStock = targetProducts.reduce((sum, p) => sum + p.totalStock, 0);
+    const lowStockCount = inventoryData.full.filter(p => p.isLowStock).length;
+    const totalCostValue = targetProducts.reduce((sum, p) => sum + (p.costPrice * p.totalStock), 0);
+    const totalSaleValue = targetProducts.reduce((sum, p) => sum + (p.price * p.totalStock), 0);
     const totalProfit = totalSaleValue - totalCostValue;
 
     return { totalProducts, totalStock, lowStockCount, totalCostValue, totalSaleValue, totalProfit };
-  }, [inventoryView]);
+  }, [inventoryData.full, products, inventory, selectedBranch]);
 
   return (
     <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500 h-full flex flex-col min-h-0">
@@ -465,21 +491,23 @@ export default function Inventory() {
         </div>
 
         <div className="flex items-center gap-2 w-full lg:w-auto justify-end border-t lg:border-t-0 pt-2 lg:pt-0">
-          <div className="bg-subtle p-1 rounded-xl flex gap-1 border border-base">
+          <div className="bg-subtle p-0.5 rounded-lg flex gap-0.5 border border-base">
             <button 
               onClick={() => setViewMode('table')}
+              title="Vista Lista"
               className={cn(
-                "p-1.5 rounded-lg transition-all",
-                viewMode === 'table' ? "bg-primary text-indigo-600 shadow-sm ring-1 ring-black/5" : "text-muted hover:text-primary"
+                "p-1.5 rounded-md transition-all",
+                viewMode === 'table' ? "bg-primary text-indigo-600 shadow-xs ring-1 ring-black/5" : "text-muted hover:text-primary"
               )}
             >
               <List className="w-3.5 h-3.5" />
             </button>
             <button 
               onClick={() => setViewMode('grid')}
+              title="Vista Cuadrícula Compacta"
               className={cn(
-                "p-1.5 rounded-lg transition-all",
-                viewMode === 'grid' ? "bg-primary text-indigo-600 shadow-sm ring-1 ring-black/5" : "text-muted hover:text-primary"
+                "p-1.5 rounded-md transition-all",
+                viewMode === 'grid' ? "bg-primary text-indigo-600 shadow-xs ring-1 ring-black/5" : "text-muted hover:text-primary"
               )}
             >
               <LayoutGrid className="w-3.5 h-3.5" />
@@ -673,6 +701,17 @@ export default function Inventory() {
             </table>
           </div>
             
+            {inventoryData.full.length > displayLimit && (
+              <div className="p-4 border-t border-base flex justify-center bg-secondary">
+                <button 
+                  onClick={() => setDisplayLimit(prev => prev + 200)}
+                  className="px-6 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md active:scale-95"
+                >
+                  Cargar más productos ({inventoryData.full.length - displayLimit} restantes)
+                </button>
+              </div>
+            )}
+
             {/* Table Footer / Batch Actions */}
             {selectedItems.length > 0 && (
               <div className="bg-indigo-600 p-4 flex items-center justify-between text-white animate-in slide-in-from-bottom-full duration-300">
@@ -709,88 +748,60 @@ export default function Inventory() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 overflow-y-auto pr-2 flex-1 min-h-[400px]">
-            {inventoryView.map((item) => (
-              <div key={item.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group relative">
-                <div className="h-40 bg-slate-100 relative flex items-center justify-center">
-                  {item.image ? (
-                    <img 
-                      src={item.image} 
-                      alt={item.name} 
-                      className="w-full h-full object-cover" 
-                      referrerPolicy="no-referrer" 
-                      onError={(e) => {
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src = '';
-                        e.currentTarget.style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    <div className={cn("w-full h-full opacity-20", item.color)} />
-                  )}
-                  {!item.image && (
-                    <span className="absolute text-2xl font-black text-slate-300 uppercase">
-                      {item.name.substring(0, 2)}
-                    </span>
-                  )}
-                  <div className="absolute top-3 left-3 flex flex-col gap-1">
-                    <span className={cn(
-                      "px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest text-white shadow-sm",
-                      item.totalStock === 0 ? "bg-rose-500" :
+          <div className="flex-1 min-h-0 flex flex-col bg-secondary rounded-[2rem] border border-base shadow-sm overflow-hidden p-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-3 overflow-y-auto pr-2 flex-1 custom-scrollbar">
+              {inventoryView.map((item) => (
+                <div 
+                  key={item.id} 
+                  onClick={() => {
+                    const { totalStock, isLowStock, levels, ...productOnly } = item as any;
+                    setEditingProduct(productOnly);
+                    setFormData(productOnly);
+                    setShowAddModal(true);
+                  }}
+                  className="bg-primary p-2.5 rounded-2xl border border-base shadow-xs hover:shadow-md hover:border-indigo-300 transition-all cursor-pointer group flex flex-col gap-1.5 h-fit relative"
+                >
+                  <div className="flex justify-between items-start gap-1">
+                    <h3 className="text-[10px] font-black text-primary uppercase tracking-tight line-clamp-2 leading-tight flex-1">{item.name}</h3>
+                    <div className={cn(
+                      "w-1.5 h-1.5 rounded-full shrink-0 mt-0.5",
+                      item.totalStock === 0 ? "bg-rose-500 shadow-[0_0_5px_rgba(244,63,94,0.5)]" :
                       item.isLowStock ? "bg-amber-500" : "bg-emerald-500"
-                    )}>
-                      {item.totalStock === 0 ? 'Sin Stock' : item.isLowStock ? 'Bajo Stock' : 'Stock OK'}
-                    </span>
-                  </div>
-                  <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1">
-                    <button 
-                      onClick={() => {
-                        const { totalStock, isLowStock, levels, ...productOnly } = item as any;
-                        setEditingProduct(productOnly);
-                        setFormData(productOnly);
-                        setShowAddModal(true);
-                      }}
-                      className="bg-white/90 backdrop-blur-sm p-2 rounded-xl shadow-sm text-slate-600 hover:text-indigo-600"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-                <div className="p-4 space-y-3">
-                  <div>
-                    <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight line-clamp-1">{item.name}</h3>
-                    <p className="text-[10px] font-mono text-slate-400 font-bold uppercase">{item.sku}</p>
+                    )} />
                   </div>
                   
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Precio Venta</p>
-                      <p className="text-sm font-black text-slate-900">{formatMoney(item.price)}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Stock</p>
-                      <p className={cn(
-                        "text-sm font-black",
-                        item.isLowStock ? "text-rose-600" : "text-emerald-600"
-                      )}>{item.totalStock} {item.unit || 'uds'}</p>
-                    </div>
+                  <div className="flex items-center justify-between mt-auto">
+                    <p className="text-[9px] font-black text-indigo-600">{formatMoney(item.price)}</p>
+                    <p className={cn(
+                      "text-[9px] font-black px-1.5 py-0.5 rounded-lg",
+                      item.isLowStock ? "bg-rose-50/50 text-rose-600" : "bg-emerald-50/50 text-emerald-600"
+                    )}>{item.totalStock}</p>
                   </div>
-                  
-                  <div className="pt-2 border-t border-slate-50">
-                    <button 
-                      onClick={() => {
-                        const { totalStock, isLowStock, levels, ...productOnly } = item as any;
-                        setManagingStockProduct(productOnly);
-                      }}
-                      className="w-full py-2 bg-slate-50 text-slate-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 hover:text-indigo-600 transition-colors flex items-center justify-center gap-2"
-                    >
-                      <PackagePlus className="w-4 h-4" />
-                      Gestionar Stock
-                    </button>
-                  </div>
+
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const { totalStock, isLowStock, levels, ...productOnly } = item as any;
+                      setManagingStockProduct(productOnly);
+                    }}
+                    className="absolute -top-1 -right-1 p-1 bg-white border border-base rounded-lg text-slate-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+                  >
+                    <PackagePlus className="w-3 h-3" />
+                  </button>
                 </div>
-              </div>
-            ))}
+              ))}
+              
+              {inventoryData.full.length > displayLimit && (
+                <div className="col-span-full py-4 flex justify-center">
+                  <button 
+                    onClick={() => setDisplayLimit(prev => prev + 200)}
+                    className="px-8 py-2.5 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md active:scale-95"
+                  >
+                    Ver más ({inventoryData.full.length - displayLimit} restantes)
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )
       )}

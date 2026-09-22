@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { generateId, cn } from '../lib/utils';
-import { CreditCard, Plus, ArrowUpRight, ArrowDownRight, DollarSign, Search, List, Activity, HelpCircle } from 'lucide-react';
+import { CreditCard, Plus, ArrowUpRight, ArrowDownRight, DollarSign, Search, List, Activity, HelpCircle, Trash2 } from 'lucide-react';
 import { BankCard, BankTransaction } from '../types';
 import { InfoTooltip } from '../components/InfoTooltip';
 
@@ -118,10 +118,41 @@ export default function Banks() {
     setTransferData({ fromCardId: "", toCardId: "", toExternalCard: "", toExternalName: "", isExternal: false, amount: 0, reason: "" });
   };
 
+  const [cardToDelete, setCardToDelete] = useState<string | null>(null);
+
   const filteredTransactions = bankTransactions.filter(t => selectedCardId ? t.cardId === selectedCardId : true).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   return (
     <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {cardToDelete && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-2xl max-w-xs w-full text-center border border-base animate-in zoom-in-95 duration-200">
+            <div className="w-12 h-12 bg-rose-50 dark:bg-rose-950/30 rounded-full flex items-center justify-center mx-auto mb-3">
+              <Trash2 className="w-6 h-6 text-rose-600 dark:text-rose-400" />
+            </div>
+            <h3 className="text-sm font-black text-primary uppercase tracking-tight mb-1">¿Eliminar Tarjeta?</h3>
+            <p className="text-[10px] font-bold text-muted mb-4">Esta acción no se puede deshacer y eliminará el registro de la cuenta.</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button 
+                onClick={() => setCardToDelete(null)}
+                className="py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl font-black text-[9px] uppercase tracking-wider"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={() => {
+                  deleteBankCard(cardToDelete);
+                  setCardToDelete(null);
+                  if (selectedCardId === cardToDelete) setSelectedCardId(null);
+                }}
+                className="py-2 bg-rose-600 text-white rounded-xl font-black text-[9px] uppercase tracking-wider shadow-lg shadow-rose-200 dark:shadow-none"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex justify-between items-center px-1">
         <div className="flex items-center gap-2">
           <h1 className="text-base sm:text-lg font-black text-primary tracking-tight uppercase">Cuentas Bancarias</h1>
@@ -148,6 +179,7 @@ export default function Banks() {
                <div className="flex gap-1.5">
                  <button onClick={(e) => { e.stopPropagation(); setEditingCard(card); setFormData(card); setShowAddModal(true); }} className="text-white opacity-50 hover:opacity-100 transition-opacity text-[6.5px] font-black uppercase tracking-wider">Editar</button>
                  <button onClick={(e) => { e.stopPropagation(); setTransferData({...transferData, fromCardId: card.id}); setShowTransferModal(true); }} className="text-emerald-400 hover:text-emerald-300 transition-colors text-[6.5px] font-black uppercase tracking-wider">Transferir</button>
+                  <button onClick={(e) => { e.stopPropagation(); setCardToDelete(card.id); }} className="text-rose-400 hover:text-rose-300 transition-colors text-[6.5px] font-black uppercase tracking-wider">Eliminar</button>
                </div>
              </div>
              
@@ -277,7 +309,7 @@ export default function Banks() {
                   >
                     <option value="BPA">BPA</option>
                     <option value="BANDEC">BANDEC</option>
-                    <option value="Banco Metropolitano">Banmet</option>
+                    <option value="Banco Metropolitano">Banco Metropolitano</option>
                     <option value="EnZona">EnZona</option>
                   </select>
                 </div>

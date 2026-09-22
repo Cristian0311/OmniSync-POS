@@ -81,6 +81,7 @@ interface AppState {
   login: (email: string, pass: string) => Promise<boolean>;
   logout: () => void;
   clearAllData: () => Promise<void>;
+  clearReportsHistory: () => Promise<void>;
   addUser: (user: User) => void;
   registerEmployee: (name: string, password: string) => User;
   updateUser: (id: string, user: Partial<User>) => void;
@@ -289,8 +290,16 @@ export const useStore = create<AppState>()(
   },
   logout: () => set({ currentUser: null }),
   clearAllData: async () => {
-    // 1. Clear Supabase
-    await clearSupabaseData();
+    // 1. Clear Supabase (with timeout/error handling to prevent blocking)
+    try {
+      // Give supabase 10 seconds max, but don't block the UI forever
+      await Promise.race([
+        clearSupabaseData(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout Supabase')), 12000))
+      ]).catch(err => console.warn("Supabase clear warning (continuing locally):", err));
+    } catch (err) {
+      console.warn("Supabase clear failed (continuing locally):", err);
+    }
 
     // Clear local storage cache
     try {
@@ -336,6 +345,29 @@ export const useStore = create<AppState>()(
 
     // 3. Re-push minimal data to Supabase to avoid lock-out
     await pushUserToSupabase(minUsers[0]);
+  },
+  clearReportsHistory: async () => {
+    // 1. Clear Supabase History only (surgical)
+    try {
+      const { clearHistoryFromSupabase } = await import('../services/supabaseSync');
+      await clearHistoryFromSupabase();
+    } catch (err) {
+      console.warn("Supabase history clear failed (continuing locally):", err);
+    }
+
+    // 2. Clear ONLY reporting/history states (KEEP products, categories, branches, users)
+    set({ 
+      transactions: [],
+      returns: [],
+      warranties: [],
+      cashSessions: [],
+      bankTransactions: [],
+      inventoryAudits: [],
+      salarySettlements: [],
+      pendingOrders: [],
+      cart: [],
+      notifications: []
+    });
   },
   addUser: (user) => {
     const exists = get().users.find(u => 
