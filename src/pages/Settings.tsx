@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw, Usb, Bluetooth, Wifi, Printer, CheckCircle2, ExternalLink, AlertCircle, Sparkles, Smartphone, ChevronRight, Package, Search, X, Database, CloudUpload, CloudDownload, Check, ShieldCheck } from "lucide-react";
+import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw, Usb, Bluetooth, Wifi, Printer, CheckCircle2, ExternalLink, AlertCircle, Sparkles, Smartphone, ChevronRight, Package, Search, X, Database, CloudUpload, CloudDownload, Check, ShieldCheck, Sun, Moon } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { Branch, Category, User } from "../types";
@@ -403,31 +403,31 @@ export default function Settings() {
 
       {/* Comprehensive Employee Configuration Modal */}
       {selectedUserForConfig && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] border border-slate-100">
-            <div className="bg-slate-900 p-4 text-white flex items-center justify-between">
+        <div className="fixed inset-0 bg-slate-950/40 dark:bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-secondary w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] border border-base animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-indigo-900 dark:bg-indigo-950/50 p-4 text-white flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className={cn("p-2 rounded-xl", selectedUserForConfig.isIndependent ? "bg-amber-500/20 text-amber-400" : "bg-indigo-500/20 text-indigo-400")}>
-                  {selectedUserForConfig.isIndependent ? <Package className="w-5 h-5" /> : <Users className="w-5 h-5" />}
+                  {selectedUserForConfig.isIndependent ? <Package size={20} /> : <Users size={20} />}
                 </div>
                 <div>
                   <h3 className="text-xs font-black uppercase tracking-wider">Configuración de Empleado</h3>
-                  <p className="text-[10px] font-bold text-slate-300 uppercase">{selectedUserForConfig.name}</p>
+                  <p className="text-[10px] font-bold text-indigo-200/70 uppercase">{selectedUserForConfig.name}</p>
                 </div>
               </div>
               <button 
                 onClick={() => setSelectedUserForConfig(null)} 
-                className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer"
+                className="p-1.5 hover:bg-white/10 rounded-lg text-white/60 hover:text-white transition-colors cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X size={20} />
               </button>
             </div>
 
-            <div className="p-4 sm:p-5 overflow-y-auto custom-scrollbar space-y-5 flex-1">
+            <div className="p-4 sm:p-5 overflow-y-auto custom-scrollbar space-y-5 flex-1 bg-secondary">
               {/* Type and Role Settings */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/70 space-y-2">
-                  <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Tipo de Vendedor</span>
+                <div className="bg-subtle p-3.5 rounded-xl border border-base space-y-2">
+                  <span className="text-[8px] font-black text-muted uppercase tracking-widest block">Tipo de Vendedor</span>
                   <div className="flex gap-2">
                     <button
                       type="button"
@@ -438,11 +438,11 @@ export default function Settings() {
                       }}
                       className={cn(
                         "flex-1 py-2 px-3 rounded-lg font-black text-[9px] uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer",
-                        !selectedUserForConfig.isIndependent ? "bg-indigo-600 text-white shadow-sm" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                        !selectedUserForConfig.isIndependent ? "bg-indigo-600 text-white shadow-sm" : "bg-primary text-muted border border-base"
                       )}
                     >
-                      <Users className="w-3.5 h-3.5" />
-                      Normal / Fijo
+                      <Users size={14} />
+                      Fijo
                     </button>
                     <button
                       type="button"
@@ -453,22 +453,22 @@ export default function Settings() {
                       }}
                       className={cn(
                         "flex-1 py-2 px-3 rounded-lg font-black text-[9px] uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer",
-                        selectedUserForConfig.isIndependent ? "bg-amber-600 text-white shadow-sm" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                        selectedUserForConfig.isIndependent ? "bg-amber-600 text-white shadow-sm" : "bg-primary text-muted border border-base"
                       )}
                     >
-                      <Package className="w-3.5 h-3.5" />
-                      Independiente (IDN)
+                      <Package size={14} />
+                      IDN
                     </button>
                   </div>
                 </div>
 
                 {/* Base Salary */}
-                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/70 space-y-2">
-                  <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">
-                    {selectedUserForConfig.isIndependent ? 'Salario / Comisión Base (Opcional)' : 'Salario Base por Turno (CUP)'}
+                <div className="bg-subtle p-3.5 rounded-xl border border-base space-y-2">
+                  <span className="text-[8px] font-black text-muted uppercase tracking-widest block">
+                    {selectedUserForConfig.isIndependent ? 'Comisión Base (CUP)' : 'Salario por Turno (CUP)'}
                   </span>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-400">{baseCurrency.symbol}</span>
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-muted">{baseCurrency.symbol}</span>
                     <input 
                       type="number"
                       min="0"
@@ -479,16 +479,16 @@ export default function Settings() {
                         setEmployeeSalaries({ ...employeeSalaries, [selectedUserForConfig.id]: val });
                         updateUser(selectedUserForConfig.id, { baseSalary: val });
                       }}
-                      className="w-full pl-8 pr-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full pl-8 pr-3 py-2 bg-primary border border-base rounded-lg text-xs font-black text-primary outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
                       placeholder="0.00"
                     />
                   </div>
                 </div>
 
-                {/* Contraseña de Acceso */}
-                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/70 space-y-2 sm:col-span-2">
-                  <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">
-                    Contraseña de Acceso al Punto de Venta
+                {/* Password Section */}
+                <div className="bg-subtle p-3.5 rounded-xl border border-base space-y-2 sm:col-span-2">
+                  <span className="text-[8px] font-black text-muted uppercase tracking-widest block">
+                    Contraseña de Acceso (POS)
                   </span>
                   <input 
                     type="text"
@@ -499,27 +499,21 @@ export default function Settings() {
                       setSelectedUserForConfig(updated);
                       updateUser(selectedUserForConfig.id, { password: newPass });
                     }}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    placeholder="Escribe la contraseña para este empleado..."
+                    className="w-full px-3 py-2 bg-primary border border-base rounded-lg text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
+                    placeholder="Contraseña del empleado"
                   />
-                  <p className="text-[9px] font-medium text-slate-500">
-                    * Esta contraseña será solicitada obligatoriamente para abrir turnos y autorizar operaciones.
-                  </p>
                 </div>
               </div>
 
               {/* Branch Permissions Section */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/70 space-y-3">
+              <div className="bg-subtle p-4 rounded-xl border border-base space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-indigo-600" />
-                    <h4 className="text-[10px] font-black text-slate-900 uppercase">
-                      {selectedUserForConfig.isIndependent ? 'Almacén Exclusivo Asignado (IDN)' : 'Permisos de Sucursales'}
+                    <Building2 size={16} className="text-indigo-600" />
+                    <h4 className="text-[10px] font-black text-primary uppercase">
+                      {selectedUserForConfig.isIndependent ? 'Almacén Asignado' : 'Permisos de Sucursales'}
                     </h4>
                   </div>
-                  <span className="text-[8px] font-bold text-slate-400 uppercase">
-                    {selectedUserForConfig.isIndependent ? 'Obligatorio 1 almacén' : 'Sucursales habilitadas'}
-                  </span>
                 </div>
 
                 {selectedUserForConfig.isIndependent ? (
@@ -539,16 +533,13 @@ export default function Settings() {
                           allowedBranches: bId ? [bId] : undefined
                         });
                       }}
-                      className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                      className="w-full px-3.5 py-2.5 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                     >
-                      <option value="">-- Seleccionar almacén exclusivo --</option>
+                      <option value="">Seleccionar Almacén</option>
                       {branches.map(b => (
                         <option key={b.id} value={b.id}>{b.name}</option>
                       ))}
                     </select>
-                    <p className="text-[9px] text-amber-700 font-bold mt-1.5">
-                      * El vendedor IDN solo podrá ver y liquidar los productos de este almacén en el POS.
-                    </p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
@@ -559,7 +550,9 @@ export default function Settings() {
                           key={branch.id} 
                           className={cn(
                             "flex items-center gap-2.5 p-2.5 rounded-xl border transition-all cursor-pointer",
-                            isAllowed ? "bg-white border-indigo-200 shadow-xs" : "bg-slate-100/60 border-slate-200 opacity-60"
+                            isAllowed 
+                              ? "bg-primary border-indigo-200 dark:border-indigo-500/50 shadow-sm" 
+                              : "bg-subtle border-base opacity-40 grayscale"
                           )}
                         >
                           <input 
@@ -578,8 +571,10 @@ export default function Settings() {
                             className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
                           />
                           <div>
-                            <span className="text-[10px] font-black uppercase text-slate-800 block">{branch.name}</span>
-                            <span className="text-[8px] text-slate-400 font-bold">{isAllowed ? 'Acceso Permitido' : 'Acceso Restringido'}</span>
+                            <span className="text-[10px] font-black uppercase text-primary block">{branch.name}</span>
+                            <span className={cn("text-[8px] font-bold", isAllowed ? "text-indigo-600" : "text-muted")}>
+                              {isAllowed ? 'Autorizado' : 'Sin Acceso'}
+                            </span>
                           </div>
                         </label>
                       );
@@ -593,25 +588,24 @@ export default function Settings() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <DollarSign className="w-4 h-4 text-amber-600" />
-                      <h4 className="text-[10px] font-black text-slate-900 uppercase">Precios de Liquidación Especiales (CUP)</h4>
+                      <DollarSign size={16} className="text-amber-600" />
+                      <h4 className="text-[10px] font-black text-primary uppercase">Precios de Liquidación (CUP)</h4>
                     </div>
-                    <span className="text-[8px] font-bold text-slate-400 uppercase">Por defecto usa el Costo del Producto</span>
                   </div>
 
-                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/70 space-y-3">
+                  <div className="bg-subtle p-3.5 rounded-xl border border-base space-y-3">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                       <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
                         <input 
                           type="text" 
                           placeholder="Buscar producto..."
                           value={idnProductSearch}
                           onChange={(e) => setIdnProductSearch(e.target.value)}
-                          className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500/20"
+                          className="w-full pl-9 pr-4 py-2 bg-primary border border-base rounded-lg text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500"
                         />
                         {idnProductSearch && filteredIDNProducts.length > 0 && (
-                          <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-20 overflow-hidden">
+                          <div className="absolute top-full left-0 right-0 mt-1 bg-secondary border border-base rounded-xl shadow-xl z-20 overflow-hidden max-h-40 overflow-y-auto">
                             {filteredIDNProducts.map(p => (
                               <button
                                 key={p.id}
@@ -621,10 +615,10 @@ export default function Settings() {
                                   const existing = idnSettlementPrices.find(sp => sp.userId === selectedUserForConfig.id && sp.productId === p.id);
                                   if (existing) setNewSettlementPrice(existing.settlementPrice);
                                 }}
-                                className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center justify-between transition-colors border-b border-slate-100 last:border-0 cursor-pointer"
+                                className="w-full px-3.5 py-2 text-left hover:bg-subtle flex items-center justify-between transition-colors border-b border-base last:border-0 cursor-pointer"
                               >
-                                <span className="text-[10px] font-black uppercase text-slate-800">{p.name}</span>
-                                <span className="text-[9px] font-bold text-slate-400">{p.sku}</span>
+                                <span className="text-[10px] font-black uppercase text-primary">{p.name}</span>
+                                <span className="text-[9px] font-bold text-muted">{p.sku}</span>
                               </button>
                             ))}
                           </div>
@@ -633,13 +627,13 @@ export default function Settings() {
 
                       <div className="flex gap-2">
                         <div className="relative flex-1">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-400">$</span>
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-muted">$</span>
                           <input 
                             type="number" 
-                            placeholder="Precio Liq. (CUP)"
+                            placeholder="Precio"
                             value={newSettlementPrice || ""}
                             onChange={(e) => setNewSettlementPrice(Number(e.target.value))}
-                            className="w-full pl-7 pr-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500/20"
+                            className="w-full pl-7 pr-3 py-2 bg-primary border border-base rounded-lg text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500"
                           />
                         </div>
                         <button 
@@ -660,7 +654,7 @@ export default function Settings() {
                             setSelectedIDNProduct("");
                           }}
                           disabled={!selectedIDNProduct || newSettlementPrice <= 0}
-                          className="bg-amber-600 hover:bg-amber-700 text-white px-4 rounded-lg font-black text-[9px] uppercase transition-all shadow-sm disabled:opacity-40 cursor-pointer"
+                          className="bg-amber-600 text-white px-4 rounded-lg font-black text-[9px] uppercase transition-all shadow-sm disabled:opacity-40 cursor-pointer"
                         >
                           Asignar
                         </button>
@@ -669,9 +663,9 @@ export default function Settings() {
 
                     {selectedIDNProduct && (
                       <div className="flex items-center gap-2 px-1">
-                        <Package className="w-3.5 h-3.5 text-amber-600" />
-                        <span className="text-[9px] font-black uppercase text-amber-700">
-                          Seleccionado: {products.find(p => p.id === selectedIDNProduct)?.name}
+                        <Package size={14} className="text-amber-600" />
+                        <span className="text-[9px] font-black uppercase text-amber-600">
+                          {products.find(p => p.id === selectedIDNProduct)?.name}
                         </span>
                       </div>
                     )}
@@ -682,38 +676,37 @@ export default function Settings() {
                     {idnSettlementPrices.filter(p => p.userId === selectedUserForConfig.id).map(p => {
                       const prod = products.find(pr => pr.id === p.productId);
                       return (
-                        <div key={p.id} className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-xs">
+                        <div key={p.id} className="bg-primary p-2.5 rounded-xl border border-base flex items-center justify-between gap-3 shadow-sm">
                           <div className="min-w-0 flex-1">
-                            <p className="text-[10px] font-black text-slate-900 uppercase truncate">{prod?.name || 'Producto'}</p>
-                            <p className="text-[8px] font-bold text-slate-400 uppercase">{prod?.sku}</p>
+                            <p className="text-[10px] font-black text-primary uppercase truncate">{prod?.name || 'Producto'}</p>
+                            <p className="text-[8px] font-bold text-muted uppercase">{prod?.sku}</p>
                           </div>
                           <div className="flex items-center gap-3">
                             <div className="text-right">
-                              <p className="text-[10px] font-black text-amber-700">{baseCurrency.symbol}{p.settlementPrice.toLocaleString()} CUP</p>
-                              <p className="text-[7px] font-bold text-slate-400 uppercase">Liquidación</p>
+                              <p className="text-[10px] font-black text-indigo-600">{baseCurrency.symbol}{p.settlementPrice.toLocaleString()}</p>
+                              <p className="text-[7px] font-bold text-muted uppercase">Liquidación</p>
                             </div>
                             <button 
                               onClick={() => deleteIDNSettlementPrice(p.id)}
-                              className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
-                              title="Eliminar regla de precio"
+                              className="p-1.5 text-muted hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-all cursor-pointer"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         </div>
                       );
                     })}
                     {idnSettlementPrices.filter(p => p.userId === selectedUserForConfig.id).length === 0 && (
-                      <div className="py-4 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                        <p className="text-[9px] font-bold text-slate-400 uppercase">Sin precios de liquidación personalizados (usará costo por defecto)</p>
+                      <div className="py-4 text-center bg-subtle rounded-xl border border-dashed border-base">
+                        <p className="text-[9px] font-bold text-muted uppercase">Sin precios de liquidación personalizados</p>
                       </div>
                     )}
                   </div>
                 </div>
               )}
 
-              {/* Danger Zone: Delete user */}
-              <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+              {/* Action area */}
+              <div className="pt-2 border-t border-base flex items-center justify-between">
                 <button
                    type="button"
                    onClick={() => {
@@ -723,10 +716,10 @@ export default function Settings() {
                        setUserToDelete({ id: userToDeleteTarget.id, name: userToDeleteTarget.name });
                      }
                    }}
-                   className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer"
+                   className="text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer"
                  >
-                   <Trash2 className="w-3.5 h-3.5" />
-                   Eliminar Empleado
+                   <Trash2 size={14} />
+                   Eliminar
                  </button>
 
                 <button 
@@ -734,9 +727,9 @@ export default function Settings() {
                   onClick={() => {
                     setSelectedUserForConfig(null);
                   }}
-                  className="bg-slate-900 hover:bg-slate-800 text-white px-6 py-2.5 rounded-xl font-black text-[10px] uppercase transition-all shadow-md cursor-pointer"
+                  className="bg-indigo-600 text-white px-8 py-2.5 rounded-xl font-black text-[10px] uppercase transition-all shadow-md active:scale-95 cursor-pointer"
                 >
-                  Listo / Cerrar
+                  Listo
                 </button>
               </div>
             </div>
@@ -996,28 +989,28 @@ export default function Settings() {
         </div>
 
         {/* Categorías (Compact) */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4">
-          <div className="flex items-center gap-3 border-b border-slate-50 pb-3">
-            <div className="bg-amber-50 p-2 rounded-lg text-amber-600">
-              <LayoutGrid className="w-4 h-4" />
+        <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4">
+          <div className="flex items-center gap-3 border-b border-base pb-3">
+            <div className="bg-amber-50 dark:bg-amber-950/30 p-2 rounded-lg text-amber-600 dark:text-amber-400">
+              <LayoutGrid size={16} />
             </div>
             <div>
-              <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Categorías</h3>
-              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Clasificación de Inventario</p>
+              <h3 className="text-xs font-black text-primary uppercase tracking-wider">Categorías</h3>
+              <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Clasificación de Inventario</p>
             </div>
           </div>
 
           <div className="space-y-3">
             <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
               {categories.map(cat => (
-                <div key={cat.id} className="flex justify-between items-center bg-slate-50 p-2 rounded-xl border border-slate-100 group">
+                <div key={cat.id} className="flex justify-between items-center bg-subtle p-2 rounded-xl border border-base group">
                   <div className="flex-1 min-w-0 mr-2">
-                    <div className="text-[10px] font-black text-slate-700 uppercase tracking-tight truncate">{cat.name}</div>
-                    <div className="text-[7px] font-bold text-slate-400 uppercase truncate">{cat.department}</div>
+                    <div className="text-[10px] font-black text-primary uppercase tracking-tight truncate">{cat.name}</div>
+                    <div className="text-[7px] font-bold text-muted uppercase truncate">{cat.department}</div>
                   </div>
                   <div className="flex gap-1 shrink-0">
-                    <button onClick={() => { setEditingCategory(cat); setNewCategory({ name: cat.name, department: cat.department }); }} className="p-1 text-slate-300 hover:text-indigo-600 rounded-md transition-colors"><Edit className="w-3 h-3" /></button>
-                    <button onClick={() => setCategoryToDelete({ id: cat.id, name: cat.name })} className="p-1 text-slate-300 hover:text-rose-500 rounded-md transition-colors"><Trash2 className="w-3 h-3" /></button>
+                    <button onClick={() => { setEditingCategory(cat); setNewCategory({ name: cat.name, department: cat.department }); }} className="p-1 text-muted hover:text-indigo-600 rounded-md transition-colors cursor-pointer"><Edit size={12} /></button>
+                    <button onClick={() => setCategoryToDelete({ id: cat.id, name: cat.name })} className="p-1 text-muted hover:text-rose-500 rounded-md transition-colors cursor-pointer"><Trash2 size={12} /></button>
                   </div>
                 </div>
               ))}
@@ -1029,20 +1022,20 @@ export default function Settings() {
                   value={newCategory.name}
                   onChange={e => setNewCategory({ ...newCategory, name: e.target.value })}
                   placeholder="Categoría"
-                  className="flex-[2] min-w-0 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner" 
+                  className="flex-[2] min-w-0 w-full px-3 py-2 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm" 
                 />
                 <input 
                   type="text" 
                   value={newCategory.department}
                   onChange={e => setNewCategory({ ...newCategory, department: e.target.value })}
-                  placeholder="Departamento"
-                  className="flex-1 min-w-0 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner" 
+                  placeholder="Depto"
+                  className="flex-1 min-w-0 w-full px-3 py-2 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm" 
                 />
                 <button 
                   onClick={handleAddCategory} 
-                  className="p-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 active:scale-95 transition-all flex items-center justify-center shadow-lg shadow-indigo-100 shrink-0"
+                  className="p-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 active:scale-95 transition-all flex items-center justify-center shadow-md shrink-0 cursor-pointer"
                 >
-                  {editingCategory ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                  {editingCategory ? <Save size={16} /> : <Plus size={16} />}
                 </button>
               </div>
             </div>
@@ -1050,26 +1043,26 @@ export default function Settings() {
         </div>
 
         {/* Sucursales (Branches) */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4">
-          <div className="flex items-center gap-3 border-b border-slate-50 pb-3">
-            <div className="bg-indigo-50 p-2 rounded-lg text-indigo-600">
-              <Store className="w-4 h-4" />
+        <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4">
+          <div className="flex items-center gap-3 border-b border-base pb-3">
+            <div className="bg-indigo-50 dark:bg-indigo-950/30 p-2 rounded-lg text-indigo-600 dark:text-indigo-400">
+              <Store size={16} />
             </div>
             <div>
-              <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Sucursales</h3>
-              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Gestión de Ubicaciones</p>
+              <h3 className="text-xs font-black text-primary uppercase tracking-wider">Sucursales</h3>
+              <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Gestión de Ubicaciones</p>
             </div>
           </div>
 
           <div className="space-y-3">
             <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
               {branches.map(branch => (
-                <div key={branch.id} className="flex justify-between items-center bg-slate-50 p-2 rounded-xl border border-slate-100 group">
-                  <div className="text-[10px] font-black text-slate-700 uppercase tracking-tight truncate flex-1 min-w-0">{branch.name}</div>
+                <div key={branch.id} className="flex justify-between items-center bg-subtle p-2 rounded-xl border border-base group">
+                  <div className="text-[10px] font-black text-primary uppercase tracking-tight truncate flex-1 min-w-0">{branch.name}</div>
                   <div className="flex gap-1 shrink-0 ml-2">
-                    <button onClick={() => { setEditingBranch(branch); setNewBranchName(branch.name); }} className="p-1 text-slate-300 hover:text-indigo-600 rounded-md transition-colors"><Edit className="w-3 h-3" /></button>
+                    <button onClick={() => { setEditingBranch(branch); setNewBranchName(branch.name); }} className="p-1 text-muted hover:text-indigo-600 rounded-md transition-colors cursor-pointer"><Edit size={12} /></button>
                     {branches.length > 1 && (
-                      <button onClick={() => setBranchToDelete({ id: branch.id, name: branch.name })} className="p-1 text-slate-300 hover:text-rose-500 rounded-md transition-colors"><Trash2 className="w-3 h-3" /></button>
+                      <button onClick={() => setBranchToDelete({ id: branch.id, name: branch.name })} className="p-1 text-muted hover:text-rose-500 rounded-md transition-colors cursor-pointer"><Trash2 size={12} /></button>
                     )}
                   </div>
                 </div>
@@ -1081,11 +1074,11 @@ export default function Settings() {
                   type="text" 
                   value={newBranchName}
                   onChange={e => setNewBranchName(e.target.value)}
-                  placeholder="Nombre de Sucursal"
-                  className="flex-1 min-w-0 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100" 
+                  placeholder="Nombre"
+                  className="flex-1 min-w-0 px-3 py-2 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500" 
                 />
-                <button onClick={handleAddBranch} className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 active:scale-95 transition-all shrink-0">
-                  {editingBranch ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                <button onClick={handleAddBranch} className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 active:scale-95 transition-all shrink-0 cursor-pointer">
+                  {editingBranch ? <Save size={16} /> : <Plus size={16} />}
                 </button>
               </div>
             </div>
@@ -1093,71 +1086,91 @@ export default function Settings() {
         </div>
 
         {/* Apariencia y Visibilidad (Mejorado para Miopía) */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4 lg:col-span-3">
-          <div className="flex items-center gap-3 border-b border-slate-50 pb-3">
-            <div className="bg-slate-900 p-2 rounded-lg text-white">
-              <Sparkles className="w-4 h-4" />
+        <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4 lg:col-span-3">
+          <div className="flex items-center gap-3 border-b border-base pb-3">
+            <div className="bg-indigo-600 p-2 rounded-lg text-white">
+              <Sparkles size={16} />
             </div>
             <div>
-              <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Apariencia y Visibilidad</h3>
-              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Personalización del entorno de trabajo</p>
+              <h3 className="text-xs font-black text-primary uppercase tracking-wider">Apariencia y Visibilidad</h3>
+              <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Personalización del entorno de trabajo</p>
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-6 bg-slate-50 p-5 rounded-2xl border border-slate-200/60">
-            <div className="flex-1 space-y-1">
-              <div className="flex items-center gap-2">
-                <h4 className="text-sm font-black text-slate-900 uppercase">Modo Oscuro (Contraste Suave)</h4>
-                <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[7px] font-black rounded-full uppercase">Recomendado para Miopía</span>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-6 bg-subtle p-6 rounded-2xl border border-base">
+            <div className="flex-1 space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="bg-primary text-indigo-600 p-2 rounded-xl shadow-sm border border-base">
+                  {config.darkMode ? <Moon size={16} /> : <Sun size={16} />}
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-primary uppercase tracking-tight">Experiencia Visual</h4>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 text-[8px] font-black rounded-full uppercase tracking-wider border border-indigo-200 dark:border-indigo-800">
+                      Enterprise Mode
+                    </span>
+                  </div>
+                </div>
               </div>
-              <p className="text-[10px] text-slate-600 font-medium max-w-2xl">
-                Al activar el modo oscuro, el fondo se vuelve gris azulado profundo y las letras blancas suaves. Esto reduce el deslumbramiento, mejora la nitidez de los bordes para personas con miopía y disminuye el cansancio visual tras largas jornadas de trabajo.
+              <p className="text-[11px] text-secondary leading-relaxed max-w-xl">
+                Personaliza el entorno de trabajo. El modo oscuro utiliza una paleta de grises profundos diseñada para reducir la fatiga visual.
               </p>
             </div>
 
-            <div className="shrink-0 flex items-center gap-3">
-              <span className={cn("text-[10px] font-black uppercase tracking-widest transition-colors", !config.darkMode ? "text-indigo-600" : "text-slate-400")}>Luz</span>
-              <button 
-                type="button"
-                onClick={() => {
-                  const newConfig = { ...config, darkMode: !config.darkMode };
-                  setConfig(newConfig);
-                  updateStoreConfig(newConfig);
-                  showToast(newConfig.darkMode ? "Modo oscuro activado" : "Modo luz activado");
-                }}
-                className={cn(
-                  "relative inline-flex h-7 w-14 items-center rounded-full transition-all duration-300 focus:outline-none",
-                  config.darkMode ? "bg-indigo-600" : "bg-slate-300"
-                )}
-              >
-                <span
+            <div className="shrink-0 flex flex-col items-end gap-3">
+              <div className="bg-secondary p-1.5 rounded-2xl border border-base shadow-sm flex items-center gap-1">
+                <button 
+                  onClick={() => {
+                    const newConfig = { ...config, darkMode: false };
+                    setConfig(newConfig);
+                    updateStoreConfig(newConfig);
+                    showToast("Modo luz activado");
+                  }}
                   className={cn(
-                    "inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-300",
-                    config.darkMode ? "translate-x-8" : "translate-x-1"
+                    "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer",
+                    !config.darkMode ? "bg-indigo-600 text-white shadow-lg" : "text-muted hover:bg-subtle"
                   )}
-                />
-              </button>
-              <span className={cn("text-[10px] font-black uppercase tracking-widest transition-colors", config.darkMode ? "text-indigo-600" : "text-slate-400")}>Oscuro</span>
+                >
+                  <Sun size={14} />
+                  Luz
+                </button>
+                <button 
+                  onClick={() => {
+                    const newConfig = { ...config, darkMode: true };
+                    setConfig(newConfig);
+                    updateStoreConfig(newConfig);
+                    showToast("Modo oscuro activado");
+                  }}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer",
+                    config.darkMode ? "bg-indigo-600 text-white shadow-lg" : "text-muted hover:bg-subtle"
+                  )}
+                >
+                  <Moon size={14} />
+                  Oscuro
+                </button>
+              </div>
+              <p className="text-[9px] font-bold text-muted uppercase tracking-widest px-2">Selección de Tema</p>
             </div>
           </div>
         </div>
 
         {/* Supabase Diagnostic & Cloud Storage Panel */}
-        <div className="bg-white rounded-2xl shadow-sm border border-indigo-100 p-5 space-y-4 lg:col-span-3">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+        <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4 lg:col-span-3">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-base pb-3">
             <div className="flex items-center gap-3">
-              <div className="bg-indigo-50 p-2.5 rounded-xl text-indigo-600">
-                <Database className="w-5 h-5" />
+              <div className="bg-indigo-50 dark:bg-indigo-950/30 p-2.5 rounded-xl text-indigo-600 dark:text-indigo-400">
+                <Database size={20} />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Servidor Supabase & Base de Datos Cloud</h3>
-                  <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[8px] font-black rounded-full uppercase flex items-center gap-1">
-                    <ShieldCheck className="w-2.5 h-2.5" /> Activo
+                  <h3 className="text-xs font-black text-primary uppercase tracking-wider">Servidor Supabase</h3>
+                  <span className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-400 text-[8px] font-black rounded-full uppercase flex items-center gap-1 border border-emerald-200 dark:border-emerald-800">
+                    <ShieldCheck size={10} /> Activo
                   </span>
                 </div>
-                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tight">
-                  Verificación de persistencia, sincronización automática y diagnóstico en tiempo real
+                <p className="text-[9px] font-bold text-muted uppercase tracking-tight">
+                  Sincronización automática y diagnóstico Cloud
                 </p>
               </div>
             </div>
@@ -1167,100 +1180,45 @@ export default function Settings() {
                 type="button"
                 onClick={handleRunSupabaseDiagnostic}
                 disabled={isTestingSupabase}
-                className="flex-1 sm:flex-initial px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+                className="flex-1 sm:flex-initial px-3.5 py-2 bg-primary border border-base text-primary rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
               >
-                {isTestingSupabase ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5 text-indigo-400" />}
-                Diagnóstico y Test
+                {isTestingSupabase ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} className="text-indigo-600" />}
+                Diagnóstico
               </button>
 
               <button
                 type="button"
                 onClick={handlePushAllToCloud}
                 disabled={isPushingAll}
-                className="flex-1 sm:flex-initial px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+                className="flex-1 sm:flex-initial px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
               >
-                {isPushingAll ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CloudUpload className="w-3.5 h-3.5" />}
-                Guardar Todo en Supabase
-              </button>
-
-              <button
-                type="button"
-                onClick={handlePullAllFromCloud}
-                disabled={isPullingAll}
-                className="flex-1 sm:flex-initial px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
-              >
-                {isPullingAll ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CloudDownload className="w-3.5 h-3.5 text-slate-600" />}
-                Descargar de Supabase
+                {isPushingAll ? <RefreshCw size={14} className="animate-spin" /> : <CloudUpload size={14} />}
+                Guardar Todo
               </button>
             </div>
           </div>
-
-          {pushSummary && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-xs font-bold text-emerald-900">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>{pushSummary}</span>
-            </div>
-          )}
-
-          {diagnosticReport && (
-            <div className="space-y-3 animate-in fade-in duration-300">
-              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
-                {diagnosticReport.tables.map(t => (
-                  <div 
-                    key={t.table}
-                    className={cn(
-                      "p-2.5 rounded-xl border text-center flex flex-col justify-between gap-1",
-                      t.status === 'ok' ? "bg-emerald-50/50 border-emerald-200 text-emerald-900" : 
-                      t.status === 'warning' ? "bg-amber-50/50 border-amber-200 text-amber-900" :
-                      "bg-rose-50/50 border-rose-200 text-rose-900"
-                    )}
-                  >
-                    <div className="text-[8px] font-black uppercase truncate" title={t.label || t.table}>
-                      {t.label || t.table}
-                    </div>
-                    <div className="text-xs font-black">{t.count} filas</div>
-                    <div className="text-[7px] font-black uppercase flex items-center justify-center gap-0.5">
-                      {t.status === 'ok' ? (
-                        <span className="text-emerald-600 flex items-center gap-0.5"><Check className="w-2.5 h-2.5" /> OK</span>
-                      ) : t.status === 'warning' ? (
-                        <span className="text-amber-600 flex items-center gap-0.5"><AlertTriangle className="w-2.5 h-2.5" /> Aviso</span>
-                      ) : (
-                        <span className="text-rose-600 flex items-center gap-0.5"><AlertCircle className="w-2.5 h-2.5" /> Error</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between text-xs font-bold text-slate-700">
-                <span>{diagnosticReport.summary}</span>
-                <span className="text-[9px] text-slate-400 uppercase font-black">Probado {new Date(diagnosticReport.timestamp).toLocaleTimeString()}</span>
-              </div>
-            </div>
-          )}
         </div>
 
-        
         {/* Configuración de Ticket / Recibo */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4 lg:col-span-3">
-          <div className="flex items-center gap-3 border-b border-slate-50 pb-3">
-            <div className="bg-indigo-50 p-2 rounded-lg text-indigo-600">
-              <Plus className="w-4 h-4" />
+        <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4 lg:col-span-3">
+          <div className="flex items-center gap-3 border-b border-base pb-3">
+            <div className="bg-indigo-50 dark:bg-indigo-950/30 p-2 rounded-lg text-indigo-600 dark:text-indigo-400">
+              <Plus size={16} />
             </div>
             <div>
-              <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Configuración de Ticket e Información del Negocio</h3>
-              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Datos que aparecerán en el recibo del cliente</p>
+              <h3 className="text-xs font-black text-primary uppercase tracking-wider">Configuración de Ticket</h3>
+              <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Información comercial en el recibo</p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-4">
-              <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1">Configuración Hardware e Impresión</h4>
+              <h4 className="text-[9px] font-black text-muted uppercase tracking-widest border-b border-base pb-1">Hardware e Impresión</h4>
               <div className="space-y-3">
                 <label className="flex items-center justify-between cursor-pointer group">
                   <div className="flex flex-col">
-                    <span className="text-[10px] font-bold text-slate-600 uppercase group-hover:text-slate-900 transition-colors">Impresión Automática</span>
-                    <span className="text-[7px] text-slate-400 font-medium">Imprimir ticket al confirmar cobro sin preguntar.</span>
+                    <span className="text-[10px] font-bold text-secondary group-hover:text-primary transition-colors uppercase">Impresión Automática</span>
+                    <span className="text-[7px] text-muted font-medium uppercase">Sin confirmación previa</span>
                   </div>
                   <div className="relative inline-flex items-center ml-2">
                     <input 
@@ -1269,12 +1227,12 @@ export default function Settings() {
                       checked={ticketConfig.autoPrint ?? false}
                       onChange={e => setTicketConfig({...ticketConfig, autoPrint: e.target.checked})}
                     />
-                    <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                    <div className="w-8 h-4 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
                   </div>
                 </label>
 
                 <label className="flex items-center justify-between cursor-pointer group">
-                  <span className="text-[10px] font-bold text-slate-600 uppercase group-hover:text-slate-900 transition-colors">Abrir Gaveta</span>
+                  <span className="text-[10px] font-bold text-secondary group-hover:text-primary transition-colors uppercase">Abrir Gaveta</span>
                   <div className="relative inline-flex items-center">
                     <input 
                       type="checkbox" 
@@ -1282,14 +1240,14 @@ export default function Settings() {
                       checked={ticketConfig.openDrawer ?? true}
                       onChange={e => setTicketConfig({...ticketConfig, openDrawer: e.target.checked})}
                     />
-                    <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                    <div className="w-8 h-4 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
                   </div>
                 </label>
                 
                 <label className="flex items-center justify-between cursor-pointer group">
                   <div>
-                    <span className="text-[10px] font-bold text-slate-600 uppercase group-hover:text-slate-900 transition-colors block">Impresión Nativa Térmica</span>
-                    <span className="text-[7px] text-slate-400 font-medium">Conexión directa por USB, Bluetooth o Wi-Fi.</span>
+                    <span className="text-[10px] font-bold text-secondary group-hover:text-primary transition-colors block uppercase">Impresión Nativa</span>
+                    <span className="text-[7px] text-muted font-medium uppercase">Directo USB / BT / WiFi</span>
                   </div>
                   <div className="relative inline-flex items-center ml-2 shrink-0">
                     <input 
@@ -1298,53 +1256,43 @@ export default function Settings() {
                       checked={ticketConfig.useWebSerial ?? false}
                       onChange={e => setTicketConfig({...ticketConfig, useWebSerial: e.target.checked})}
                     />
-                    <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                    <div className="w-8 h-4 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
                   </div>
                 </label>
 
                 {ticketConfig.useWebSerial && (
-                  <div className="space-y-2.5 p-3.5 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="space-y-2.5 p-3.5 bg-subtle rounded-xl border border-base">
                     <div className="flex items-center justify-between">
-                      <span className="block text-[8px] font-black text-slate-500 uppercase tracking-widest">Buscar / Emparejar Impresora</span>
+                      <span className="block text-[8px] font-black text-muted uppercase tracking-widest">Buscar Impresora</span>
                       {isInIframe && (
                         <button
                           type="button"
                           onClick={() => window.open(window.location.href, '_blank')}
-                          className="text-[8px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 bg-indigo-50 px-2 py-0.5 rounded"
-                          title="Abre en nueva pestaña para habilitar Bluetooth y USB sin bloqueos del visor"
+                          className="text-[8px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 bg-indigo-50 dark:bg-indigo-950/50 px-2 py-0.5 rounded transition-all cursor-pointer"
                         >
-                          <ExternalLink className="w-2.5 h-2.5" />
-                          Abrir en Pestaña Directa
+                          <ExternalLink size={10} />
+                          Externo
                         </button>
                       )}
                     </div>
                     
-                    {isInIframe && (
-                      <div className="p-2 bg-amber-50 border border-amber-200/70 rounded-lg text-amber-800 text-[8px] leading-relaxed flex items-start gap-1.5">
-                        <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                        <div>
-                          <strong>Nota de Seguridad del Navegador:</strong> Los botones de Bluetooth y USB requieren permisos nativos. Si estás en una ventana embebida, pulsa <button type="button" onClick={() => window.open(window.location.href, '_blank')} className="font-bold underline text-indigo-700">Abrir en Pestaña Directa</button> para buscar dispositivos sin restricciones.
-                        </div>
-                      </div>
-                    )}
-
                     {printerStatus && (
                       <div className={cn(
                         "p-2.5 rounded-lg text-[9px] font-medium leading-tight flex items-start gap-2 animate-in fade-in duration-200",
-                        printerStatus.type === 'loading' && "bg-blue-50 border border-blue-200 text-blue-800",
-                        printerStatus.type === 'success' && "bg-emerald-50 border border-emerald-200 text-emerald-900 font-bold",
-                        printerStatus.type === 'error' && "bg-rose-50 border border-rose-200 text-rose-800",
-                        printerStatus.type === 'warning' && "bg-amber-50 border border-amber-200 text-amber-800",
-                        printerStatus.type === 'idle' && "bg-slate-100 border border-slate-200 text-slate-700"
+                        printerStatus.type === 'loading' && "bg-blue-50 border border-blue-200 text-blue-800 dark:bg-blue-950/20 dark:border-blue-800/50 dark:text-blue-200",
+                        printerStatus.type === 'success' && "bg-emerald-50 border border-emerald-200 text-emerald-900 dark:bg-emerald-950/20 dark:border-emerald-800/50 dark:text-emerald-200",
+                        printerStatus.type === 'error' && "bg-rose-50 border border-rose-200 text-rose-800 dark:bg-rose-950/20 dark:border-rose-800/50 dark:text-rose-200",
+                        printerStatus.type === 'warning' && "bg-amber-50 border border-amber-200 text-amber-800 dark:bg-amber-950/20 dark:border-amber-800/50 dark:text-amber-200",
+                        printerStatus.type === 'idle' && "bg-subtle border border-base text-muted"
                       )}>
-                        {printerStatus.type === 'loading' && <RefreshCw className="w-3.5 h-3.5 text-blue-600 animate-spin shrink-0 mt-0.5" />}
-                        {printerStatus.type === 'success' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />}
-                        {printerStatus.type === 'error' && <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />}
-                        {printerStatus.type === 'warning' && <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />}
+                        {printerStatus.type === 'loading' && <RefreshCw size={14} className="animate-spin shrink-0 mt-0.5" />}
+                        {printerStatus.type === 'success' && <CheckCircle2 size={14} className="shrink-0 mt-0.5" />}
+                        {printerStatus.type === 'error' && <AlertTriangle size={14} className="shrink-0 mt-0.5" />}
+                        {printerStatus.type === 'warning' && <AlertCircle size={14} className="shrink-0 mt-0.5" />}
                         <div className="flex-1">
                           <p>{printerStatus.message}</p>
                           {printerStatus.deviceName && (
-                            <p className="text-[8px] opacity-80 mt-0.5 font-bold">Dispositivo: {printerStatus.deviceName}</p>
+                            <p className="text-[8px] opacity-80 mt-0.5 font-bold uppercase">Dispositivo: {printerStatus.deviceName}</p>
                           )}
                         </div>
                       </div>
@@ -1354,183 +1302,112 @@ export default function Settings() {
                       <button
                         type="button"
                         onClick={async () => {
-                          setPrinterStatus({ type: 'loading', message: 'Buscando puertos USB / Serie disponibles...' });
+                          setPrinterStatus({ type: 'loading', message: 'Buscando puertos USB...' });
                           try {
                             const { connectPrinter, isInsideIframe } = await import('../lib/escpos');
                             if (isInsideIframe()) {
                               setPrinterStatus({
                                 type: 'warning',
-                                message: 'Las conexiones USB nativas están bloqueadas en el visor embebido. Abre la aplicación en una pestaña nueva.'
+                                message: 'USB nativo bloqueado en el visor. Abre en pestaña externa.'
                               });
                               return;
                             }
                             await connectPrinter();
                             setPrinterStatus({
                               type: 'success',
-                              message: 'Impresora USB / Serie conectada y lista para imprimir.',
+                              message: 'USB conectado y listo.',
                               deviceName: 'Puerto Serie USB'
                             });
                           } catch (error: any) {
                             if (error.message?.includes('cancelada')) {
-                              setPrinterStatus({ type: 'idle', message: 'Selección de puerto cancelada.' });
+                              setPrinterStatus({ type: 'idle', message: 'Selección cancelada.' });
                               return;
                             }
-                            setPrinterStatus({ type: 'error', message: error.message || 'Error al conectar por USB' });
+                            setPrinterStatus({ type: 'error', message: error.message || 'Error USB' });
                           }
                         }}
-                        className="py-2.5 px-3 bg-white border border-slate-200 text-slate-800 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
+                        className="py-2.5 px-3 bg-primary border border-base text-primary rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-subtle transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
                       >
-                        <Usb className="w-3.5 h-3.5 text-indigo-600" />
-                        Buscar USB / Serie
+                        <Usb size={14} className="text-indigo-600" />
+                        USB / Serie
                       </button>
 
                       <button
                         type="button"
                         onClick={async () => {
-                          setPrinterStatus({ type: 'loading', message: 'Abriendo escaneo de dispositivos Bluetooth...' });
+                          setPrinterStatus({ type: 'loading', message: 'Escaneando Bluetooth...' });
                           try {
                             const { connectBluetoothPrinter, isInsideIframe } = await import('../lib/escpos');
                             if (isInsideIframe()) {
                               setPrinterStatus({
                                 type: 'warning',
-                                message: 'Web Bluetooth está restringido dentro del visor. Abre la app en una nueva pestaña para emparejar.'
+                                message: 'Bluetooth bloqueado en el visor. Abre en pestaña externa.'
                               });
                               return;
                             }
                             const dev = await connectBluetoothPrinter();
                             setPrinterStatus({
                               type: 'success',
-                              message: 'Impresora Bluetooth vinculada exitosamente.',
-                              deviceName: dev?.name || 'Impresora Térmica Bluetooth'
+                              message: 'Bluetooth vinculado.',
+                              deviceName: dev?.name || 'BT Printer'
                             });
                           } catch (error: any) {
                             if (error.message?.includes('cancelada')) {
-                              setPrinterStatus({ type: 'idle', message: 'Búsqueda Bluetooth cancelada.' });
+                              setPrinterStatus({ type: 'idle', message: 'Cancelado.' });
                               return;
                             }
-                            setPrinterStatus({ type: 'error', message: error.message || 'Error al buscar Bluetooth' });
+                            setPrinterStatus({ type: 'error', message: error.message || 'Error BT' });
                           }
                         }}
-                        className="py-2.5 px-3 bg-white border border-slate-200 text-slate-800 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700 transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
+                        className="py-2.5 px-3 bg-primary border border-base text-primary rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-subtle transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
                       >
-                        <Bluetooth className="w-3.5 h-3.5 text-blue-600" />
-                        Buscar Bluetooth
+                        <Bluetooth size={14} className="text-blue-600" />
+                        Bluetooth
                       </button>
                     </div>
 
-                    <div className="pt-2 border-t border-slate-200/60 flex items-center gap-2">
+                    <div className="pt-2 border-t border-base flex items-center gap-2">
                       <div className="relative flex-1">
-                        <Wifi className="w-3 h-3 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                        <Wifi size={12} className="text-muted absolute left-2.5 top-1/2 -translate-y-1/2" />
                         <input
                           type="text"
-                          placeholder="IP Impresora (Ej: 192.168.1.100)"
+                          placeholder="IP (Ej: 192.168.1.100)"
                           value={ticketConfig.printerIp || ''}
                           onChange={e => setTicketConfig({ ...ticketConfig, printerIp: e.target.value })}
-                          className="w-full pl-7 pr-2 py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-slate-800 placeholder:text-slate-400 outline-none focus:border-indigo-500"
+                          className="w-full pl-7 pr-2 py-1.5 bg-primary border border-base rounded-lg text-[10px] font-bold text-primary placeholder:text-muted outline-none focus:ring-1 focus:ring-indigo-500"
                         />
                       </div>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            const { testWifiPrinterConnection } = await import('../lib/escpos');
-                            await testWifiPrinterConnection(ticketConfig.printerIp || '');
-                            setPrinterStatus({
-                              type: 'success',
-                              message: `Dirección IP de impresora configurada correctamente: ${ticketConfig.printerIp}`
-                            });
-                          } catch (error: any) {
-                            setPrinterStatus({ type: 'error', message: error.message || 'IP no válida' });
-                          }
-                        }}
-                        className="px-2.5 py-1.5 bg-indigo-600 text-white rounded-lg text-[8px] font-black uppercase tracking-wider hover:bg-indigo-700 transition-all shrink-0"
-                      >
-                        Probar IP
-                      </button>
                     </div>
 
-                    <div className="pt-1 flex flex-col gap-1.5">
+                    <div className="space-y-1 pt-1">
                       <button
                         type="button"
                         onClick={async () => {
-                          setPrinterStatus({ type: 'loading', message: 'Enviando ticket de prueba a impresora térmica...' });
                           try {
-                            const { printThermalReceipt } = await import('../lib/escpos');
-                            const lines = [
-                              "CENTER|BOLD|MARÉ STORE",
-                              "CENTER|*** TICKET DE PRUEBA ***",
-                              ticketConfig.businessPhone ? `CENTER|Tel: ${ticketConfig.businessPhone}` : "",
-                              "---",
-                              "1x Producto Demostración   $10.00",
-                              "---",
-                              "BOLD|TOTAL: $10.00",
-                              "---",
-                              "CENTER|Impresion Termica 58mm OK",
-                              `CENTER|${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                            ].filter(Boolean);
-                            const success = await printThermalReceipt({
-                              lines,
-                              openDrawer: ticketConfig.openDrawer ?? false,
-                              width: ticketConfig.printerWidth || '58mm',
-                              onSuccess: (method) => {
-                                setPrinterStatus({ type: 'success', message: `¡Ticket enviado exitosamente mediante ${method}!` });
-                              },
-                              onError: (err) => {
-                                setPrinterStatus({ type: 'error', message: `No se pudo imprimir: ${err}` });
-                              }
+                            const { printESCPOS } = await import('../lib/escpos');
+                            await printESCPOS({
+                              lines: ["CENTER|BOLD|MARÉ STORE", "CENTER|PRUEBA DIRECTA", "---", "BOLD|CONEXIÓN OK", "---"],
+                              width: ticketConfig.printerWidth || '58mm'
                             });
-                            if (!success) {
-                              setPrinterStatus({
-                                type: 'warning',
-                                message: 'No hay impresora Bluetooth o USB conectada. Puedes usar el botón RawBT para Android o conectar por Bluetooth primero.'
-                              });
-                            }
                           } catch (err: any) {
-                            setPrinterStatus({
-                              type: 'error',
-                              message: `Error de impresión: ${err.message}`
-                            });
+                            setPrinterStatus({ type: 'error', message: `Error: ${err.message}` });
                           }
                         }}
-                        className="w-full py-2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-emerald-100 transition-all flex items-center justify-center gap-1.5"
+                        className="w-full py-2 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-indigo-100 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                       >
-                        <Printer className="w-3.5 h-3.5 text-emerald-600" />
-                        Imprimir Ticket de Prueba (Directo)
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const { printThermalReceipt } = await import('../lib/escpos');
-                          await printThermalReceipt({
-                            lines: [
-                              "CENTER|BOLD|MARÉ STORE",
-                              "CENTER|PRUEBA RAWBT ANDROID",
-                              "---",
-                              "1x Producto Prueba   $10.00",
-                              "---",
-                              "BOLD|TOTAL: $10.00",
-                              "---"
-                            ],
-                            width: ticketConfig.printerWidth || '58mm',
-                            preferRawBT: true
-                          });
-                        }}
-                        className="w-full py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg text-[8px] font-black uppercase tracking-wider hover:bg-indigo-100 transition-all flex items-center justify-center gap-1.5"
-                      >
-                        <Smartphone className="w-3 h-3 text-indigo-600" />
-                        Probar con App RawBT (Android)
+                        <Printer size={14} />
+                        Ticket de Prueba
                       </button>
                     </div>
                   </div>
                 )}
 
                 <div>
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Tamaño Papel</label>
+                  <label className="block text-[8px] font-black text-muted uppercase tracking-widest mb-1">Ancho de Papel</label>
                   <select 
                     value={ticketConfig.printerWidth || '80mm'}
                     onChange={e => setTicketConfig({...ticketConfig, printerWidth: e.target.value as '58mm' | '80mm'})}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100"
+                    className="w-full px-3 py-2 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                   >
                     <option value="58mm">58 mm (Pequeña)</option>
                     <option value="80mm">80 mm (Estándar)</option>
@@ -1538,16 +1415,16 @@ export default function Settings() {
                 </div>
               </div>
               
-              <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1 mt-6">Campos Visibles</h4>
+              <h4 className="text-[9px] font-black text-muted uppercase tracking-widest border-b border-base pb-1 mt-6">Visibilidad</h4>
               <div className="space-y-3">
                 {[
-                  { key: 'showLogo', label: 'Mostrar Logo / Nombre' },
-                  { key: 'showAddress', label: 'Mostrar Dirección' },
-                  { key: 'showPhone', label: 'Mostrar Teléfono' },
-                  { key: 'showFooter', label: 'Mostrar Pie de Página' },
+                  { key: 'showLogo', label: 'Nombre / Logo' },
+                  { key: 'showAddress', label: 'Dirección' },
+                  { key: 'showPhone', label: 'Teléfono' },
+                  { key: 'showFooter', label: 'Pie de Página' },
                 ].map(item => (
                   <label key={item.key} className="flex items-center justify-between cursor-pointer group">
-                    <span className="text-[10px] font-bold text-slate-600 uppercase group-hover:text-slate-900 transition-colors">{item.label}</span>
+                    <span className="text-[10px] font-bold text-secondary group-hover:text-primary transition-colors uppercase">{item.label}</span>
                     <div className="relative inline-flex items-center">
                       <input 
                         type="checkbox" 
@@ -1555,7 +1432,7 @@ export default function Settings() {
                         checked={(ticketConfig as any)[item.key]}
                         onChange={e => setTicketConfig({...ticketConfig, [item.key]: e.target.checked})}
                       />
-                      <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+                      <div className="w-8 h-4 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
                     </div>
                   </label>
                 ))}
@@ -1563,145 +1440,154 @@ export default function Settings() {
             </div>
 
             <div className="space-y-4 col-span-1 md:col-span-2">
-              <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1">Información que saldrá al imprimir el Ticket</h4>
+              <h4 className="text-[9px] font-black text-muted uppercase tracking-widest border-b border-base pb-1">Información Impresa</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Nombre Comercial</label>
-                  <input type="text" value={ticketConfig.businessName} onChange={e => setTicketConfig({...ticketConfig, businessName: e.target.value})} className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100" />
+                <div className="space-y-1">
+                  <label className="block text-[8px] font-black text-muted uppercase tracking-widest">Nombre Comercial</label>
+                  <input type="text" value={ticketConfig.businessName} onChange={e => setTicketConfig({...ticketConfig, businessName: e.target.value})} className="w-full px-3 py-2 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 transition-all" />
                 </div>
-                <div>
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Teléfono de Contacto</label>
-                  <input type="text" value={ticketConfig.businessPhone} onChange={e => setTicketConfig({...ticketConfig, businessPhone: e.target.value})} className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100" />
+                <div className="space-y-1">
+                  <label className="block text-[8px] font-black text-muted uppercase tracking-widest">Teléfono</label>
+                  <input type="text" value={ticketConfig.businessPhone} onChange={e => setTicketConfig({...ticketConfig, businessPhone: e.target.value})} className="w-full px-3 py-2 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 transition-all" />
                 </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Dirección Física</label>
-                  <input type="text" value={ticketConfig.businessAddress} onChange={e => setTicketConfig({...ticketConfig, businessAddress: e.target.value})} className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100" />
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="block text-[8px] font-black text-muted uppercase tracking-widest">Dirección</label>
+                  <input type="text" value={ticketConfig.businessAddress} onChange={e => setTicketConfig({...ticketConfig, businessAddress: e.target.value})} className="w-full px-3 py-2 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 transition-all" />
                 </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Texto al Final del Recibo</label>
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="block text-[8px] font-black text-muted uppercase tracking-widest">Texto al Pie</label>
                   <textarea 
                     value={ticketConfig.footerText} 
                     onChange={e => setTicketConfig({...ticketConfig, footerText: e.target.value})}
                     rows={2}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-100 resize-none"
-                    placeholder="Ej: ¡Gracias por su compra! Vuelva pronto."
+                    className="w-full px-3 py-2 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 resize-none transition-all"
+                    placeholder="Ej: ¡Gracias por su compra!"
                   ></textarea>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="pt-4 border-t border-slate-50">
+          <div className="pt-4 border-t border-base">
             <button 
               onClick={handleSaveTicket}
-              className="w-full sm:w-auto px-8 py-3 bg-indigo-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-800 transition-all shadow-xl shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
+              className="w-full sm:w-auto px-8 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
             >
-              <Save className="w-3.5 h-3.5" />
-              Guardar Configuración y Datos del Negocio
+              <Save size={14} />
+              Guardar Configuración
             </button>
           </div>
         </div>
-      </div>
 
       {true && (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4 lg:col-span-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-50 pb-3">
+        <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4 lg:col-span-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-base pb-3">
             <div className="flex items-center gap-3">
-              <div className="bg-emerald-50 p-2 rounded-lg text-emerald-600">
-                <Users className="w-4 h-4" />
+              <div className="bg-indigo-50 dark:bg-indigo-950/30 p-2 rounded-lg text-indigo-600 dark:text-indigo-400">
+                <Users size={16} />
               </div>
               <div>
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Gestión de Personal y Vendedores</h3>
-                <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Empleados Normales y Vendedores Independientes (IDN)</p>
+                <h3 className="text-xs font-black text-primary uppercase tracking-wider">Gestión de Personal</h3>
+                <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Vendedores Normales e Independientes (IDN)</p>
               </div>
             </div>
 
             {/* Segmented Filter for Normal vs IDN */}
-            <div className="flex items-center bg-slate-100 p-1 rounded-xl gap-1">
+            <div className="flex items-center bg-subtle p-1 rounded-xl gap-1 border border-base">
               <button
                 type="button"
                 onClick={() => setUserFilterTab('all')}
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer",
-                  userFilterTab === 'all' ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-900"
+                  userFilterTab === 'all' 
+                    ? "bg-secondary text-primary shadow-sm border border-base" 
+                    : "text-muted hover:text-primary"
                 )}
               >
-                Todos ({users.length})
+                Todos
               </button>
               <button
                 type="button"
                 onClick={() => setUserFilterTab('normal')}
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all flex items-center gap-1 cursor-pointer",
-                  userFilterTab === 'normal' ? "bg-indigo-600 text-white shadow-xs" : "text-slate-500 hover:text-slate-900"
+                  userFilterTab === 'normal' 
+                    ? "bg-indigo-600 text-white shadow-sm" 
+                    : "text-muted hover:text-primary"
                 )}
               >
-                <Users className="w-3 h-3" />
-                Normales ({users.filter(u => !u.isIndependent).length})
+                <Users size={12} />
+                Normales
               </button>
               <button
                 type="button"
                 onClick={() => setUserFilterTab('idn')}
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all flex items-center gap-1 cursor-pointer",
-                  userFilterTab === 'idn' ? "bg-amber-600 text-white shadow-xs" : "text-slate-500 hover:text-slate-900"
+                  userFilterTab === 'idn' 
+                    ? "bg-amber-600 text-white shadow-sm" 
+                    : "text-muted hover:text-primary"
                 )}
               >
-                <Package className="w-3 h-3" />
-                IDN ({users.filter(u => u.isIndependent).length})
+                <Package size={12} />
+                IDN
               </button>
             </div>
           </div>
 
           {/* New Employee Form */}
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-            <h4 className="text-[10px] font-black text-slate-900 uppercase mb-3 flex items-center gap-2">
-              <Plus className="w-3.5 h-3.5 text-emerald-600" />
-              Registrar Nuevo Personal
+          <div className="bg-subtle p-4 rounded-xl border border-base border-dashed">
+            <h4 className="text-[10px] font-black text-primary uppercase mb-3 flex items-center gap-2">
+              <Plus size={14} className="text-indigo-600" />
+              Registrar Personal
             </h4>
             <form onSubmit={handleRegisterEmployeeManual} className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Nombre</label>
+                <div className="space-y-1">
+                  <label className="block text-[8px] font-black text-muted uppercase tracking-widest">Nombre</label>
                   <input 
                     type="text"
                     placeholder="Nombre completo"
                     required
                     value={newEmployee.name}
                     onChange={e => setNewEmployee({ ...newEmployee, name: e.target.value })}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    className="w-full px-3 py-2 bg-primary border border-base rounded-lg text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
                   />
                 </div>
-                <div>
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Contraseña</label>
+                <div className="space-y-1">
+                  <label className="block text-[8px] font-black text-muted uppercase tracking-widest">Contraseña</label>
                   <input 
                     type="password"
                     placeholder="Contraseña inicial"
                     required
                     value={newEmployee.password}
                     onChange={e => setNewEmployee({ ...newEmployee, password: e.target.value })}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    className="w-full px-3 py-2 bg-primary border border-base rounded-lg text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
                   />
                 </div>
-                <div>
-                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Tipo de Empleado</label>
+                <div className="space-y-1">
+                  <label className="block text-[8px] font-black text-muted uppercase tracking-widest">Tipo</label>
                   <div className="flex gap-2">
                     <button
                       type="button"
                       onClick={() => setNewEmployee({ ...newEmployee, isIndependent: false, assignedBranchId: "" })}
                       className={cn(
                         "flex-1 py-2 rounded-lg text-[9px] font-black uppercase border transition-all cursor-pointer",
-                        !newEmployee.isIndependent ? "bg-indigo-600 text-white border-indigo-600 shadow-xs" : "bg-white text-slate-600 border-slate-200"
+                        !newEmployee.isIndependent 
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm" 
+                          : "bg-primary text-secondary border-base"
                       )}
                     >
-                      Normal / Fijo
+                      Fijo
                     </button>
                     <button
                       type="button"
                       onClick={() => setNewEmployee({ ...newEmployee, isIndependent: true })}
                       className={cn(
                         "flex-1 py-2 rounded-lg text-[9px] font-black uppercase border transition-all cursor-pointer",
-                        newEmployee.isIndependent ? "bg-amber-600 text-white border-amber-600 shadow-xs" : "bg-white text-slate-600 border-slate-200"
+                        newEmployee.isIndependent 
+                          ? "bg-amber-600 text-white border-amber-600 shadow-sm" 
+                          : "bg-primary text-secondary border-base"
                       )}
                     >
                       IDN
@@ -1711,20 +1597,20 @@ export default function Settings() {
               </div>
 
               {newEmployee.isIndependent && (
-                <div className="bg-amber-50/70 p-3 rounded-xl border border-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="bg-amber-50/50 dark:bg-amber-900/20 p-3 rounded-xl border border-amber-100 dark:border-amber-800/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <Package className="w-4 h-4 text-amber-700 shrink-0" />
+                    <Package size={16} className="text-amber-600" />
                     <div>
-                      <p className="text-[10px] font-black text-amber-900 uppercase">Almacén Exclusivo IDN</p>
-                      <p className="text-[8px] font-bold text-amber-700 uppercase">Asigna el almacén donde este vendedor independiente liquidará su stock</p>
+                      <p className="text-[9px] font-black text-amber-900 dark:text-amber-200 uppercase">Almacén Exclusivo</p>
+                      <p className="text-[7px] font-bold text-amber-700 dark:text-amber-400 uppercase">Stock asignado para IDN</p>
                     </div>
                   </div>
                   <select 
                     value={newEmployee.assignedBranchId}
                     onChange={e => setNewEmployee({ ...newEmployee, assignedBranchId: e.target.value })}
-                    className="w-full sm:w-64 bg-white border border-amber-300 rounded-lg px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-amber-500/20 cursor-pointer"
+                    className="w-full sm:w-64 bg-primary border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-amber-500"
                   >
-                    <option value="">Seleccionar Almacén Asignado</option>
+                    <option value="">Seleccionar Almacén</option>
                     {branches.map(b => (
                       <option key={b.id} value={b.id}>{b.name}</option>
                     ))}
@@ -1732,13 +1618,13 @@ export default function Settings() {
                 </div>
               )}
 
-              <div className="flex justify-end pt-2">
+              <div className="flex justify-end pt-1">
                 <button 
                   type="submit"
-                  className="w-full sm:w-auto px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all active:scale-95 shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full sm:w-auto px-6 py-2 bg-indigo-600 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all shadow-md flex items-center justify-center gap-2"
                 >
-                  <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                  Registrar Empleado
+                  <Plus size={14} />
+                  Registrar
                 </button>
               </div>
             </form>
@@ -1746,7 +1632,7 @@ export default function Settings() {
           
           {/* Employee Cards Grid (Compact & Tablet Optimized) */}
           {users.length === 0 ? (
-            <div className="p-8 bg-slate-50 rounded-xl text-center text-sm font-bold text-slate-500">
+            <div className="p-8 bg-subtle rounded-xl text-center text-sm font-bold text-muted">
               No hay usuarios o trabajadores registrados en el sistema.
             </div>
           ) : (
@@ -1767,25 +1653,29 @@ export default function Settings() {
                       <div 
                         key={u.id} 
                         className={cn(
-                          "p-3.5 rounded-2xl border transition-all flex flex-col justify-between gap-3 shadow-xs hover:shadow-md",
-                          isIdn ? "bg-amber-50/20 border-amber-200" : "bg-white border-slate-200"
+                          "p-3.5 rounded-2xl border transition-all flex flex-col justify-between gap-3 shadow-sm hover:shadow-md",
+                          isIdn 
+                            ? "bg-amber-50/10 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/50" 
+                            : "bg-secondary border-base"
                         )}
                       >
                         {/* Header card */}
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <p className="text-xs font-black text-slate-900 uppercase truncate">{u.name}</p>
-                              <span className="text-[7px] font-black uppercase bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
+                              <p className="text-xs font-black text-primary uppercase truncate">{u.name}</p>
+                              <span className="text-[7px] font-black uppercase bg-subtle px-1.5 py-0.5 rounded text-muted">
                                 {u.role === 'admin' ? 'Admin' : 'Empleado'}
                               </span>
                             </div>
                             <div className="flex items-center gap-1 mt-1">
                               <span className={cn(
-                                "text-[7px] font-black uppercase px-2 py-0.5 rounded-full inline-flex items-center gap-1",
-                                isIdn ? "bg-amber-100 text-amber-800" : "bg-indigo-100 text-indigo-800"
+                                "text-[7px] font-black uppercase px-2 py-0.5 rounded-full inline-flex items-center gap-1 border",
+                                isIdn 
+                                  ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800" 
+                                  : "bg-indigo-100 text-indigo-800 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-800"
                               )}>
-                                {isIdn ? <Package className="w-2.5 h-2.5" /> : <Users className="w-2.5 h-2.5" />}
+                                {isIdn ? <Package size={10} /> : <Users size={10} />}
                                 {isIdn ? 'Vendedor IDN' : 'Fijo / Normal'}
                               </span>
                             </div>
@@ -1795,37 +1685,37 @@ export default function Settings() {
                           <button
                             type="button"
                             onClick={() => setUserToDelete({ id: u.id, name: u.name })}
-                            className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            className="p-1.5 text-muted hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-colors cursor-pointer"
                             title="Eliminar Empleado"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 size={14} />
                           </button>
                         </div>
 
                         {/* Middle info */}
-                        <div className="bg-slate-50/80 p-2.5 rounded-xl border border-slate-100 text-[9px] space-y-1">
-                          <div className="flex justify-between font-bold text-slate-600">
+                        <div className="bg-subtle p-2.5 rounded-xl border border-base text-[9px] space-y-1">
+                          <div className="flex justify-between font-bold text-muted">
                             <span>Sucursales:</span>
                             {isIdn ? (
-                              <span className={assignedBranchName ? "text-indigo-700 font-black" : "text-rose-600 font-black"}>
+                              <span className={assignedBranchName ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-rose-600 font-black"}>
                                 {assignedBranchName ? `📍 ${assignedBranchName}` : '⚠️ Sin asignar'}
                               </span>
                             ) : (
-                              <span className="text-slate-800 font-black">
-                                {allowedCount === branches.length ? 'Todas las sucursales' : `${allowedCount} autorizadas`}
+                              <span className="text-primary font-black">
+                                {allowedCount === branches.length ? 'Todas' : `${allowedCount} autorizadas`}
                               </span>
                             )}
                           </div>
-                          <div className="flex justify-between font-bold text-slate-600">
+                          <div className="flex justify-between font-bold text-muted">
                             <span>Salario Base:</span>
-                            <span className="text-slate-900 font-black">
+                            <span className="text-primary font-black">
                               {baseCurrency.symbol}{(employeeSalaries[u.id] ?? (u.baseSalary || 0)).toLocaleString()} CUP
                             </span>
                           </div>
                           {isIdn && (
-                            <div className="flex justify-between font-bold text-slate-600">
+                            <div className="flex justify-between font-bold text-muted">
                               <span>Precios Especiales:</span>
-                              <span className="text-amber-800 font-black">
+                              <span className="text-amber-600 font-black">
                                 {idnSettlementPrices.filter(sp => sp.userId === u.id).length} asignados
                               </span>
                             </div>
@@ -1837,14 +1727,14 @@ export default function Settings() {
                           type="button"
                           onClick={() => setSelectedUserForConfig(u)}
                           className={cn(
-                            "w-full py-2 px-3 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-xs active:scale-98 cursor-pointer",
+                            "w-full py-2 px-3 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer",
                             isIdn 
-                              ? "bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/10" 
-                              : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/10"
+                              ? "bg-amber-600 text-white" 
+                              : "bg-indigo-600 text-white"
                           )}
                         >
-                          <SettingsIcon className="w-3.5 h-3.5" />
-                          Configuración y Permisos
+                          <SettingsIcon size={14} />
+                          Configuración
                         </button>
                       </div>
                     );
@@ -1853,32 +1743,32 @@ export default function Settings() {
             </div>
           )}
           
-          <div className="bg-amber-50 border border-amber-100 p-3 rounded-xl flex gap-3">
+          <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/50 p-3 rounded-xl flex gap-3">
             <InfoTooltip text="Configura aquí el pago base y los accesos. Cada empleado puede configurarse con permisos individuales de sucursales o como vendedor independiente (IDN) con almacén exclusivo y precios de liquidación." />
-            <p className="text-[9px] text-amber-700 font-medium leading-relaxed">
-              <strong>Tip de Operación:</strong> Haz clic en <strong>Configuración y Permisos</strong> en cada tarjeta para modificar sucursales autorizadas, cambiar contraseñas, alternar entre Vendedor Normal / IDN, o ajustar precios de liquidación por producto.
+            <p className="text-[9px] text-amber-700 dark:text-amber-300 font-medium leading-relaxed">
+              <strong>Tip:</strong> Haz clic en <strong>Configuración</strong> para modificar sucursales, contraseñas o ajustar precios de liquidación IDN.
             </p>
           </div>
         </div>
       )}
 
       {/* Zona Peligrosa */}
-      <div className="bg-white rounded-2xl shadow-sm border border-red-100 p-5 space-y-4">
-        <div className="flex items-center gap-3 border-b border-red-50 pb-3">
-          <div className="bg-red-50 p-2 rounded-lg text-red-600">
-            <AlertTriangle className="w-4 h-4" />
+      <div className="bg-secondary rounded-2xl shadow-sm border border-red-200 dark:border-red-900/30 p-5 space-y-4 lg:col-span-3">
+        <div className="flex items-center gap-3 border-b border-red-50 dark:border-red-950/30 pb-3">
+          <div className="bg-red-50 dark:bg-red-950/50 p-2 rounded-lg text-red-600 dark:text-red-400">
+            <AlertTriangle size={16} />
           </div>
           <div>
-            <h3 className="text-xs font-black text-red-600 uppercase tracking-wider">Zona Peligrosa</h3>
-            <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">Acciones destructivas del sistema</p>
+            <h3 className="text-xs font-black text-red-600 dark:text-red-400 uppercase tracking-wider">Zona Peligrosa</h3>
+            <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Acciones críticas e irreversibles</p>
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100 mb-4">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-primary p-4 rounded-xl border border-base border-dashed">
           <div>
-            <h4 className="text-sm font-bold text-slate-900">Limpiar Caché Local</h4>
-            <p className="text-xs text-slate-600 mt-1">
-              Úsalo si la aplicación se comporta de forma extraña o si la sincronización está atascada.
+            <h4 className="text-sm font-bold text-primary">Limpiar Caché Local</h4>
+            <p className="text-xs text-muted mt-1">
+              Úsalo si la aplicación presenta errores de sincronización o comportamiento inesperado.
             </p>
           </div>
           <div className="flex gap-2">
@@ -1886,7 +1776,7 @@ export default function Settings() {
               <>
                 <button
                   onClick={() => setShowConfirmCache(false)}
-                  className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-300 transition-all"
+                  className="px-4 py-2 bg-subtle text-primary border border-base rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
                 >
                   Cancelar
                 </button>
@@ -1895,38 +1785,38 @@ export default function Settings() {
                     localStorage.clear();
                     window.location.reload();
                   }}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 active:scale-95"
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-95"
                 >
-                  Confirmar Limpieza
+                  Confirmar
                 </button>
               </>
             ) : (
               <button
                 onClick={() => setShowConfirmCache(true)}
-                className="w-full sm:w-auto shrink-0 px-6 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 active:scale-95 flex items-center justify-center gap-2"
+                className="w-full sm:w-auto px-6 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-                Limpiar Caché Local
+                <RefreshCw size={14} />
+                Limpiar Caché
               </button>
             )}
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-red-50/50 p-4 rounded-xl border border-red-100">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-red-50/50 dark:bg-red-950/20 p-4 rounded-xl border border-red-100 dark:border-red-900/30">
           <div className="flex-1">
-            <h4 className="text-sm font-bold text-slate-900">Restablecer Sistema por Completo</h4>
-            <p className="text-xs text-slate-600 mt-1">
-              Esto eliminará <strong>todos</strong> los datos de la base de datos (inventario, ventas, clientes, usuarios) y te cerrará la sesión.
+            <h4 className="text-sm font-bold text-primary">Restablecer Sistema</h4>
+            <p className="text-xs text-muted mt-1">
+              Elimina <strong>todos</strong> los datos (inventario, ventas, clientes, usuarios). Esta acción es irreversible.
             </p>
             {showConfirmReset && (
-              <div className="mt-3 p-3 bg-white rounded-lg border border-red-200 animate-in fade-in slide-in-from-top-2">
+              <div className="mt-3 p-3 bg-primary rounded-lg border border-red-200 dark:border-red-900/50 animate-in fade-in slide-in-from-top-2">
                 <p className="text-[10px] font-black text-red-600 uppercase mb-2">Escribe "ELIMINAR" para confirmar:</p>
                 <input 
                   type="text"
                   value={resetInput}
                   onChange={e => setResetInput(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-1 focus:ring-red-100 uppercase"
-                  placeholder="Escribe ELIMINAR para confirmar..."
+                  className="w-full px-3 py-2 bg-secondary border border-base rounded-lg text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-red-500 uppercase"
+                  placeholder="ELIMINAR"
                 />
               </div>
             )}
@@ -1939,32 +1829,33 @@ export default function Settings() {
                     setShowConfirmReset(false);
                     setResetInput("");
                   }}
-                  className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-300 transition-all"
+                  className="px-4 py-2 bg-subtle text-primary border border-base rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
                 >
                   Cancelar
                 </button>
                 <button
                   onClick={handleClearData}
                   disabled={isLoading || resetInput.trim().toUpperCase() !== 'ELIMINAR'}
-                  className="px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition-all shadow-lg shadow-red-200 active:scale-95 disabled:opacity-30 flex items-center gap-2"
+                  className="px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-95 disabled:opacity-30 flex items-center gap-2"
                 >
-                  {isLoading ? <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div> : <Trash2 className="w-3 h-3" />}
-                  Confirmar Borrado
+                  {isLoading ? <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div> : <Trash2 size={12} />}
+                  Borrar Todo
                 </button>
               </>
             ) : (
               <button
                 onClick={() => setShowConfirmReset(true)}
                 disabled={isLoading}
-                className="w-full sm:w-auto shrink-0 px-6 py-3 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition-all shadow-lg shadow-red-200 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
+                className="w-full sm:w-auto px-6 py-3 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
               >
-                <Trash2 className="w-3.5 h-3.5" />
-                Eliminar Todo y Reiniciar
+                <Trash2 size={14} />
+                Restablecer Todo
               </button>
             )}
           </div>
         </div>
       </div>
     </div>
+  </div>
   );
 }

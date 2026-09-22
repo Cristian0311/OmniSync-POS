@@ -94,7 +94,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     currentUser?.role === "admin" ? adminNavItems : cashierNavItems;
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-gray-50 flex flex-col md:flex-row relative">
+    <div className="h-[100dvh] w-full min-h-[100dvh] max-h-[100dvh] overflow-hidden bg-primary text-primary flex flex-col md:flex-row relative overscroll-none transition-colors duration-200">
       {/* Sistema de Notificaciones Globales */}
       <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
         {notifications.map((n) => (
@@ -138,7 +138,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       <aside
         className={cn(
-          "bg-white border-r border-slate-200/80 transition-all duration-300 ease-in-out flex flex-col h-full shrink-0 shadow-sm",
+          "bg-secondary border-r border-base transition-all duration-300 ease-in-out flex flex-col h-full shrink-0 shadow-sm",
           // Mobile: off-canvas drawer with fixed overlay
           "fixed inset-y-0 left-0 z-50",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
@@ -148,12 +148,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         )}
       >
         {/* Header with Collapse toggle */}
-        <div className={cn("p-4 shrink-0 flex items-center justify-between border-b border-slate-100", sidebarCollapsed && "md:p-3 md:justify-center")}>
+        <div className={cn("p-4 shrink-0 flex items-center justify-between border-b border-subtle", sidebarCollapsed && "md:p-3 md:justify-center")}>
           <div className={cn("flex flex-col min-w-0", sidebarCollapsed && "md:hidden")}>
-            <h1 className="text-lg font-black tracking-tight text-slate-900 uppercase truncate">
+            <h1 className="text-lg font-black tracking-tight text-primary uppercase truncate">
               MARÉ<span className="text-indigo-600"> POS</span>
             </h1>
-            <p className="text-[7px] text-slate-400 uppercase tracking-[0.2em] font-black">Sistema de Gestión</p>
+            <p className="text-[7px] text-muted uppercase tracking-[0.2em] font-black">Enterprise CRM</p>
           </div>
           
           <button 
@@ -182,11 +182,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     sidebarCollapsed ? "justify-center p-2.5 my-1" : "space-x-3 px-3.5 py-2.5",
                     isActive
                       ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                      : "text-slate-400 hover:bg-slate-100 hover:text-slate-900"
+                      : "text-muted hover:bg-subtle hover:text-primary"
                   )}>
-                    <Icon className={cn("w-4 h-4 shrink-0 transition-colors", isActive ? "text-white" : "text-slate-400 group-hover:text-indigo-600")} />
+                    <Icon className={cn("w-4 h-4 shrink-0 transition-colors", isActive ? "text-white" : "text-muted group-hover:text-indigo-600")} />
                     {!sidebarCollapsed && (
-                      <span className="font-bold text-[9px] uppercase tracking-wider truncate">{item.name}</span>
+                      <span className="font-black text-[9px] uppercase tracking-wider truncate">{item.name}</span>
                     )}
                   </div>
                 )}
@@ -195,11 +195,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        <div className={cn("shrink-0 p-3 bg-white border-t border-slate-100", sidebarCollapsed && "md:p-2 md:items-center")}>
+        <div className={cn("shrink-0 p-3 bg-secondary border-t border-subtle", sidebarCollapsed && "md:p-2 md:items-center")}>
           <div className={cn("mb-2", sidebarCollapsed && "md:hidden")}>
             <div className={cn(
               "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider transition-colors",
-              isOnline ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+              isOnline ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400" : "bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400"
             )}>
               {isOnline ? <Wifi className="w-3 h-3 shrink-0" /> : <WifiOff className="w-3 h-3 shrink-0" />}
               <span className="truncate">{isOnline ? "Online" : "Offline"}</span>
@@ -207,15 +207,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className={cn("flex items-center gap-2 mb-2", sidebarCollapsed && "md:justify-center md:mb-1")}>
-            <div className="w-7 h-7 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 font-black text-[9px] uppercase shrink-0">
+            <div className="w-7 h-7 rounded-full bg-subtle border border-base flex items-center justify-center text-primary font-black text-[9px] uppercase shrink-0 shadow-sm">
               {currentUser?.name.charAt(0)}
             </div>
             {!sidebarCollapsed && (
               <div className="min-w-0 flex-1">
-                <p className="text-[9px] font-black text-slate-900 uppercase leading-tight truncate">
+                <p className="text-[9px] font-black text-primary uppercase leading-tight truncate">
                   {currentUser?.name}
                 </p>
-                <p className="text-[7px] text-slate-400 uppercase tracking-wider font-bold truncate">
+                <p className="text-[7px] text-muted uppercase tracking-wider font-bold truncate">
                   {currentUser?.role}
                 </p>
               </div>
@@ -225,7 +225,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <button
             onClick={logout}
             className={cn(
-              "flex items-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all font-black uppercase",
+              "flex items-center text-muted hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-xl transition-all font-black uppercase",
               sidebarCollapsed ? "justify-center p-2 w-full" : "space-x-2 px-3 py-2 w-full text-[8px] tracking-wider"
             )}
             title="Cerrar sesión"
@@ -241,11 +241,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {/* Overlay for mobile sidebar */}
         {sidebarOpen && (
           <div
-            className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-xs"
+            className="fixed inset-0 bg-black/60 z-40 md:hidden"
             onClick={() => setSidebarOpen(false)}
           />
         )}
-        <div className={cn("flex-1 min-w-0 h-full flex flex-col", isPosPage ? "overflow-hidden p-0" : "overflow-y-auto p-4 md:p-6")}>
+        <div className={cn("flex-1 min-w-0 h-full flex flex-col scroll-touch", isPosPage ? "overflow-hidden p-0" : "overflow-y-auto p-4 md:p-6 pb-20 md:pb-12")}>
           {children}
         </div>
       </main>

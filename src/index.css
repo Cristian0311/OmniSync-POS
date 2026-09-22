@@ -7,62 +7,153 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+:root {
+  /* Light Mode Palette - Enterprise SaaS Style */
+  --bg-primary: #F8F9FA;
+  --bg-secondary: #FFFFFF;
+  --bg-elevated: #FFFFFF;
+  --bg-subtle: #F3F4F6;
+  
+  --text-primary: #111827;
+  --text-secondary: #4B5563;
+  --text-muted: #6B7280;
+  --text-inverse: #FFFFFF;
+  
+  --border-base: #E5E7EB;
+  --border-subtle: #F3F4F6;
+  --border-accent: #3B82F6;
+  
+  --primary: #4F46E5;
+  --primary-hover: #4338CA;
+  --primary-fg: #FFFFFF;
+  
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+  --info: #3B82F6;
+  
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+.dark {
+  /* Dark Mode Palette - Enterprise SaaS Style (Deep, Calm) */
+  --bg-primary: #0F0F0F;
+  --bg-secondary: #1A1A1A;
+  --bg-elevated: #262626;
+  --bg-subtle: #1F1F1F;
+  
+  --text-primary: #F3F4F6;
+  --text-secondary: #D1D5DB;
+  --text-muted: #9CA3AF;
+  --text-inverse: #111827;
+  
+  --border-base: #333333;
+  --border-subtle: #262626;
+  --border-accent: #60A5FA;
+  
+  --primary: #6366F1;
+  --primary-hover: #818CF8;
+  --primary-fg: #FFFFFF;
+  
+  --success: #059669;
+  --warning: #D97706;
+  --danger: #DC2626;
+  --info: #2563EB;
+  
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+}
+
+/* Prevent elastic overscroll bounce & bottom bar flickering on iOS/Android tablets and phones */
+html, body, #root {
+  height: 100dvh;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-overscroll-behavior: none;
+  touch-action: manipulation;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
 @layer base {
   body {
-    @apply font-sans text-slate-900 antialiased transition-colors duration-300;
-  }
-  
-  .dark body {
-    @apply bg-slate-800 text-white;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    @apply font-sans antialiased;
   }
   
   h1, h2, h3, h4, h5, h6 {
-    @apply font-display tracking-tight;
+    @apply font-display tracking-tight text-current;
   }
 
-  .dark aside, .dark div.bg-white, .dark div.bg-slate-50, .dark section {
-    @apply !bg-slate-700 !border-slate-600;
-  }
+  /* Core UI Components Mapping to Design Tokens */
+  .bg-primary { background-color: var(--bg-primary); }
+  .bg-secondary { background-color: var(--bg-secondary); }
+  .bg-elevated { background-color: var(--bg-elevated); }
+  .bg-subtle { background-color: var(--bg-subtle); }
 
-  .dark * {
-    @apply border-slate-600;
-  }
+  .text-primary { color: var(--text-primary); }
+  .text-secondary { color: var(--text-secondary); }
+  .text-muted { color: var(--text-muted); }
 
-  .dark p, .dark span, .dark h1, .dark h2, .dark h3, .dark h4, .dark h5, .dark h6, .dark label, .dark table, .dark th, .dark td {
-    @apply !text-white;
-  }
+  .border-base { border-color: var(--border-base); }
+  .border-subtle { border-color: var(--border-subtle); }
 
-  /* Mejora de visibilidad de botones en modo oscuro */
-  .dark button {
-    @apply transition-all duration-200;
-  }
+  /* Apply tokens to existing generic Tailwind classes in Dark Mode via Layer overrides */
+  .dark .bg-white { background-color: var(--bg-secondary) !important; }
+  .dark .bg-slate-50 { background-color: var(--bg-primary) !important; }
+  .dark .bg-slate-100 { background-color: var(--bg-subtle) !important; }
+  .dark .bg-slate-200 { background-color: var(--bg-elevated) !important; }
+  
+  .dark .border-slate-100, 
+  .dark .border-slate-200,
+  .dark .border-slate-300 { border-color: var(--border-base) !important; }
 
-  .dark button.bg-white, .dark button.bg-slate-50 {
-    @apply !bg-slate-600 hover:!bg-slate-500 !text-white !border-slate-500;
-  }
+  .dark .text-slate-900, 
+  .dark .text-slate-800, 
+  .dark .text-slate-700 { color: var(--text-primary) !important; }
+  
+  .dark .text-slate-600, 
+  .dark .text-slate-500 { color: var(--text-secondary) !important; }
+  
+  .dark .text-slate-400 { color: var(--text-muted) !important; }
 
-  .dark button:not(.bg-indigo-600):not(.bg-red-600):not(.bg-green-600):not(.bg-slate-600) {
-    @apply hover:bg-slate-600/50 text-white;
-  }
-
-  .dark svg {
-    @apply !text-white/90;
-  }
-
-  .dark .bg-indigo-600, .dark .bg-red-600, .dark .bg-green-600 {
-    @apply !text-white;
+  /* Interactive Elements */
+  input, textarea, select {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-base);
+    color: var(--text-primary);
+    @apply outline-none transition-all focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500;
   }
 
   .dark input, .dark textarea, .dark select {
-    @apply !bg-slate-600 !border-slate-500 !text-white placeholder:text-slate-300;
+    background-color: var(--bg-primary);
+    border-color: var(--border-base);
   }
 
-  .dark .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-slate-700 hover:bg-slate-600;
+  button:focus-visible {
+    @apply ring-2 ring-indigo-500 ring-offset-2 dark:ring-offset-slate-950;
   }
 }
 
 @layer utilities {
+  /* Disable expensive backdrop blur shaders on tablet/mobile GPUs to avoid lag & overheating */
+  .backdrop-blur-xs,
+  .backdrop-blur-sm,
+  .backdrop-blur-md,
+  .backdrop-blur-lg,
+  .backdrop-blur-xl,
+  .backdrop-blur-2xl,
+  .backdrop-blur-3xl {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
   .custom-scrollbar::-webkit-scrollbar {
     width: 4px;
     height: 4px;
@@ -71,7 +162,7 @@
     @apply bg-transparent;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-slate-200 rounded-full hover:bg-slate-300;
+    @apply bg-slate-300 rounded-full hover:bg-slate-400;
   }
   
   .scrollbar-hide::-webkit-scrollbar {
@@ -80,6 +171,18 @@
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  /* Hardware accelerated scrolling helper */
+  .scroll-touch {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+  }
+
+  .overscroll-none {
+    overscroll-behavior: none;
+    -webkit-overscroll-behavior: none;
   }
 }
 
@@ -127,4 +230,3 @@
     page-break-inside: avoid !important;
   }
 }
-

@@ -523,3 +523,5 @@ export async function testWifiPrinterConnection(ipAddress: string, _port: number
   }
   return true;
 }
+
+export const printESCPOS = printThermalReceipt;

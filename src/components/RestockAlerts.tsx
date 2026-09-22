@@ -47,78 +47,93 @@ export function RestockAlerts() {
 
   if (restockData.length === 0) {
     return (
-      <div className="bg-white rounded-3xl border border-slate-100 p-12 text-center">
-        <div className="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6">
-          <AlertCircle size={32} />
+      <div className="bg-secondary rounded-2xl border border-base p-6 sm:p-8 text-center">
+        <div className="w-12 h-12 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-3">
+          <AlertCircle size={24} />
         </div>
-        <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Todo en Orden</h3>
-        <p className="text-slate-500 font-bold text-sm">No hay productos en riesgo de agotarse pronto según el ritmo de ventas.</p>
+        <h3 className="text-sm font-black text-primary uppercase tracking-tight mb-1">Todo en Orden</h3>
+        <p className="text-muted font-bold text-xs">No hay productos en riesgo de agotarse pronto según el ritmo de ventas.</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-rose-50 border-2 border-rose-100 p-6 rounded-3xl">
-          <div className="flex items-center gap-3 mb-2">
-            <AlertTriangle className="w-5 h-5 text-rose-500" />
-            <h3 className="font-black text-rose-900 uppercase tracking-widest text-xs">Crítico (&lt; 7 días)</h3>
+    <div className="space-y-2.5">
+      {/* Compact summary bubbles: 2 columns even on mobile */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-secondary border border-rose-200/80 dark:border-rose-900/40 p-2 sm:p-2.5 rounded-xl shadow-xs flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-lg bg-rose-50 dark:bg-rose-950/50 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
+              <AlertTriangle className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <h3 className="font-black text-rose-700 dark:text-rose-300 uppercase tracking-wider text-[8px] sm:text-[9px] truncate">Crítico (&lt; 7 días)</h3>
+              <p className="text-[7px] text-muted font-bold">Agotamiento inminente</p>
+            </div>
           </div>
-          <p className="text-3xl font-black text-rose-600">{restockData.filter(d => d.isCritical).length}</p>
+          <p className="text-lg sm:text-xl font-black text-rose-600 dark:text-rose-400 leading-none">{restockData.filter(d => d.isCritical).length}</p>
         </div>
-        <div className="bg-amber-50 border-2 border-amber-100 p-6 rounded-3xl">
-          <div className="flex items-center gap-3 mb-2">
-            <Clock className="w-5 h-5 text-amber-500" />
-            <h3 className="font-black text-amber-900 uppercase tracking-widest text-xs">Stock Bajo</h3>
+
+        <div className="bg-secondary border border-amber-200/80 dark:border-amber-900/40 p-2 sm:p-2.5 rounded-xl shadow-xs flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-lg bg-amber-50 dark:bg-amber-950/50 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+              <Clock className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <h3 className="font-black text-amber-700 dark:text-amber-300 uppercase tracking-wider text-[8px] sm:text-[9px] truncate">Stock Bajo</h3>
+              <p className="text-[7px] text-muted font-bold">Por debajo del mínimo</p>
+            </div>
           </div>
-          <p className="text-3xl font-black text-amber-600">{restockData.filter(d => !d.isCritical && d.isLow).length}</p>
+          <p className="text-lg sm:text-xl font-black text-amber-600 dark:text-amber-400 leading-none">{restockData.filter(d => !d.isCritical && d.isLow).length}</p>
         </div>
       </div>
 
-      <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
-        <div className="p-6 border-b border-slate-100 flex items-center gap-2">
-          <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">Sugerencias de Compra</h2>
-          <InfoTooltip text="Calcula cuánto tiempo durará tu inventario actual basándose en el ritmo de ventas diario de los últimos 30 días. Ayuda a evitar quiebres de stock." position="bottom" />
+      <div className="bg-secondary border border-base rounded-xl overflow-hidden shadow-xs">
+        <div className="px-3 py-2 border-b border-base flex items-center justify-between bg-secondary">
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-[11px] font-black text-primary uppercase tracking-tight">Sugerencias de Compra</h2>
+            <InfoTooltip text="Calcula cuánto tiempo durará tu inventario actual basándose en el ritmo de ventas diario de los últimos 30 días. Ayuda a evitar quiebres de stock." position="bottom" />
+          </div>
+          <span className="text-[8px] font-black text-muted uppercase tracking-wider">{restockData.length} productos</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-slate-50 border-b border-slate-100">
+          <table className="w-full text-left">
+            <thead className="bg-secondary border-b border-base">
               <tr>
-                <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Producto</th>
-                <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Stock Actual</th>
-                <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Ventas Diarias</th>
-                <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Se agota en</th>
-                <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado</th>
+                <th className="px-3 py-2 text-[8px] sm:text-[9px] font-black text-muted uppercase tracking-wider">Producto</th>
+                <th className="px-3 py-2 text-center text-[8px] sm:text-[9px] font-black text-muted uppercase tracking-wider">Stock</th>
+                <th className="px-3 py-2 text-center text-[8px] sm:text-[9px] font-black text-muted uppercase tracking-wider">Ventas/Día</th>
+                <th className="px-3 py-2 text-center text-[8px] sm:text-[9px] font-black text-muted uppercase tracking-wider">Días Restantes</th>
+                <th className="px-3 py-2 text-center text-[8px] sm:text-[9px] font-black text-muted uppercase tracking-wider">Acción</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {restockData.map((data, idx) => (
-                <tr key={data.product.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="font-black text-sm text-slate-900">{data.product.name}</div>
-                    <div className="text-xs font-bold text-slate-400">SKU: {data.product.sku}</div>
+            <tbody className="divide-y divide-base">
+              {restockData.map((data) => (
+                <tr key={data.product.id} className="hover:bg-subtle/50 transition-colors">
+                  <td className="px-3 py-2">
+                    <div className="font-black text-xs text-primary truncate max-w-[150px] sm:max-w-[200px]">{data.product.name}</div>
+                    <div className="text-[9px] font-bold text-muted">SKU: {data.product.sku}</div>
                   </td>
-                  <td className="px-6 py-4 text-center font-black text-slate-700">{data.stock}</td>
-                  <td className="px-6 py-4 text-center">
-                    <div className="inline-flex items-center justify-center gap-1 bg-slate-100 px-2 py-1 rounded-lg text-xs font-bold text-slate-600">
-                      <TrendingUp className="w-3 h-3 text-indigo-500" />
-                      {data.dailySalesRate.toFixed(1)} / día
+                  <td className="px-3 py-2 text-center font-black text-xs text-primary">{data.stock}</td>
+                  <td className="px-3 py-2 text-center">
+                    <div className="inline-flex items-center justify-center gap-1 bg-secondary border border-base px-1.5 py-0.5 rounded text-[10px] font-bold text-primary">
+                      <TrendingUp className="w-2.5 h-2.5 text-indigo-500" />
+                      {data.dailySalesRate.toFixed(1)}/d
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-center">
-                    <div className="inline-flex items-center justify-center gap-1 bg-slate-100 px-2 py-1 rounded-lg text-xs font-bold text-slate-600">
-                      <Calendar className="w-3 h-3 text-slate-400" />
-                      {data.daysUntilStockout === Infinity ? 'N/A' : `${data.daysUntilStockout} días`}
+                  <td className="px-3 py-2 text-center">
+                    <div className="inline-flex items-center justify-center gap-1 bg-secondary border border-base px-1.5 py-0.5 rounded text-[10px] font-bold text-primary">
+                      <Calendar className="w-2.5 h-2.5 text-muted" />
+                      {data.daysUntilStockout === Infinity ? 'N/A' : `${data.daysUntilStockout} d`}
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-center">
+                  <td className="px-3 py-2 text-center">
                     {data.isCritical ? (
-                      <span className="bg-rose-100 text-rose-700 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest inline-block whitespace-nowrap">
+                      <span className="bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-wider inline-block whitespace-nowrap">
                         Comprar Ya
                       </span>
                     ) : (
-                      <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest inline-block whitespace-nowrap">
+                      <span className="bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-wider inline-block whitespace-nowrap">
                         Alerta
                       </span>
                     )}

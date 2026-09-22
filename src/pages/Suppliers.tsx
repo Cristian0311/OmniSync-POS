@@ -16,9 +16,12 @@ import {
   FileText,
   X,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Trash2,
+  Edit
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { InfoTooltip } from "../components/InfoTooltip";
 
 export default function Suppliers() {
   const { suppliers, addSupplier, updateSupplier, deleteSupplier, supplierOrders, products, createSupplierOrder, updateSupplierOrder, branches, getBaseCurrency } = useStore();
@@ -135,96 +138,94 @@ export default function Suppliers() {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20">
-      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Gestión de Proveedores</h1>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Abastecimiento y Órdenes de Compra</p>
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20">
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 px-1">
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-black text-primary uppercase tracking-tight">Proveedores</h1>
+          <InfoTooltip text="Abastecimiento y Órdenes de Compra." position="bottom" />
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
           <button 
             onClick={() => { setSelectedSupplier(null); setFormData({ name: "", email: "", phone: "", typeOfMerchandise: "", rating: 5, rnc: "", address: "" }); setShowAddModal(true); }}
-            className="flex-1 sm:flex-none px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2"
+            className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2"
           >
-            <Plus className="w-3.5 h-3.5" />
-            Nuevo Proveedor
+            <Plus size={14} />
+            Nuevo
           </button>
           <button 
             onClick={() => handleOpenOrderModal()}
-            className="flex-1 sm:flex-none px-4 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center justify-center gap-2"
+            className="flex-1 sm:flex-none px-4 py-2 bg-secondary border border-base text-primary rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-subtle transition-all flex items-center justify-center gap-2"
           >
-            <Truck className="w-3.5 h-3.5" />
+            <Truck size={14} />
             Nueva Orden
           </button>
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Lista de Proveedores */}
         <div className="lg:col-span-2 space-y-4">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input 
-              type="text" 
-              placeholder="Buscar por nombre o tipo de mercancía..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-11 pr-4 py-3 bg-white border border-slate-100 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-sm"
-            />
+          <div className="bg-secondary p-2 rounded-xl border border-base shadow-sm">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted" />
+              <input 
+                type="text" 
+                placeholder="Buscar por nombre o tipo de mercancía..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-primary border border-base rounded-lg text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
+              />
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {filteredSuppliers.map(s => (
-              <div key={s.id} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 group hover:border-indigo-200 transition-all">
-                <div className="flex justify-between items-start mb-4">
+              <div key={s.id} className="bg-secondary p-4 rounded-xl shadow-sm border border-base group hover:border-indigo-500/30 transition-all">
+                <div className="flex justify-between items-start mb-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 font-black text-xs">
+                    <div className="w-9 h-9 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-black text-xs">
                       {s.name.charAt(0)}
                     </div>
                     <div>
-                      <h3 className="text-xs font-black text-slate-900 uppercase tracking-tight">{s.name}</h3>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase">
+                      <h3 className="text-xs font-black text-primary uppercase tracking-tight">{s.name}</h3>
+                      <p className="text-[9px] font-bold text-muted uppercase">
                         {s.products && s.products.length > 0 ? `${s.products.length} productos asociados` : (s.typeOfMerchandise || 'Proveedor')}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-0.5">
                     {[...Array(5)].map((_, i) => (
-                      <Star key={i} className={cn("w-3 h-3", i < (s.rating || 5) ? "fill-amber-400 text-amber-400" : "text-slate-200")} />
+                      <Star key={i} size={10} className={cn(i < (s.rating || 5) ? "fill-amber-400 text-amber-400" : "text-base")} />
                     ))}
                   </div>
                 </div>
 
-                <div className="space-y-1.5 mb-3">
-                  <div className="flex items-center gap-2 text-[10px] text-slate-600 font-bold">
-                    <Phone className="w-3 h-3 text-slate-400 shrink-0" /> {s.phone}
+                <div className="space-y-1 mb-3">
+                  <div className="flex items-center gap-2 text-[10px] text-secondary font-bold">
+                    <Phone size={10} className="text-muted shrink-0" /> {s.phone}
                   </div>
                   {s.address && (
-                    <div className="flex items-center gap-2 text-[10px] text-slate-600 font-bold">
-                      <MapPin className="w-3 h-3 text-slate-400 shrink-0" /> {s.address}
-                    </div>
-                  )}
-                  {s.email && (
-                    <div className="flex items-center gap-2 text-[10px] text-slate-600 font-bold">
-                      <Mail className="w-3 h-3 text-slate-400 shrink-0" /> {s.email}
+                    <div className="flex items-center gap-2 text-[10px] text-muted font-bold truncate">
+                      <MapPin size={10} className="text-muted/50 shrink-0" /> {s.address}
                     </div>
                   )}
                 </div>
 
                 {/* List of associated merchandise/products */}
                 {s.products && s.products.length > 0 && (
-                  <div className="mb-4 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                    <p className="text-[8px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Mercancía asignada ({s.products.length})</p>
-                    <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                      {s.products.map((sp, idx) => {
+                  <div className="mb-3 bg-subtle p-2 rounded-lg border border-base border-dashed">
+                    <p className="text-[7px] font-black uppercase tracking-widest text-muted mb-1">Mercancía ({s.products.length})</p>
+                    <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                      {s.products.slice(0, 3).map((sp, idx) => {
                         const prod = products.find(p => p.id === sp.productId);
                         return (
-                          <span key={idx} className="text-[8px] font-bold bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md flex items-center gap-1">
+                          <span key={idx} className="text-[7px] font-black bg-primary border border-base text-secondary px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
                             {prod?.name || 'Producto'}
-                            {sp.purchasePrice ? <span className="text-indigo-600 font-black">({baseCurrency.symbol} {sp.purchasePrice})</span> : null}
+                            {sp.purchasePrice ? <span className="text-indigo-600 font-black">${sp.purchasePrice}</span> : null}
                           </span>
                         );
                       })}
+                      {s.products.length > 3 && <span className="text-[7px] font-black text-muted uppercase px-1">+ {s.products.length - 3} más</span>}
                     </div>
                   </div>
                 )}
@@ -232,12 +233,12 @@ export default function Suppliers() {
                 <div className="flex gap-2">
                   <button 
                     onClick={() => { setSelectedSupplier(s); setFormData({ ...s, products: s.products || [] }); setShowAddModal(true); }}
-                    className="flex-1 py-2 bg-slate-50 text-slate-600 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-indigo-50 hover:text-indigo-600 transition-all"
+                    className="flex-1 py-1.5 bg-subtle text-primary rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all border border-base"
                   >
                     Editar
                   </button>
-                  <button onClick={() => deleteSupplier(s.id)} className="p-2 bg-slate-50 text-slate-400 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition-all">
-                    <X className="w-3.5 h-3.5" />
+                  <button onClick={() => deleteSupplier(s.id)} className="p-1.5 bg-subtle text-muted rounded-lg hover:bg-rose-50 dark:hover:bg-rose-900/20 hover:text-rose-600 transition-all border border-base">
+                    <Trash2 size={12} />
                   </button>
                 </div>
               </div>
@@ -247,71 +248,64 @@ export default function Suppliers() {
 
         {/* Órdenes Recientes */}
         <div className="space-y-4">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-            <div className="p-4 bg-slate-50/50 border-b border-slate-100 flex items-center gap-2">
-              <History className="w-4 h-4 text-indigo-600" />
-              <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Órdenes de Compra</h3>
+          <div className="bg-secondary rounded-xl border border-base shadow-sm overflow-hidden flex flex-col h-[600px]">
+            <div className="p-3 bg-subtle border-b border-base flex items-center gap-2">
+              <History size={14} className="text-indigo-600" />
+              <h3 className="text-[10px] font-black text-primary uppercase tracking-widest">Órdenes de Compra</h3>
             </div>
-            <div className="divide-y divide-slate-50 max-h-[600px] overflow-y-auto custom-scrollbar">
+            <div className="divide-y divide-base overflow-y-auto custom-scrollbar flex-1">
               {supplierOrders.map(order => (
-                <div key={order.id} className="p-4 hover:bg-slate-50 transition-colors">
+                <div key={order.id} className="p-3 hover:bg-subtle/50 transition-colors">
                   <div className="flex justify-between items-start mb-2 gap-2">
                     <div className="min-w-0">
-                      <div className="text-[10px] font-black text-slate-900 uppercase truncate">{order.id}</div>
-                      <div className="text-[8px] font-bold text-slate-400 uppercase truncate">
+                      <div className="text-[9px] font-black text-primary uppercase truncate">#{order.id.slice(-8)}</div>
+                      <div className="text-[7px] font-bold text-muted uppercase truncate">
                         {suppliers.find(s => s.id === order.supplierId)?.name || 'Proveedor'} • {new Date(order.date).toLocaleDateString()}
                       </div>
                     </div>
                     <span className={cn(
-                      "shrink-0 px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest",
+                      "shrink-0 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-widest",
                       order.status === 'pending' ? "bg-amber-100 text-amber-700" :
-                      order.status === 'received' ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+                      order.status === 'received' ? "bg-emerald-100 text-emerald-700" : "bg-base text-muted"
                     )}>
                       {order.status === 'pending' ? 'Pendiente' : order.status === 'received' ? 'Recibida' : 'Cancelada'}
                     </span>
                   </div>
                   <div className="flex justify-between items-center gap-2 mb-2">
-                    <div className="text-[9px] font-black text-slate-600 uppercase truncate">
-                      {order.items.length} Ptos • CUP {order.total.toLocaleString()}
+                    <div className="text-[9px] font-black text-secondary uppercase truncate">
+                      {order.items.length} Ptos • ${order.total.toLocaleString()}
                     </div>
                     {order.status === 'pending' && (
                       <div className="flex items-center gap-1">
                         <button 
                           onClick={() => handleOpenOrderModal(order)}
-                          title="Editar Orden"
-                          className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-all"
+                          className="p-1.5 bg-subtle text-muted rounded-lg border border-base hover:text-indigo-600"
                         >
-                          <FileText className="w-3.5 h-3.5" />
+                          <Edit size={10} />
                         </button>
                         <button 
                           onClick={() => updateSupplierOrder(order.id, { status: 'received' })}
-                          title="Recibir Mercancía"
-                          className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-all"
+                          className="p-1.5 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 rounded-lg border border-emerald-100 dark:border-emerald-800"
                         >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <CheckCircle2 size={10} />
                         </button>
                       </div>
                     )}
                   </div>
-                  <div className="space-y-1 bg-slate-50/50 p-2 rounded-lg border border-slate-100/50">
-                    {order.items.map((item, idx) => (
-                      <div key={idx} className="flex justify-between text-[8px] font-bold text-slate-500 uppercase">
-                        <span className="truncate pr-2">{item.quantity}x {item.productName} {item.variantLabel ? `(${item.variantLabel})` : ''}</span>
-                        <span className="shrink-0">CUP {(item.quantity * item.cost).toLocaleString()}</span>
+                  <div className="space-y-1 bg-primary/50 p-2 rounded-lg border border-base border-dashed">
+                    {order.items.slice(0, 2).map((item, idx) => (
+                      <div key={idx} className="flex justify-between text-[7px] font-bold text-muted uppercase">
+                        <span className="truncate pr-2">{item.quantity}x {item.productName}</span>
+                        <span className="shrink-0">${(item.quantity * item.cost).toLocaleString()}</span>
                       </div>
                     ))}
-                    {order.transportCost ? (
-                      <div className="flex justify-between text-[8px] font-bold text-slate-500 uppercase border-t border-slate-100 pt-1 mt-1">
-                        <span className="truncate pr-2">Transporte {order.transportDetails ? `(${order.transportDetails})` : ''}</span>
-                        <span className="shrink-0">CUP {order.transportCost.toLocaleString()}</span>
-                      </div>
-                    ) : null}
+                    {order.items.length > 2 && <div className="text-[7px] font-bold text-muted/50 uppercase text-center">+ {order.items.length - 2} más</div>}
                   </div>
                 </div>
               ))}
               {supplierOrders.length === 0 && (
-                <div className="p-8 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
-                  No hay órdenes registradas
+                <div className="p-8 text-center text-[9px] font-black text-muted uppercase tracking-[0.2em]">
+                  Sin órdenes
                 </div>
               )}
             </div>
@@ -321,60 +315,59 @@ export default function Suppliers() {
 
       {/* Modal Add / Edit Supplier */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-slate-900/50 z-50 flex justify-center items-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex justify-center items-center p-4 backdrop-blur-xs">
+          <div className="bg-secondary rounded-2xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden flex flex-col max-h-[90vh] border border-base">
+            <div className="p-4 border-b border-base flex justify-between items-center bg-subtle">
               <div>
-                <h2 className="text-base font-black text-slate-900 uppercase tracking-tight">{selectedSupplier ? 'Editar Proveedor' : 'Nuevo Proveedor'}</h2>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Información de contacto y mercancía</p>
+                <h2 className="text-sm font-black text-primary uppercase tracking-tight">{selectedSupplier ? 'Editar Proveedor' : 'Nuevo Proveedor'}</h2>
+                <p className="text-[9px] font-bold text-muted uppercase tracking-widest">Información de contacto y mercancía</p>
               </div>
-              <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-slate-200/60 rounded-full transition-colors"><X className="w-5 h-5 text-slate-500" /></button>
+              <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-base rounded-full transition-colors"><X size={18} className="text-muted" /></button>
             </div>
             
-            <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
-              <div>
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Nombre del Proveedor</label>
-                <input 
-                  type="text" 
-                  required 
-                  placeholder="Ej: Distribuidora Central S.R.L."
-                  value={formData.name || ''} 
-                  onChange={e => setFormData({...formData, name: e.target.value})} 
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900" 
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Número de Teléfono</label>
+            <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto flex-1">
+              <div className="grid grid-cols-1 gap-4">
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-black text-muted uppercase tracking-widest">Nombre</label>
                   <input 
                     type="text" 
                     required 
-                    placeholder="Ej: +53 52345678"
-                    value={formData.phone || ''} 
-                    onChange={e => setFormData({...formData, phone: e.target.value})} 
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900" 
+                    placeholder="Ej: Distribuidora Central"
+                    value={formData.name || ''} 
+                    onChange={e => setFormData({...formData, name: e.target.value})} 
+                    className="w-full px-3 py-2 bg-primary border border-base rounded-lg text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-500 text-primary" 
                   />
                 </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Dirección</label>
-                  <input 
-                    type="text" 
-                    placeholder="Ej: Calle 23 e/ L y M, Vedado"
-                    value={formData.address || ''} 
-                    onChange={e => setFormData({...formData, address: e.target.value})} 
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900" 
-                  />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-black text-muted uppercase tracking-widest">Teléfono</label>
+                    <input 
+                      type="text" 
+                      required 
+                      placeholder="+53 5..."
+                      value={formData.phone || ''} 
+                      onChange={e => setFormData({...formData, phone: e.target.value})} 
+                      className="w-full px-3 py-2 bg-primary border border-base rounded-lg text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-500 text-primary" 
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-black text-muted uppercase tracking-widest">Dirección</label>
+                    <input 
+                      type="text" 
+                      placeholder="Calle..."
+                      value={formData.address || ''} 
+                      onChange={e => setFormData({...formData, address: e.target.value})} 
+                      className="w-full px-3 py-2 bg-primary border border-base rounded-lg text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-500 text-primary" 
+                    />
+                  </div>
                 </div>
               </div>
 
               {/* Selector de Mercancía desde el inventario */}
-              <div className="pt-2">
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest">Mercancía Asociada (Inventario)</label>
-                    <p className="text-[9px] font-bold text-slate-400">Productos que vende este proveedor y costo opcional</p>
-                  </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[10px] font-black text-muted uppercase tracking-widest">Mercancía Asociada</label>
                   <button 
                     type="button"
                     onClick={() => {
@@ -384,20 +377,20 @@ export default function Suppliers() {
                         products: [...current, { productId: products[0]?.id || '', purchasePrice: 0 }]
                       });
                     }}
-                    className="px-2.5 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-indigo-100 transition-all flex items-center gap-1"
+                    className="px-2 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-indigo-100 transition-all flex items-center gap-1"
                   >
-                    <Plus className="w-3 h-3" /> Agregar Producto
+                    <Plus size={10} /> Agregar
                   </button>
                 </div>
 
-                <div className="space-y-2 max-h-48 overflow-y-auto p-1 bg-slate-50/70 rounded-2xl border border-slate-100">
+                <div className="space-y-2 max-h-40 overflow-y-auto p-2 bg-subtle rounded-xl border border-base">
                   {(!formData.products || formData.products.length === 0) ? (
-                    <div className="text-center py-4 text-slate-400 text-[10px] font-bold uppercase tracking-wider">
-                      Sin productos asignados todavía. Toca "Agregar Producto" para asociar mercancía.
+                    <div className="text-center py-4 text-muted text-[9px] font-bold uppercase tracking-wider">
+                      Sin productos asignados.
                     </div>
                   ) : (
                     formData.products.map((item, idx) => (
-                      <div key={idx} className="flex flex-col sm:flex-row items-center gap-2 p-2 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                      <div key={idx} className="flex items-center gap-2 p-1.5 bg-secondary rounded-lg border border-base shadow-sm">
                         <select 
                           value={item.productId}
                           onChange={e => {
@@ -405,27 +398,26 @@ export default function Suppliers() {
                             updated[idx] = { ...updated[idx], productId: e.target.value };
                             setFormData({ ...formData, products: updated });
                           }}
-                          className="flex-1 w-full bg-slate-50 border border-slate-200 text-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none"
+                          className="flex-1 min-w-0 bg-primary border border-base text-primary rounded-md px-2 py-1 text-[10px] font-bold outline-none"
                         >
-                          <option value="">Selecciona un producto del inventario...</option>
+                          <option value="">Seleccionar...</option>
                           {products.map(p => (
-                            <option key={p.id} value={p.id}>{p.name} {p.sku ? `(${p.sku})` : ''}</option>
+                            <option key={p.id} value={p.id}>{p.name}</option>
                           ))}
                         </select>
-                        <div className="flex items-center gap-2 w-full sm:w-auto">
-                          <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 w-full sm:w-32">
-                            <span className="text-[9px] font-bold text-slate-400">{baseCurrency.symbol}</span>
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1 bg-primary px-1.5 py-1 rounded-md border border-base w-16">
+                            <span className="text-[8px] font-bold text-muted">$</span>
                             <input 
                               type="number" 
                               step="0.01"
-                              placeholder="Precio compra"
-                              value={item.purchasePrice !== undefined && item.purchasePrice !== 0 ? item.purchasePrice : ''}
+                              value={item.purchasePrice || ''}
                               onChange={e => {
                                 const updated = [...(formData.products || [])];
                                 updated[idx] = { ...updated[idx], purchasePrice: parseFloat(e.target.value) || 0 };
                                 setFormData({ ...formData, products: updated });
                               }}
-                              className="w-full bg-transparent text-xs font-bold text-slate-800 outline-none placeholder:text-slate-400"
+                              className="w-full bg-transparent text-[10px] font-bold text-primary outline-none"
                             />
                           </div>
                           <button 
@@ -434,9 +426,9 @@ export default function Suppliers() {
                               const updated = (formData.products || []).filter((_, i) => i !== idx);
                               setFormData({ ...formData, products: updated });
                             }}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                            className="p-1 text-muted hover:text-rose-600 transition-all"
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <X size={12} />
                           </button>
                         </div>
                       </div>
@@ -446,11 +438,11 @@ export default function Suppliers() {
               </div>
 
               <div className="pt-2 flex gap-2">
-                <button type="button" onClick={() => setShowAddModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all">
+                <button type="button" onClick={() => setShowAddModal(false)} className="flex-1 py-2 bg-subtle text-primary rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-base transition-all border border-base">
                   Cancelar
                 </button>
-                <button type="submit" className="flex-1 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100">
-                  {selectedSupplier ? 'Guardar Cambios' : 'Registrar Proveedor'}
+                <button type="submit" className="flex-1 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100">
+                  {selectedSupplier ? 'Guardar' : 'Registrar'}
                 </button>
               </div>
             </form>
@@ -460,145 +452,144 @@ export default function Suppliers() {
 
       {/* Modal Purchase Order */}
       {showOrderModal && (
-        <div className="fixed inset-0 bg-slate-900/50 z-50 flex justify-center items-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-              <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">Nueva Orden de Compra</h2>
-              <button onClick={() => setShowOrderModal(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X className="w-5 h-5" /></button>
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex justify-center items-center p-4 backdrop-blur-xs">
+          <div className="bg-secondary rounded-2xl w-full max-w-xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh] border border-base">
+            <div className="p-4 border-b border-base flex justify-between items-center bg-subtle">
+              <h2 className="text-sm font-black text-primary uppercase tracking-tight">Nueva Orden de Compra</h2>
+              <button onClick={() => setShowOrderModal(false)} className="p-2 hover:bg-base rounded-full transition-colors"><X size={18} className="text-muted" /></button>
             </div>
-            <form onSubmit={handleOrderSubmit} className="p-6 space-y-6 overflow-y-auto">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Proveedor</label>
-                  <select required value={orderFormData.supplierId} onChange={e => setOrderFormData({...orderFormData, supplierId: e.target.value})} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
-                    <option value="">Seleccionar Proveedor</option>
+            <form onSubmit={handleOrderSubmit} className="p-5 space-y-4 overflow-y-auto">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-black text-muted uppercase tracking-widest">Proveedor</label>
+                  <select required value={orderFormData.supplierId} onChange={e => setOrderFormData({...orderFormData, supplierId: e.target.value})} className="w-full px-3 py-2 bg-primary border border-base rounded-lg text-xs font-bold outline-none text-primary">
+                    <option value="">Seleccionar</option>
                     {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Sucursal Destino</label>
-                  <select required value={orderFormData.branchId} onChange={e => setOrderFormData({...orderFormData, branchId: e.target.value})} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
-                    <option value="">Seleccionar Sucursal</option>
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-black text-muted uppercase tracking-widest">Sucursal</label>
+                  <select required value={orderFormData.branchId} onChange={e => setOrderFormData({...orderFormData, branchId: e.target.value})} className="w-full px-3 py-2 bg-primary border border-base rounded-lg text-xs font-bold outline-none text-primary">
+                    <option value="">Seleccionar</option>
                     {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-        <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
-          <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Detalles de Transporte / Logística</label>
-          <input 
-            type="text" 
-            placeholder="Ej: Camión Placa G-1234, Empresa Logística..."
-            value={orderFormData.transportDetails || ""}
-            onChange={e => setOrderFormData({...orderFormData, transportDetails: e.target.value})}
-            className="w-full bg-transparent border-none text-[10px] font-black focus:ring-0 p-0 text-slate-900 uppercase"
-          />
-        </div>
-        <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
-          <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Costo de Transporte ({baseCurrency.code})</label>
-          <input 
-            type="number" 
-            placeholder="0.00"
-            value={orderFormData.transportCost || ""}
-            onChange={e => setOrderFormData({...orderFormData, transportCost: parseFloat(e.target.value) || 0})}
-            className="w-full bg-transparent border-none text-[10px] font-black focus:ring-0 p-0 text-slate-900"
-          />
-        </div>
-      </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-subtle p-2 rounded-xl border border-base">
+                  <label className="block text-[8px] font-black text-muted uppercase tracking-widest mb-1">Logística</label>
+                  <input 
+                    type="text" 
+                    placeholder="Detalles..."
+                    value={orderFormData.transportDetails || ""}
+                    onChange={e => setOrderFormData({...orderFormData, transportDetails: e.target.value})}
+                    className="w-full bg-transparent border-none text-[10px] font-black focus:ring-0 p-0 text-primary uppercase"
+                  />
+                </div>
+                <div className="bg-subtle p-2 rounded-xl border border-base">
+                  <label className="block text-[8px] font-black text-muted uppercase tracking-widest mb-1">Costo Transp.</label>
+                  <input 
+                    type="number" 
+                    placeholder="0.00"
+                    value={orderFormData.transportCost || ""}
+                    onChange={e => setOrderFormData({...orderFormData, transportCost: parseFloat(e.target.value) || 0})}
+                    className="w-full bg-transparent border-none text-[10px] font-black focus:ring-0 p-0 text-primary"
+                  />
+                </div>
+              </div>
 
-      <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
-        <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Fecha Esperada de Entrega</label>
-        <input 
-          type="date" 
-          value={orderFormData.expectedDeliveryDate || ""}
-          onChange={e => setOrderFormData({...orderFormData, expectedDeliveryDate: e.target.value})}
-          className="w-full bg-transparent border-none text-[10px] font-black focus:ring-0 p-0 text-slate-900 uppercase"
-        />
-      </div>
-
-      <div className="space-y-3">
+              <div className="space-y-3">
                 <div className="flex justify-between items-center">
-                  <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Productos</h4>
+                  <h4 className="text-[10px] font-black text-primary uppercase tracking-widest">Productos</h4>
                   <button 
                     type="button"
                     onClick={() => setOrderFormData({...orderFormData, items: [...orderFormData.items, { productId: "", quantity: 1, cost: 0 }]})}
                     className="text-[9px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1 hover:bg-indigo-50 px-2 py-1 rounded-lg"
                   >
-                    <Plus className="w-3 h-3" /> Añadir Fila
+                    <Plus size={12} /> Añadir
                   </button>
                 </div>
-                {orderFormData.items.map((item, idx) => {
-                  const selectedProductInfo = products.find(p => p.id === item.productId);
-                  const hasVariants = selectedProductInfo && ((selectedProductInfo.availableSizes && selectedProductInfo.availableSizes.length > 0) || (selectedProductInfo.availableColors && selectedProductInfo.availableColors.length > 0));
-                  
-                  return (
-                  <div key={idx} className="grid grid-cols-12 gap-2 items-start">
-                    <div className="col-span-6 flex flex-col gap-2">
-                      <select required value={item.productId} onChange={e => {
-                        const newItems = [...orderFormData.items];
-                        newItems[idx].productId = e.target.value;
-                        newItems[idx].variantLabel = undefined;
-                        const p = products.find(prod => prod.id === e.target.value);
-                        if (p) newItems[idx].cost = p.costPrice;
-                        setOrderFormData({...orderFormData, items: newItems});
-                      }} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
-                        <option value="">Seleccionar Producto</option>
-                        {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
-                      
-                      {hasVariants && (
-                        <select 
-                          required
-                          value={item.variantLabel || ""} 
-                          onChange={e => {
+                <div className="space-y-2">
+                  {orderFormData.items.map((item, idx) => {
+                    const selectedProductInfo = products.find(p => p.id === item.productId);
+                    const hasVariants = selectedProductInfo && ((selectedProductInfo.availableSizes && selectedProductInfo.availableSizes.length > 0) || (selectedProductInfo.availableColors && selectedProductInfo.availableColors.length > 0));
+                    
+                    return (
+                      <div key={idx} className="flex flex-col gap-2 p-3 bg-subtle rounded-xl border border-base">
+                        <div className="flex items-center gap-2">
+                          <select required value={item.productId} onChange={e => {
                             const newItems = [...orderFormData.items];
-                            newItems[idx].variantLabel = e.target.value;
+                            newItems[idx].productId = e.target.value;
+                            newItems[idx].variantLabel = undefined;
+                            const p = products.find(prod => prod.id === e.target.value);
+                            if (p) newItems[idx].cost = p.costPrice;
                             setOrderFormData({...orderFormData, items: newItems});
-                          }} 
-                          className="w-full px-3 py-2 bg-slate-50 border border-indigo-200 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-indigo-500"
-                        >
-                          <option value="">Seleccionar Variante</option>
-                          {selectedProductInfo.availableSizes?.map(s => <option key={`size-${s}`} value={s}>Talla: {s}</option>)}
-                          {selectedProductInfo.availableColors?.map(c => <option key={`color-${c}`} value={c}>Color: {c}</option>)}
-                        </select>
-                      )}
-                    </div>
-                    <div className="col-span-2">
-                      <input type="number" min="1" placeholder="Cant" required value={item.quantity || ""} onChange={e => {
-                        const newItems = [...orderFormData.items];
-                        newItems[idx].quantity = parseInt(e.target.value) || 0;
-                        setOrderFormData({...orderFormData, items: newItems});
-                      }} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none" />
-                    </div>
-                    <div className="col-span-3">
-                      <input type="number" step="0.01" placeholder="Costo" required value={item.cost || ""} onChange={e => {
-                        const newItems = [...orderFormData.items];
-                        newItems[idx].cost = parseFloat(e.target.value) || 0;
-                        setOrderFormData({...orderFormData, items: newItems});
-                      }} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none" />
-                    </div>
-                    <div className="col-span-1">
-                      <button 
-                        type="button"
-                        onClick={() => setOrderFormData({...orderFormData, items: orderFormData.items.filter((_, i) => i !== idx)})}
-                        className="w-full h-[38px] flex items-center justify-center bg-rose-50 text-rose-500 rounded-xl hover:bg-rose-100"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                  );
-                })}
+                          }} className="flex-1 bg-primary border border-base rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none text-primary">
+                            <option value="">Producto...</option>
+                            {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                          <button 
+                            type="button"
+                            onClick={() => setOrderFormData({...orderFormData, items: orderFormData.items.filter((_, i) => i !== idx)})}
+                            className="p-1.5 text-muted hover:text-rose-500 transition-all"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                        
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[7px] font-black text-muted uppercase">Cant.</label>
+                            <input type="number" min="1" required value={item.quantity || ""} onChange={e => {
+                              const newItems = [...orderFormData.items];
+                              newItems[idx].quantity = parseInt(e.target.value) || 0;
+                              setOrderFormData({...orderFormData, items: newItems});
+                            }} className="w-full px-2 py-1 bg-primary border border-base rounded text-[10px] font-bold text-primary" />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[7px] font-black text-muted uppercase">Costo</label>
+                            <input type="number" step="0.01" required value={item.cost || ""} onChange={e => {
+                              const newItems = [...orderFormData.items];
+                              newItems[idx].cost = parseFloat(e.target.value) || 0;
+                              setOrderFormData({...orderFormData, items: newItems});
+                            }} className="w-full px-2 py-1 bg-primary border border-base rounded text-[10px] font-bold text-primary" />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[7px] font-black text-muted uppercase">Variante</label>
+                            {hasVariants ? (
+                              <select 
+                                required
+                                value={item.variantLabel || ""} 
+                                onChange={e => {
+                                  const newItems = [...orderFormData.items];
+                                  newItems[idx].variantLabel = e.target.value;
+                                  setOrderFormData({...orderFormData, items: newItems});
+                                }} 
+                                className="w-full px-2 py-1 bg-primary border border-base rounded text-[10px] font-bold text-primary"
+                              >
+                                <option value="">Variante...</option>
+                                {selectedProductInfo.availableSizes?.map(s => <option key={`size-${s}`} value={s}>{s}</option>)}
+                                {selectedProductInfo.availableColors?.map(c => <option key={`color-${c}`} value={c}>{c}</option>)}
+                              </select>
+                            ) : (
+                              <div className="w-full px-2 py-1 bg-base rounded text-[10px] font-bold text-muted text-center">-</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Estimado</div>
-                <div className="text-xl font-black text-slate-900">CUP {orderFormData.items.reduce((sum, i) => sum + (i.quantity * i.cost), 0).toLocaleString()}</div>
+              <div className="pt-2 border-t border-base flex justify-between items-center">
+                <div className="text-[9px] font-black text-muted uppercase tracking-widest">Total Estimado</div>
+                <div className="text-lg font-black text-primary">${orderFormData.items.reduce((sum, i) => sum + (i.quantity * i.cost), 0).toLocaleString()}</div>
               </div>
 
-              <button type="submit" className="w-full py-3.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100">
-                {editingOrder ? 'Guardar Cambios' : 'Crear Orden de Compra'}
+              <button type="submit" className="w-full py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100">
+                {editingOrder ? 'Guardar Cambios' : 'Crear Orden'}
               </button>
             </form>
           </div>

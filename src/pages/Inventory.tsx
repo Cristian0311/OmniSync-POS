@@ -277,16 +277,22 @@ export default function Inventory() {
     return `${currency.symbol} ${formatted}`;
   };
 
-  const MultiCurrencyDisplay = ({ amount }: { amount: number }) => (
-    <div className="flex flex-col gap-0.5 mt-0.5">
-      {currencies.map(c => (
-        <div key={c.code} className={cn("flex justify-between items-center text-[9px]", c.isBase ? "font-black text-slate-900" : "font-bold text-slate-500")}>
-          <span>{formatMoney(amount, c)}</span>
-          <span className="text-[7px]">{c.code}</span>
+  const MultiCurrencyDisplay = ({ amount }: { amount: number }) => {
+    const baseCurr = currencies.find(c => c.isBase) || baseCurrency;
+    const secondaryCurr = currencies.filter(c => !c.isBase);
+    return (
+      <div className="mt-0.5">
+        <div className="text-[11px] font-black text-primary leading-tight truncate">
+          {formatMoney(amount, baseCurr)}
         </div>
-      ))}
-    </div>
-  );
+        {secondaryCurr.length > 0 && (
+          <div className="text-[7.5px] font-bold text-muted truncate">
+            {secondaryCurr.map(c => formatMoney(amount, c)).join(' · ')}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const stats = useMemo(() => {
     const activeProducts = inventoryView;
@@ -301,24 +307,31 @@ export default function Inventory() {
   }, [inventoryView]);
 
   return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 lg:h-full flex flex-col min-h-0">
-      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-2 px-1">
+    <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500 h-full flex flex-col min-h-0">
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-2 px-1 shrink-0">
         <div>
-          <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2 uppercase">
+          <h2 className="text-lg sm:text-xl font-black text-primary tracking-tight flex items-center gap-2 uppercase">
             Inventario
           </h2>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Control y Valoración de Stock</p>
+          <p className="text-[9px] sm:text-[10px] font-black text-muted uppercase tracking-widest">Stock Control</p>
         </div>
-        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+        <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide w-full sm:w-auto py-1">
+          <button 
+            onClick={exportToCSV}
+            className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 bg-secondary border border-base text-muted rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-subtle transition-all shadow-sm active:scale-95"
+          >
+            <Download className="w-3 h-3" />
+            <span>CSV</span>
+          </button>
           <button 
             onClick={() => setActiveTab('labels')}
-            className="flex-1 sm:flex-none bg-slate-900 text-white px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-800 transition-all shadow-md active:scale-95"
+            className="shrink-0 bg-slate-900 dark:bg-slate-800 text-white px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-2 hover:bg-slate-800 dark:hover:bg-slate-700 transition-all shadow-md active:scale-95 whitespace-nowrap"
           >
-            Imprimir Etiquetas
+            Etiquetas
           </button>
           <button 
             onClick={() => setActiveTab('abc')}
-            className="flex-1 sm:flex-none bg-blue-600 text-white px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-blue-700 transition-all shadow-md active:scale-95"
+            className="shrink-0 bg-blue-600 text-white px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-2 hover:bg-blue-700 transition-all shadow-md active:scale-95 whitespace-nowrap"
           >
             Análisis ABC
           </button>
@@ -332,50 +345,50 @@ export default function Inventory() {
               });
               setShowAddModal(true);
             }}
-            className="flex-1 sm:flex-none bg-indigo-600 text-white px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95"
+            className="shrink-0 bg-indigo-600 text-white px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95 whitespace-nowrap"
           >
-            <PackagePlus className="w-4 h-4" />
-            Nuevo Producto
+            <Plus className="w-3.5 h-3.5 shrink-0" />
+            Nuevo
           </button>
         </div>
       </header>
 
       {/* Summary Cards Lineal - Responsive Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 px-1">
-        <div className="bg-white p-2.5 rounded-xl border border-slate-100 shadow-xs flex flex-col justify-between">
-          <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Tipos de Prod.</span>
-          <div className="text-xs font-black text-slate-900 mt-1">{stats.totalProducts.toLocaleString()} tipos</div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5 sm:gap-2 px-1 shrink-0">
+        <div className="bg-secondary p-1.5 sm:p-2 rounded-xl border border-base shadow-xs flex flex-col justify-between">
+          <span className="text-[7px] sm:text-[7.5px] font-black uppercase text-muted tracking-wider">Tipos</span>
+          <div className="text-[11px] font-black text-primary mt-0.5">{stats.totalProducts.toLocaleString()}</div>
         </div>
-        <div className="bg-white p-2.5 rounded-xl border border-slate-100 shadow-xs flex flex-col justify-between">
-          <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Valor Costo</span>
-          <MultiCurrencyDisplay amount={stats.totalCostValue} />
+        <div className="bg-secondary p-1.5 sm:p-2 rounded-xl border border-base shadow-xs flex flex-col justify-between">
+          <span className="text-[7px] sm:text-[7.5px] font-black uppercase text-muted tracking-wider">Costo</span>
+          <div className="mt-0.5"><MultiCurrencyDisplay amount={stats.totalCostValue} /></div>
         </div>
-        <div className="bg-white p-2.5 rounded-xl border border-slate-100 shadow-xs flex flex-col justify-between">
-          <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Valor Venta</span>
-          <MultiCurrencyDisplay amount={stats.totalSaleValue} />
+        <div className="bg-secondary p-1.5 sm:p-2 rounded-xl border border-base shadow-xs flex flex-col justify-between">
+          <span className="text-[7px] sm:text-[7.5px] font-black uppercase text-muted tracking-wider">Venta</span>
+          <div className="mt-0.5"><MultiCurrencyDisplay amount={stats.totalSaleValue} /></div>
         </div>
-        <div className="bg-indigo-50/80 p-2.5 rounded-xl border border-indigo-100 shadow-xs flex flex-col justify-between">
-          <span className="text-[8px] font-black uppercase text-indigo-500 tracking-wider">Ganancia Est.</span>
-          <MultiCurrencyDisplay amount={stats.totalProfit} />
+        <div className="bg-indigo-50/70 dark:bg-indigo-950/40 p-1.5 sm:p-2 rounded-xl border border-indigo-100 dark:border-indigo-900/40 shadow-xs flex flex-col justify-between">
+          <span className="text-[7px] sm:text-[7.5px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-wider">Ganancia</span>
+          <div className="mt-0.5"><MultiCurrencyDisplay amount={stats.totalProfit} /></div>
         </div>
-        <div className="col-span-2 sm:col-span-1 bg-white p-2.5 rounded-xl border border-slate-100 shadow-xs flex flex-col justify-between">
-          <span className="text-[8px] font-black uppercase text-rose-500 tracking-wider">Bajo Stock</span>
-          <div className="text-xs font-black text-rose-600 mt-1">{stats.lowStockCount} alertas</div>
+        <div className="col-span-2 sm:col-span-1 bg-secondary p-1.5 sm:p-2 rounded-xl border border-base shadow-xs flex flex-col justify-between">
+          <span className="text-[7px] sm:text-[7.5px] font-black uppercase text-rose-500 tracking-wider">Bajo Stock</span>
+          <div className="text-[11px] font-black text-rose-600 dark:text-rose-400 mt-0.5">{stats.lowStockCount} alertas</div>
         </div>
       </div>
 
       {/* Advanced Unified Toolbar - Linear & Compact */}
-      <div className="bg-white p-2 rounded-2xl border border-slate-100 shadow-sm flex flex-col lg:flex-row gap-2 items-center justify-between">
+      <div className="bg-secondary p-1.5 rounded-2xl border border-base shadow-sm flex flex-col lg:flex-row gap-2 items-center justify-between shrink-0">
         <div className="flex flex-wrap gap-2 items-center w-full lg:w-auto">
             <div className="flex-1 relative flex items-center gap-1.5">
               <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted group-focus-within:text-indigo-500 transition-colors" />
                 <input 
                   type="text" 
                   placeholder="Buscar productos..." 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold focus:bg-white focus:ring-1 focus:ring-indigo-100 outline-none transition-all placeholder:text-slate-400"
+                  className="w-full pl-8 pr-3 py-1.5 bg-subtle border border-base text-primary rounded-xl text-[11px] font-bold focus:bg-secondary focus:ring-1 focus:ring-indigo-500 outline-none transition-all placeholder:text-muted"
                 />
               </div>
               <InfoTooltip text="Busca productos por nombre, SKU o código de barras." position="bottom" />
@@ -386,7 +399,7 @@ export default function Inventory() {
                 <select 
                   value={selectedBranch}
                   onChange={(e) => setSelectedBranch(e.target.value)}
-                  className="px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none hover:bg-slate-100 transition-colors cursor-pointer appearance-none min-w-[110px]"
+                  className="px-2.5 py-1.5 bg-subtle border border-base text-primary rounded-xl text-[10px] font-bold outline-none hover:bg-secondary transition-colors cursor-pointer appearance-none min-w-[110px]"
                 >
                   <option value="all">Sucs: Todas</option>
                   {branches.map(b => (
@@ -400,7 +413,7 @@ export default function Inventory() {
                 <select 
                   value={selectedCategory}
                   onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none hover:bg-slate-100 transition-colors cursor-pointer appearance-none min-w-[110px]"
+                  className="px-2.5 py-1.5 bg-subtle border border-base text-primary rounded-xl text-[10px] font-bold outline-none hover:bg-secondary transition-colors cursor-pointer appearance-none min-w-[110px]"
                 >
                   <option value="all">Cats: Todas</option>
                   {categories.map(cat => (
@@ -412,7 +425,7 @@ export default function Inventory() {
 
             <button 
               onClick={() => setShowCategoryModal(true)}
-              className="p-1.5 bg-slate-50 border border-slate-100 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all shadow-sm"
+              className="p-1.5 bg-subtle border border-base rounded-xl text-muted hover:text-indigo-600 hover:bg-secondary transition-all shadow-sm"
               title="Gestionar Categorías"
             >
               <Settings2 className="w-3.5 h-3.5" />
@@ -421,7 +434,7 @@ export default function Inventory() {
             <select 
               value={stockFilter}
               onChange={(e) => setStockFilter(e.target.value as any)}
-              className="px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded-xl text-[10px] font-bold outline-none hover:bg-slate-100 transition-colors cursor-pointer appearance-none min-w-[90px]"
+              className="px-2.5 py-1.5 bg-subtle border border-base text-primary rounded-xl text-[10px] font-bold outline-none hover:bg-secondary transition-colors cursor-pointer appearance-none min-w-[90px]"
             >
               <option value="all">Stock: Todo</option>
               <option value="low">Bajo Stock</option>
@@ -431,12 +444,12 @@ export default function Inventory() {
         </div>
 
         <div className="flex items-center gap-2 w-full lg:w-auto justify-end border-t lg:border-t-0 pt-2 lg:pt-0">
-          <div className="bg-slate-100/50 p-1 rounded-xl flex gap-1 border border-slate-100">
+          <div className="bg-subtle p-1 rounded-xl flex gap-1 border border-base">
             <button 
               onClick={() => setViewMode('table')}
               className={cn(
                 "p-1.5 rounded-lg transition-all",
-                viewMode === 'table' ? "bg-white text-indigo-600 shadow-sm ring-1 ring-black/5" : "text-slate-400 hover:text-slate-600"
+                viewMode === 'table' ? "bg-primary text-indigo-600 shadow-sm ring-1 ring-black/5" : "text-muted hover:text-primary"
               )}
             >
               <List className="w-3.5 h-3.5" />
@@ -445,50 +458,36 @@ export default function Inventory() {
               onClick={() => setViewMode('grid')}
               className={cn(
                 "p-1.5 rounded-lg transition-all",
-                viewMode === 'grid' ? "bg-white text-indigo-600 shadow-sm ring-1 ring-black/5" : "text-slate-400 hover:text-slate-600"
+                viewMode === 'grid' ? "bg-primary text-indigo-600 shadow-sm ring-1 ring-black/5" : "text-muted hover:text-primary"
               )}
             >
               <LayoutGrid className="w-3.5 h-3.5" />
             </button>
           </div>
-
-          <button 
-            onClick={exportToCSV}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-100 text-slate-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all shadow-sm"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">CSV</span>
-          </button>
-
-          <button 
-            onClick={() => {
-              setEditingProduct(null);
-              setShowAddModal(true);
-            }}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Nuevo</span>
-          </button>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 border-b border-slate-200 pb-2 overflow-x-auto scrollbar-hide">
-        {(['products', 'transfers', 'labels', 'abc', 'restock'] as const)
+      {/* Tabs - High contrast and modern segmented design */}
+      <div className="flex items-center gap-1.5 bg-secondary p-1 rounded-xl border border-base shrink-0 w-fit shadow-xs">
+        {(['products', 'transfers', 'restock'] as const)
           .filter(tab => tab !== 'transfers' || transfers.length > 0)
-          .map(tab => (
-          <button 
-            key={tab}
-            onClick={() => setActiveTab(tab as any)}
-            className={cn(
-              "whitespace-nowrap px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-              activeTab === tab ? "bg-indigo-100 text-indigo-700" : "bg-slate-50 text-slate-500 hover:bg-slate-100"
-            )}
-          >
-            {tab === 'products' ? 'Productos' : tab === 'transfers' ? 'Historial de Traslados' : tab === 'labels' ? 'Impresión de Etiquetas' : tab === 'abc' ? 'Análisis ABC' : 'Alertas de Reabastecimiento'}
-          </button>
-        ))}
+          .map(tab => {
+            const isActive = activeTab === tab;
+            return (
+              <button 
+                key={tab}
+                onClick={() => setActiveTab(tab as any)}
+                className={cn(
+                  "whitespace-nowrap px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer",
+                  isActive 
+                    ? "bg-indigo-600 text-white shadow-xs ring-1 ring-indigo-500/20" 
+                    : "text-secondary hover:text-primary hover:bg-subtle"
+                )}
+              >
+                {tab === 'products' ? 'Existencias' : tab === 'transfers' ? 'Traslados' : 'Alertas'}
+              </button>
+            );
+        })}
       </div>
 
 
@@ -499,15 +498,15 @@ export default function Inventory() {
       {activeTab === 'transfers' && <TransferHistory />}
       {activeTab === 'products' && (
         viewMode === 'table' ? (
-          <div className="bg-white rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden flex-1 flex flex-col min-h-[500px]">
-          <div className="overflow-auto flex-1 h-full">
-            <table className="w-full text-left border-collapse table-fixed min-w-[1000px]">
+          <div className="bg-secondary rounded-[2rem] shadow-sm border border-base overflow-hidden flex-1 flex flex-col min-h-[500px]">
+          <div className="overflow-auto flex-1 h-full custom-scrollbar">
+            <table className="w-full text-left border-collapse table-fixed min-w-[900px]">
               <thead>
-                <tr className="bg-slate-50/50 border-b border-slate-100 sticky top-0 z-10 backdrop-blur-sm">
-                  <th className="w-16 px-6 py-4">
+                <tr className="bg-secondary border-b border-base sticky top-0 z-30 shadow-sm translate-y-[-1px]">
+                  <th className="w-14 px-4 py-3 bg-secondary">
                     <input 
                       type="checkbox" 
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="rounded border-base text-indigo-600 focus:ring-indigo-500 bg-primary"
                       checked={selectedItems.length === inventoryView.length && inventoryView.length > 0}
                       onChange={(e) => {
                         if (e.target.checked) setSelectedItems(inventoryView.map(i => i.id));
@@ -515,33 +514,33 @@ export default function Inventory() {
                       }}
                     />
                   </th>
-                  <th className="w-1/4 px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Producto / Cat</th>
-                  <th className="w-40 px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">SKU / CB</th>
-                  <th className="w-32 px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Garantía</th>
-                  <th className="w-40 px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Precio (CUP)</th>
-                  <th className="w-44 px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Stock Actual</th>
-                  <th className="w-32 px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Acciones</th>
+                  <th className="w-1/4 px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest bg-secondary">Producto / Cat</th>
+                  <th className="w-36 px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest bg-secondary">SKU / CB</th>
+                  <th className="w-28 px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest bg-secondary">Garantía</th>
+                  <th className="w-36 px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest bg-secondary">Precio (CUP)</th>
+                  <th className="w-40 px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest bg-secondary">Stock Actual</th>
+                  <th className="w-28 px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest text-right bg-secondary">Acciones</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-subtle">
                 {inventoryView.map((item) => (
                   <tr key={item.id} className={cn(
-                    "hover:bg-slate-50/50 transition-colors group",
-                    selectedItems.includes(item.id) && "bg-indigo-50/30"
+                    "hover:bg-subtle/50 transition-colors group",
+                    selectedItems.includes(item.id) && "bg-indigo-50/30 dark:bg-indigo-900/10"
                   )}>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3">
                       <input 
                         type="checkbox" 
                         checked={selectedItems.includes(item.id)}
                         onChange={() => {
                           setSelectedItems(prev => prev.includes(item.id) ? prev.filter(id => id !== item.id) : [...prev, item.id]);
                         }}
-                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        className="rounded border-base text-indigo-600 focus:ring-indigo-500 bg-primary"
                       />
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden shrink-0 border border-slate-200">
+                        <div className="w-8 h-8 rounded-lg bg-subtle flex items-center justify-center overflow-hidden shrink-0 border border-base relative shadow-sm">
                           {item.image ? (
                             <img 
                               src={item.image} 
@@ -558,43 +557,43 @@ export default function Inventory() {
                             <div className={cn("w-full h-full opacity-20", item.color)} />
                           )}
                           {!item.image && (
-                            <span className="absolute text-[10px] font-black text-slate-400 uppercase">
+                            <span className="absolute text-[10px] font-black text-muted uppercase">
                               {item.name.substring(0, 2)}
                             </span>
                           )}
                         </div>
                         <div className="flex flex-col min-w-0">
-                          <div className="text-xs font-black text-slate-900 uppercase tracking-tighter truncate flex items-center gap-1.5">
+                          <div className="text-xs font-black text-primary uppercase tracking-tighter truncate flex items-center gap-1.5">
                             {item.name}
                             {item.isLowStock && <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" title="Bajo Stock" />}
                           </div>
-                          <span className="text-[9px] text-slate-400 font-bold uppercase truncate">{categories.find(c => c.id === item.categoryId)?.name || 'General'}</span>
+                          <span className="text-[9px] text-muted font-bold uppercase truncate">{categories.find(c => c.id === item.categoryId)?.name || 'General'}</span>
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="text-[10px] font-mono font-black text-slate-900 uppercase truncate">{item.sku}</div>
-                      <div className="text-[8px] text-slate-400 font-mono truncate">{item.barcode || '---'}</div>
+                    <td className="px-4 py-3">
+                      <div className="text-[9px] font-mono font-black text-primary uppercase truncate">{item.sku}</div>
+                      <div className="text-[7px] text-muted font-mono truncate">{item.barcode || '---'}</div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
-                        <ShieldCheck className={cn("w-3.5 h-3.5", item.warrantyDays ? "text-emerald-500" : "text-slate-300")} />
-                        <span className="text-[10px] font-bold text-slate-600">
+                        <ShieldCheck className={cn("w-3 h-3", item.warrantyDays ? "text-emerald-500" : "text-slate-300 dark:text-slate-600")} />
+                        <span className="text-[9px] font-bold text-secondary">
                           {item.warrantyDays ? `${item.warrantyDays}d` : '---'}
                         </span>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="text-[10px] font-black text-slate-900 whitespace-nowrap">{formatMoney(item.price)}</div>
-                      <div className="text-[8px] text-emerald-600 font-black whitespace-nowrap">GAN: {formatMoney(item.margin)}</div>
+                    <td className="px-4 py-3">
+                      <div className="text-[10px] font-black text-primary whitespace-nowrap">{formatMoney(item.price)}</div>
+                      <div className="text-[8px] text-emerald-600 dark:text-emerald-400 font-black whitespace-nowrap">GAN: {formatMoney(item.margin)}</div>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col gap-1.5">
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-1">
                         <span className={cn(
-                          "px-2.5 py-1 rounded-lg text-[10px] font-black inline-block w-fit whitespace-nowrap",
-                          item.totalStock === 0 ? "bg-rose-100 text-rose-600" :
-                          item.isLowStock ? "bg-amber-100 text-amber-600" : 
-                          "bg-emerald-100 text-emerald-600"
+                          "px-2 py-0.5 rounded-lg text-[9px] font-black inline-block w-fit whitespace-nowrap",
+                          item.totalStock === 0 ? "bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400" :
+                          item.isLowStock ? "bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400" : 
+                          "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400"
                         )}>
                           {item.totalStock} {item.unit || 'uds'}
                         </span>
@@ -612,17 +611,17 @@ export default function Inventory() {
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-4 py-3 text-right">
                       <div className="flex justify-end gap-1.5">
                         <button 
                           onClick={() => {
                             const { totalStock, isLowStock, levels, ...productOnly } = item as any;
                             setManagingStockProduct(productOnly);
                           }}
-                          className="text-slate-400 hover:text-emerald-600 transition-colors p-2 rounded-xl hover:bg-emerald-50 border border-slate-100 shadow-sm"
+                          className="text-muted hover:text-emerald-600 transition-colors p-1.5 rounded-xl hover:bg-emerald-50 dark:hover:bg-emerald-950/50 border border-base shadow-sm"
                           title="Gestionar Stock"
                         >
-                          <PackagePlus className="w-4 h-4" />
+                          <PackagePlus className="w-3.5 h-3.5" />
                         </button>
                         <button 
                           onClick={() => {
@@ -631,15 +630,15 @@ export default function Inventory() {
                             setFormData(productOnly);
                             setShowAddModal(true);
                           }}
-                          className="text-slate-400 hover:text-indigo-600 transition-colors p-2 rounded-xl hover:bg-indigo-50 border border-slate-100 shadow-sm"
+                          className="text-muted hover:text-indigo-600 transition-colors p-1.5 rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-950/50 border border-base shadow-sm"
                         >
-                          <Edit className="w-4 h-4" />
+                          <Edit className="w-3.5 h-3.5" />
                         </button>
                         <button 
                           onClick={() => window.confirm("¿Seguro que deseas eliminar este producto?") && deleteProduct(item.id)}
-                          className="text-slate-400 hover:text-rose-600 transition-colors p-2 rounded-xl hover:bg-rose-50 border border-slate-100 shadow-sm"
+                          className="text-muted hover:text-rose-600 transition-colors p-1.5 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-base shadow-sm"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </td>

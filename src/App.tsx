@@ -3,26 +3,39 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
-import POS from "./pages/POS";
-import Inventory from "./pages/Inventory";
-import Returns from "./pages/Returns";
-import Settings from "./pages/Settings";
-import Customers from "./pages/Customers";
-import Transfers from "./pages/Transfers";
-import Reports from "./pages/Reports";
-import CustomerShop from "./pages/CustomerShop";
-import Suppliers from "./pages/Suppliers";
-import InventoryAudit from "./pages/InventoryAudit";
-import Banks from "./pages/Banks";
 import { useStore } from "./store/useStore";
 
+// Code-splitting de rutas para acelerar inicio en tablets y reducir consumo de memoria
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const POS = lazy(() => import("./pages/POS"));
+const Inventory = lazy(() => import("./pages/Inventory"));
+const Returns = lazy(() => import("./pages/Returns"));
+const Settings = lazy(() => import("./pages/Settings"));
+const Customers = lazy(() => import("./pages/Customers"));
+const Transfers = lazy(() => import("./pages/Transfers"));
+const Reports = lazy(() => import("./pages/Reports"));
+const CustomerShop = lazy(() => import("./pages/CustomerShop"));
+const Suppliers = lazy(() => import("./pages/Suppliers"));
+const InventoryAudit = lazy(() => import("./pages/InventoryAudit"));
+const Banks = lazy(() => import("./pages/Banks"));
+
+function PageLoading() {
+  return (
+    <div className="flex-1 min-h-[50vh] flex items-center justify-center p-6">
+      <div className="flex flex-col items-center gap-2">
+        <div className="animate-spin rounded-full h-7 w-7 border-2 border-indigo-600 border-t-transparent"></div>
+        <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Cargando módulo...</span>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const { currentUser, isInitialized, syncWithSupabase } = useStore();
+  const { currentUser, isInitialized } = useStore();
 
   useEffect(() => {
     // Sincronizar automáticamente con Supabase al iniciar la aplicación (una sola vez)
@@ -39,29 +52,33 @@ export default function App() {
 
   return (
     <Router>
-      <Routes>
-        <Route path="/shop" element={<CustomerShop />} />
-        
-        <Route path="/*" element={
-          !currentUser ? <Login /> : (
-            <Layout>
-              <Routes>
-                <Route path="/" element={currentUser.role === 'admin' ? <Dashboard /> : <Navigate to="/pos" replace />} />
-                <Route path="/pos" element={<POS />} />
-                <Route path="/transfers" element={currentUser.role === 'admin' ? <Transfers /> : <Navigate to="/pos" replace />} />
-                <Route path="/inventory" element={currentUser.role === 'admin' ? <Inventory /> : <Navigate to="/pos" replace />} />
-                <Route path="/inventory-audit" element={currentUser.role === 'admin' ? <InventoryAudit /> : <Navigate to="/pos" replace />} />
-                <Route path="/suppliers" element={currentUser.role === 'admin' ? <Suppliers /> : <Navigate to="/pos" replace />} />
-                <Route path="/banks" element={currentUser.role === 'admin' ? <Banks /> : <Navigate to="/pos" replace />} />
-                <Route path="/returns" element={currentUser.role === 'admin' ? <Returns /> : <Navigate to="/pos" replace />} />
-                <Route path="/customers" element={currentUser.role === 'admin' ? <Customers /> : <Navigate to="/pos" replace />} />
-                <Route path="/reports" element={currentUser.role === 'admin' ? <Reports /> : <Navigate to="/pos" replace />} />
-                <Route path="/settings" element={currentUser.role === 'admin' ? <Settings /> : <Navigate to="/pos" replace />} />
-              </Routes>
-            </Layout>
-          )
-        } />
-      </Routes>
+      <Suspense fallback={<PageLoading />}>
+        <Routes>
+          <Route path="/shop" element={<CustomerShop />} />
+          
+          <Route path="/*" element={
+            !currentUser ? <Login /> : (
+              <Layout>
+                <Suspense fallback={<PageLoading />}>
+                  <Routes>
+                    <Route path="/" element={currentUser.role === 'admin' ? <Dashboard /> : <Navigate to="/pos" replace />} />
+                    <Route path="/pos" element={<POS />} />
+                    <Route path="/transfers" element={currentUser.role === 'admin' ? <Transfers /> : <Navigate to="/pos" replace />} />
+                    <Route path="/inventory" element={currentUser.role === 'admin' ? <Inventory /> : <Navigate to="/pos" replace />} />
+                    <Route path="/inventory-audit" element={currentUser.role === 'admin' ? <InventoryAudit /> : <Navigate to="/pos" replace />} />
+                    <Route path="/suppliers" element={currentUser.role === 'admin' ? <Suppliers /> : <Navigate to="/pos" replace />} />
+                    <Route path="/banks" element={currentUser.role === 'admin' ? <Banks /> : <Navigate to="/pos" replace />} />
+                    <Route path="/returns" element={currentUser.role === 'admin' ? <Returns /> : <Navigate to="/pos" replace />} />
+                    <Route path="/customers" element={currentUser.role === 'admin' ? <Customers /> : <Navigate to="/pos" replace />} />
+                    <Route path="/reports" element={currentUser.role === 'admin' ? <Reports /> : <Navigate to="/pos" replace />} />
+                    <Route path="/settings" element={currentUser.role === 'admin' ? <Settings /> : <Navigate to="/pos" replace />} />
+                  </Routes>
+                </Suspense>
+              </Layout>
+            )
+          } />
+        </Routes>
+      </Suspense>
     </Router>
   );
 }
