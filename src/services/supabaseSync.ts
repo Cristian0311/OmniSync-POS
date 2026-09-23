@@ -1701,7 +1701,7 @@ export async function safeUpsertMany(
  * Empuja toda la base de datos local (Sucursales, Usuarios, Categorías, Productos, Stock, IDN, etc.)
  * a Supabase para garantizar respaldo total sin pérdida de datos en solo ~11 peticiones en lote.
  */
-export async function pushAllToSupabase(): Promise<{ success: boolean; pushed: Record<string, number>; errors: string[] }> {
+export async function pushAllToSupabase(isFull: boolean = false): Promise<{ success: boolean; pushed: Record<string, number>; errors: string[] }> {
   const supabase = getSupabase();
   if (!supabase) return { success: false, pushed: {}, errors: ["Supabase no configurado"] };
 
@@ -1718,7 +1718,7 @@ export async function pushAllToSupabase(): Promise<{ success: boolean; pushed: R
     customers: store.customers.length,
     suppliers: (store.suppliers || []).length,
     supplierOrders: (store.supplierOrders || []).length,
-    transactions: Math.min(store.transactions.length, 100)
+    transactions: isFull ? store.transactions.length : Math.min(store.transactions.length, 100)
   };
 
   try {
@@ -1861,8 +1861,8 @@ export async function pushAllToSupabase(): Promise<{ success: boolean; pushed: R
       }));
     await safeUpsertMany(supabase, 'supplier_orders', orderRows);
 
-    // 11. Recent Transactions (last 100)
-    const txRows = store.transactions.slice(0, 100).map(tx => ({
+    // 11. Recent Transactions (last 100 or ALL if isFull)
+    const txRows = (isFull ? store.transactions : store.transactions.slice(0, 100)).map(tx => ({
       id: tx.id,
       date: tx.date,
       total: Number(tx.total) || 0,
@@ -1882,6 +1882,43 @@ export async function pushAllToSupabase(): Promise<{ success: boolean; pushed: R
       seller_employee_ids: tx.sellerEmployeeIds || []
     }));
     await safeUpsertMany(supabase, 'transactions', txRows);
+
+    // 12. Returns
+    if ((store.returns || []).length > 0) {
+      const returnRows = store.returns.map(r => ({
+        id: r.id, transaction_id: r.transactionId, date: r.date, 
+        product_id: r.productId, quantity: r.quantity,
+        status: r.status, reason: r.reason || ''
+      }));
+      await safeUpsertMany(supabase, 'returns', returnRows);
+    }
+
+    // 13. Warranties
+    if ((store.warranties || []).length > 0) {
+      const warRows = store.warranties.map(w => ({
+        id: w.id, transaction_id: w.transactionId, product_id: w.productId, 
+        serial_number: w.serialNumber, start_date: w.purchaseDate, end_date: w.expiryDate, status: w.status
+      }));
+      await safeUpsertMany(supabase, 'warranties', warRows);
+    }
+
+    // 14. Bank Transactions
+    if ((store.bankTransactions || []).length > 0) {
+      const btRows = store.bankTransactions.map(bt => ({
+        id: bt.id, card_id: bt.cardId, type: bt.type, amount: bt.amount, 
+        date: bt.date, description: bt.description, related_transaction_id: bt.transactionId || null
+      }));
+      await safeUpsertMany(supabase, 'bank_transactions', btRows);
+    }
+
+    // 15. Inventory Transfers
+    if ((store.transfers || []).length > 0) {
+      const transferRows = store.transfers.map(t => ({
+        id: t.id, product_id: t.productId, from_branch_id: t.fromBranchId, 
+        to_branch_id: t.toBranchId, quantity: t.quantity, date: t.date, status: t.status
+      }));
+      await safeUpsertMany(supabase, 'inventory_transfers', transferRows);
+    }
 
     return { success: true, pushed, errors };
   } catch (err: any) {

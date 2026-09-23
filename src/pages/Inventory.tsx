@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { ArrowLeftRight, PackagePlus, AlertCircle, Search, ShieldCheck, X, DollarSign, Trash2, Edit, History, Package, TrendingUp, Filter, Download, Plus, ArrowRightLeft, LayoutGrid, List, Settings2, Tag, Building2 } from "lucide-react";
+import { ArrowLeftRight, PackagePlus, AlertCircle, Search, ShieldCheck, X, DollarSign, Trash2, Edit, History, Package, TrendingUp, Filter, Download, Plus, ArrowRightLeft, LayoutGrid, List, Settings2, Tag, Building2, Save, RefreshCw } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { cn, generateId } from "../lib/utils";
 import { Product, Category } from "../types";
@@ -61,13 +61,86 @@ export default function Inventory() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [stockFilter, setStockFilter] = useState<'all' | 'in_stock' | 'low' | 'out'>('all');
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<'products' | 'transfers' | 'labels' | 'abc' | 'restock'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'transfers' | 'labels' | 'abc' | 'restock' | 'bulk'>('products');
   const [showBatchPriceModal, setShowBatchPriceModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [activeFormTab, setActiveFormTab] = useState<'general' | 'stock' | 'extra'>('general');
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [categoryFormData, setCategoryFormData] = useState({ name: "", department: "" });
   const [batchPriceAdjust, setBatchPriceAdjust] = useState({ type: 'percentage' as 'percentage' | 'fixed', value: 0, direction: 'increase' as 'increase' | 'decrease' });
+  const [bulkChanges, setBulkChanges] = useState<Record<string, { costPrice?: number, price?: number, quantity?: number }>>({});
+  const [isSavingBulk, setIsSavingBulk] = useState(false);
+  const [bulkBranchId, setBulkBranchId] = useState<string>(branches[0]?.id || "");
+
+  // Auto-select first branch when they load
+  React.useEffect(() => {
+    if (!bulkBranchId && branches.length > 0) {
+      setBulkBranchId(branches[0].id);
+    }
+  }, [branches, bulkBranchId]);
+
+  const handleBulkChange = (id: string, field: 'costPrice' | 'price' | 'quantity', value: number) => {
+    const [prodId, branchId] = id.split(':::');
+    
+    setBulkChanges(prev => {
+      const next = { ...prev };
+      
+      if (field === 'quantity') {
+        // Quantity is branch-specific
+        next[id] = { ...(next[id] || {}), [field]: value };
+      } else {
+        // Price/Cost are global for the product. Update ALL rows for this product.
+        // We find all keys starting with this prodId and update them to keep UI in sync
+        const productRows = Object.keys(next).filter(key => key.startsWith(`${prodId}:::`));
+        
+        // If no rows exist yet for this product in next, create one for current row
+        if (productRows.length === 0) {
+          next[id] = { ...(next[id] || {}), [field]: value };
+        } else {
+          productRows.forEach(key => {
+            next[key] = { ...(next[key] || {}), [field]: value };
+          });
+        }
+      }
+      return next;
+    });
+  };
+
+  const saveBulkChanges = async () => {
+    setIsSavingBulk(true);
+    try {
+      // Collect unique product updates to avoid redundant calls
+      const productUpdates: Record<string, { costPrice?: number, price?: number }> = {};
+      
+      for (const [id, changes] of Object.entries(bulkChanges)) {
+        const [prodId, branchId] = id.split(':::');
+        
+        if (changes.costPrice !== undefined || changes.price !== undefined) {
+          productUpdates[prodId] = {
+            ...productUpdates[prodId],
+            ...(changes.costPrice !== undefined ? { costPrice: changes.costPrice } : {}),
+            ...(changes.price !== undefined ? { price: changes.price } : {})
+          };
+        }
+        
+        if (changes.quantity !== undefined && branchId) {
+          setInventoryQuantity(prodId, branchId, changes.quantity);
+        }
+      }
+
+      // Apply product updates (price/cost)
+      for (const [prodId, updates] of Object.entries(productUpdates)) {
+        updateProduct(prodId, updates);
+      }
+
+      setBulkChanges({});
+      addNotification("Cambios masivos guardados con éxito", 'success');
+    } catch (err) {
+      addNotification("Error al guardar cambios masivos", 'error');
+    } finally {
+      setIsSavingBulk(false);
+    }
+  };
 
   const handleBatchDelete = () => {
     if (window.confirm(`¿Seguro que deseas eliminar ${selectedItems.length} productos?`)) {
@@ -518,7 +591,7 @@ export default function Inventory() {
 
       {/* Tabs - High contrast and modern segmented design */}
       <div className="flex items-center gap-1.5 bg-secondary p-1 rounded-xl border border-base shrink-0 w-fit shadow-xs">
-        {(['products', 'transfers', 'restock'] as const)
+        {(['products', 'transfers', 'restock', 'bulk'] as const)
           .filter(tab => tab !== 'transfers' || transfers.length > 0)
           .map(tab => {
             const isActive = activeTab === tab;
@@ -533,7 +606,7 @@ export default function Inventory() {
                     : "text-secondary hover:text-primary hover:bg-subtle"
                 )}
               >
-                {tab === 'products' ? 'Existencias' : tab === 'transfers' ? 'Traslados' : 'Alertas'}
+                {tab === 'products' ? 'Existencias' : tab === 'transfers' ? 'Traslados' : tab === 'restock' ? 'Alertas' : 'Edición Masiva'}
               </button>
             );
         })}
@@ -544,6 +617,173 @@ export default function Inventory() {
       {activeTab === 'labels' && <PrintLabels />}
       {activeTab === 'abc' && <ABCAnalysis />}
       {activeTab === 'restock' && <RestockAlerts />}
+
+      {activeTab === 'bulk' && (
+        <div className="flex-1 min-h-0 bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-base overflow-hidden animate-in fade-in zoom-in-95 duration-300 flex flex-col">
+          <div className="p-4 border-b border-base bg-slate-50/50 dark:bg-slate-800/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
+            <div className="flex items-center gap-4">
+              <div>
+                <h2 className="text-sm font-black text-primary uppercase tracking-tight">Edición Masiva</h2>
+                <p className="text-[10px] font-bold text-muted uppercase">Actualiza precios y stock por sala</p>
+              </div>
+              
+              {/* Branch Selector for Bulk Edition */}
+              <div className="flex flex-col gap-1 ml-2">
+                <span className="text-[8px] font-black text-muted uppercase tracking-widest px-1">Seleccionar Sala</span>
+                <select 
+                  value={bulkBranchId}
+                  onChange={(e) => setBulkBranchId(e.target.value)}
+                  className="bg-white dark:bg-slate-800 border border-base rounded-xl px-3 py-1.5 text-[10px] font-black uppercase tracking-tight outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm min-w-[140px]"
+                >
+                  <option value="">Todas las Salas</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              {Object.keys(bulkChanges).length > 0 && (
+                <button
+                  onClick={() => setBulkChanges({})}
+                  className="px-4 py-2 bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-300 transition-all cursor-pointer"
+                >
+                  Descartar ({Object.keys(bulkChanges).length})
+                </button>
+              )}
+              <button
+                disabled={isSavingBulk || Object.keys(bulkChanges).length === 0}
+                onClick={saveBulkChanges}
+                className="flex-1 sm:flex-initial px-6 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isSavingBulk ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                Guardar Cambios
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-auto">
+            <table className="w-full text-left border-collapse min-w-[700px]">
+              <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800 border-b border-base">
+                <tr>
+                  <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest">Producto</th>
+                  <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest">Sucursal (Sala)</th>
+                  <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest text-center">Costo ({baseCurrency.symbol})</th>
+                  <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest text-center">Precio ({baseCurrency.symbol})</th>
+                  <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest text-center">Stock Actual</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-base">
+                {products.filter(p => 
+                  p.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) || 
+                  p.sku?.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+                  p.barcode?.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
+                ).flatMap(product => {
+                  let prodInventory = inventory.filter(inv => inv.productId === product.id);
+                  
+                  // Filter by branch if selected
+                  if (bulkBranchId) {
+                    prodInventory = prodInventory.filter(inv => inv.branchId === bulkBranchId);
+                    // If no inventory for this branch, create a placeholder for editing
+                    if (prodInventory.length === 0) {
+                      prodInventory = [{ productId: product.id, branchId: bulkBranchId, quantity: 0, id: generateId(), minQuantity: 0 }];
+                    }
+                  } else {
+                    // If no branch selected, and no inventory exists at all, show one row
+                    if (prodInventory.length === 0) {
+                      prodInventory = [{ productId: product.id, branchId: '', quantity: 0, id: generateId(), minQuantity: 0 }];
+                    }
+                  }
+                  
+                  return prodInventory.map((inv) => {
+                    const branch = branches.find(b => b.id === inv.branchId);
+                    const rowKey = `${product.id}:::${inv.branchId || ''}`;
+                    const changes = bulkChanges[rowKey] || {};
+                    
+                    // Look for price/cost changes in ANY row of the same product to keep UI consistent
+                    const otherRows = Object.entries(bulkChanges).find(([key, val]) => 
+                      key.startsWith(`${product.id}:::`) && (val.price !== undefined || val.costPrice !== undefined)
+                    );
+                    const globalPriceChange = otherRows ? otherRows[1].price : undefined;
+                    const globalCostChange = otherRows ? otherRows[1].costPrice : undefined;
+                    
+                    return (
+                      <tr key={rowKey} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold", product.color || 'bg-slate-100')}>
+                              {product.name.charAt(0)}
+                            </div>
+                            <div>
+                              <div className="text-[11px] font-black text-primary uppercase leading-tight">{product.name}</div>
+                              <div className="text-[8px] font-bold text-muted uppercase tracking-tighter">{product.sku || 'SIN SKU'}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <Building2 className="w-3 h-3 text-slate-400" />
+                            <span className="text-[10px] font-black text-secondary uppercase tracking-tight">
+                              {branch?.name || 'No Asignado'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex justify-center">
+                            <input
+                              type="number"
+                              value={globalCostChange !== undefined ? globalCostChange : product.costPrice}
+                              onChange={(e) => handleBulkChange(rowKey, 'costPrice', parseFloat(e.target.value) || 0)}
+                              className={cn(
+                                "w-24 px-2 py-1.5 bg-white dark:bg-slate-800 border rounded-lg text-[11px] font-bold text-center outline-none focus:ring-2 focus:ring-indigo-500",
+                                globalCostChange !== undefined ? "border-amber-500 ring-1 ring-amber-500" : "border-base"
+                              )}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex justify-center">
+                            <input
+                              type="number"
+                              value={globalPriceChange !== undefined ? globalPriceChange : product.price}
+                              onChange={(e) => handleBulkChange(rowKey, 'price', parseFloat(e.target.value) || 0)}
+                              className={cn(
+                                "w-24 px-2 py-1.5 bg-white dark:bg-slate-800 border rounded-lg text-[11px] font-bold text-center outline-none focus:ring-2 focus:ring-indigo-500",
+                                globalPriceChange !== undefined ? "border-amber-500 ring-1 ring-amber-500" : "border-base"
+                              )}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex justify-center">
+                            <input
+                              type="number"
+                              value={changes.quantity !== undefined ? changes.quantity : inv.quantity}
+                              onChange={(e) => handleBulkChange(rowKey, 'quantity', parseFloat(e.target.value) || 0)}
+                              className={cn(
+                                "w-24 px-2 py-1.5 bg-white dark:bg-slate-800 border rounded-lg text-[11px] font-bold text-center outline-none focus:ring-2 focus:ring-indigo-500",
+                                changes.quantity !== undefined ? "border-amber-500 ring-1 ring-amber-500" : "border-base"
+                              )}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  });
+                })}
+              </tbody>
+            </table>
+          </div>
+          
+          {products.length === 0 && (
+            <div className="py-20 text-center shrink-0">
+              <Package className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+              <p className="text-xs font-bold text-muted uppercase">No se encontraron productos para editar</p>
+            </div>
+          )}
+        </div>
+      )}
       {activeTab === 'transfers' && <TransferHistory />}
       {activeTab === 'products' && (
         viewMode === 'table' ? (

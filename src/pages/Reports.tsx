@@ -3,8 +3,12 @@ import {
   TrendingUp, DollarSign, Calendar, Calculator, Package, User, Users, Smartphone, Eye,
   X, ArrowDownRight, History, Download, Printer, CheckCircle2, 
   Clock, AlertCircle, FileSpreadsheet, ChevronDown, Check,
-  Sparkles, Brain, ListChecks, ShieldAlert, Loader2, Trash2
+  Sparkles, Brain, ListChecks, ShieldAlert, Loader2, Trash2, PieChart as PieChartIcon, BarChart3
 } from "lucide-react";
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
+  PieChart, Pie, Cell 
+} from "recharts";
 import { useStore } from "../store/useStore";
 import { cn } from "../lib/utils";
 import { InfoTooltip } from "../components/InfoTooltip";
@@ -103,6 +107,75 @@ export default function Reports() {
       })}
     </div>
   );
+
+  // --- Chart Data Processing ---
+  
+  // 1. Sales by Category
+  const categoryData = useMemo(() => {
+    const data: Record<string, number> = {};
+    transactions.forEach(tx => {
+      tx.items.forEach(item => {
+        const categoryId = item.product?.categoryId || 'unclassified';
+        const category = categories.find(c => c.id === categoryId);
+        const categoryName = category?.name || 'Otros';
+        
+        data[categoryName] = (data[categoryName] || 0) + (item.price * item.quantity);
+      });
+    });
+    
+    return Object.entries(data)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5); // Top 5
+  }, [transactions, products, categories]);
+
+  // 2. Sales by Hour
+  const hourData = useMemo(() => {
+    const data: Record<number, number> = {};
+    // Initialize 24 hours
+    for(let i=0; i<24; i++) data[i] = 0;
+    
+    transactions.forEach(tx => {
+      const hour = new Date(tx.date).getHours();
+      data[hour] += tx.total;
+    });
+    
+    return Object.entries(data).map(([hour, total]) => ({ 
+      hour: `${hour}:00`, 
+      total: Math.round(total) 
+    }));
+  }, [transactions]);
+
+  // 3. Sales by Branch
+  const branchData = useMemo(() => {
+    const data: Record<string, number> = {};
+    branches.forEach(b => data[b.name] = 0);
+    
+    transactions.forEach(tx => {
+      const branch = branches.find(b => b.id === tx.branchId);
+      if (branch) {
+        data[branch.name] += tx.total;
+      }
+    });
+    
+    return Object.entries(data).map(([name, total]) => ({ name, total }));
+  }, [transactions, branches]);
+
+  const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white dark:bg-slate-900 border border-base p-2 rounded-xl shadow-xl">
+          <p className="text-[10px] font-black text-primary uppercase mb-1">{label}</p>
+          <p className="text-[11px] font-bold text-indigo-600">
+            {formatMoney(payload[0].value)}
+          </p>
+        </div>
+      );
+    }
+    return null;
+  };
 
   const getProductName = (itemProduct: any) => {
     if (!itemProduct) return 'Desconocido';
@@ -952,6 +1025,97 @@ export default function Reports() {
           })}
         </div>
       </header>
+
+      {/* Visual Analytics Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Sales by Hour Bar Chart */}
+        <div className="lg:col-span-2 bg-secondary rounded-[2rem] p-5 shadow-sm border border-base flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-xs font-black text-primary uppercase tracking-wider flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-indigo-600" />
+                Ventas por Horario
+              </h3>
+              <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Distribución del volumen de facturación por hora</p>
+            </div>
+            <div className="px-2 py-1 bg-white dark:bg-slate-800 rounded-lg border border-base text-[8px] font-black uppercase text-indigo-600">
+              Actividad Diaria
+            </div>
+          </div>
+          
+          <div className="h-[200px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={hourData}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis 
+                  dataKey="hour" 
+                  fontSize={8} 
+                  fontWeight="bold" 
+                  tickLine={false} 
+                  axisLine={false}
+                  interval={2}
+                />
+                <YAxis hide />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar 
+                  dataKey="total" 
+                  fill="#6366f1" 
+                  radius={[4, 4, 0, 0]} 
+                  barSize={20}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Top Categories Pie Chart */}
+        <div className="bg-secondary rounded-[2rem] p-5 shadow-sm border border-base flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-xs font-black text-primary uppercase tracking-wider flex items-center gap-2">
+                <PieChartIcon className="w-4 h-4 text-emerald-600" />
+                Top Categorías
+              </h3>
+              <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Distribución por volumen de venta</p>
+            </div>
+          </div>
+
+          <div className="flex-1 flex flex-col">
+            <div className="h-[140px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={categoryData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={40}
+                    outerRadius={60}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {categoryData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<CustomTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="mt-2 space-y-1.5">
+              {categoryData.map((item, index) => (
+                <div key={item.name} className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                    <span className="text-[9px] font-bold text-secondary uppercase truncate max-w-[100px]">{item.name}</span>
+                  </div>
+                  <span className="text-[9px] font-black text-primary">{formatMoney(item.value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

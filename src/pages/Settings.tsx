@@ -15,6 +15,7 @@ export default function Settings() {
     receiptConfig, updateReceiptConfig,
     users, updateUser, addUser, deleteUser,
     getBaseCurrency, clearAllData,
+    exportData, importData,
     registerEmployee,
     idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice,
     products,
@@ -1195,6 +1196,93 @@ export default function Settings() {
                 {isPushingAll ? <RefreshCw size={14} className="animate-spin" /> : <CloudUpload size={14} />}
                 Guardar Todo
               </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Offline Backup & Restore Section */}
+        <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4 lg:col-span-3">
+          <div className="flex items-center gap-3 border-b border-base pb-3">
+            <div className="bg-emerald-50 dark:bg-emerald-950/30 p-2.5 rounded-xl text-emerald-600 dark:text-emerald-400">
+              <Save size={20} />
+            </div>
+            <div>
+              <h3 className="text-xs font-black text-primary uppercase tracking-wider">Copia de Seguridad Offline</h3>
+              <p className="text-[9px] font-bold text-muted uppercase tracking-tight">Descarga tus datos en un archivo JSON para restaurarlos manualmente cuando quieras</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="p-4 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-base">
+              <div className="flex items-center gap-2 mb-2">
+                <CloudDownload className="w-4 h-4 text-indigo-500" />
+                <span className="text-[10px] font-black uppercase text-primary tracking-widest">Generar Backup</span>
+              </div>
+              <p className="text-[9px] text-muted mb-4 font-bold">Crea un archivo con toda tu información local: productos, ventas, turnos y configuración.</p>
+              <button
+                onClick={() => {
+                  const data = exportData();
+                  const blob = new Blob([data], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `backup_pos_${new Date().toISOString().split('T')[0]}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                  showToast("Copia de seguridad generada y descargada", "success");
+                }}
+                className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md active:scale-95"
+              >
+                Descargar Archivo JSON
+              </button>
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-base">
+              <div className="flex items-center gap-2 mb-2">
+                <CloudUpload className="w-4 h-4 text-emerald-500" />
+                <span className="text-[10px] font-black uppercase text-primary tracking-widest">Restaurar Datos</span>
+              </div>
+              <p className="text-[9px] text-muted mb-4 font-bold">⚠️ ATENCIÓN: Al restaurar, se sobrescribirán todos los datos actuales por los del archivo.</p>
+              
+              <label className="block">
+                <input
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  id="backup-upload"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+
+                    if (window.confirm("¿Estás seguro de que deseas RESTAURAR los datos? Esta acción sobrescribirá TODO el sistema actual y sincronizará con la nube.")) {
+                      setIsLoading(true);
+                      const reader = new FileReader();
+                      reader.onload = async (event) => {
+                        const content = event.target?.result as string;
+                        const result = await importData(content);
+                        if (result.success) {
+                          showToast("Sistema restaurado con éxito", "success");
+                          setTimeout(() => window.location.reload(), 1500);
+                        } else {
+                          showToast(`Error: ${result.error}`, "error");
+                        }
+                        setIsLoading(false);
+                      };
+                      reader.readAsText(file);
+                    }
+                    e.target.value = ''; // Reset input
+                  }}
+                />
+                <div 
+                  onClick={() => document.getElementById('backup-upload')?.click()}
+                  className="w-full py-2.5 bg-emerald-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {isLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CloudUpload className="w-3.5 h-3.5" />}
+                  Cargar y Restaurar
+                </div>
+              </label>
             </div>
           </div>
         </div>

@@ -82,6 +82,8 @@ interface AppState {
   logout: () => void;
   clearAllData: () => Promise<void>;
   clearReportsHistory: () => Promise<void>;
+  exportData: () => string;
+  importData: (jsonData: string) => Promise<{ success: boolean; error?: string }>;
   addUser: (user: User) => void;
   registerEmployee: (name: string, password: string) => User;
   updateUser: (id: string, user: Partial<User>) => void;
@@ -368,6 +370,93 @@ export const useStore = create<AppState>()(
       cart: [],
       notifications: []
     });
+  },
+  exportData: () => {
+    const state = get();
+    const backupData = {
+      version: '1.0.0',
+      timestamp: new Date().toISOString(),
+      data: {
+        categories: state.categories,
+        products: state.products,
+        inventory: state.inventory,
+        branches: state.branches,
+        currencies: state.currencies,
+        customers: state.customers,
+        users: state.users,
+        transactions: state.transactions,
+        returns: state.returns,
+        warranties: state.warranties,
+        cashSessions: state.cashSessions,
+        transfers: state.transfers,
+        suppliers: state.suppliers,
+        supplierOrders: state.supplierOrders,
+        inventoryAudits: state.inventoryAudits,
+        salarySettlements: state.salarySettlements,
+        fiscalConfigs: state.fiscalConfigs,
+        bankCards: state.bankCards,
+        bankTransactions: state.bankTransactions,
+        demandForecasts: state.demandForecasts,
+        quotes: state.quotes,
+        timeShifts: state.timeShifts,
+        pendingOrders: state.pendingOrders,
+        idnSettlementPrices: state.idnSettlementPrices,
+        receiptConfig: state.receiptConfig,
+        catalogConfig: state.catalogConfig,
+        storeConfig: state.storeConfig
+      }
+    };
+    return JSON.stringify(backupData, null, 2);
+  },
+  importData: async (jsonData: string) => {
+    try {
+      const backup = JSON.parse(jsonData);
+      if (!backup.data || !backup.version) {
+        throw new Error("Formato de backup inválido");
+      }
+
+      const d = backup.data;
+      
+      // Update local state
+      set({
+        categories: d.categories || [],
+        products: d.products || [],
+        inventory: d.inventory || [],
+        branches: d.branches || [],
+        currencies: d.currencies || [],
+        customers: d.customers || [],
+        users: d.users || [],
+        transactions: d.transactions || [],
+        returns: d.returns || [],
+        warranties: d.warranties || [],
+        cashSessions: d.cashSessions || [],
+        transfers: d.transfers || [],
+        suppliers: d.suppliers || [],
+        supplierOrders: d.supplierOrders || [],
+        inventoryAudits: d.inventoryAudits || [],
+        salarySettlements: d.salarySettlements || [],
+        fiscalConfigs: d.fiscalConfigs || [],
+        bankCards: d.bankCards || [],
+        bankTransactions: d.bankTransactions || [],
+        demandForecasts: d.demandForecasts || [],
+        quotes: d.quotes || [],
+        timeShifts: d.timeShifts || [],
+        pendingOrders: d.pendingOrders || [],
+        idnSettlementPrices: d.idnSettlementPrices || [],
+        receiptConfig: d.receiptConfig || get().receiptConfig,
+        catalogConfig: d.catalogConfig || get().catalogConfig,
+        storeConfig: d.storeConfig || get().storeConfig
+      });
+
+      // After local update, sync everything to Supabase
+      const { pushAllToSupabase } = await import('../services/supabaseSync');
+      await pushAllToSupabase(true);
+
+      return { success: true };
+    } catch (err: any) {
+      console.error("Error importing data:", err);
+      return { success: false, error: err.message };
+    }
   },
   addUser: (user) => {
     const exists = get().users.find(u => 
