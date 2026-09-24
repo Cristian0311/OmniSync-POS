@@ -18,21 +18,34 @@ import {
   TrendingUp,
   Boxes,
   Building2,
-  X
+  X,
+  Minus
 } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { InfoTooltip } from "../components/InfoTooltip";
+import { cn } from "../lib/utils";
 
 export default function Transfers() {
   const { 
     branches, 
     products, 
     inventory, 
+    transferInventory,
     transferInventoryBatch, 
+    transferProductsBulk,
     transfers, 
-    currentBranchId
+    currentBranchId,
+    addNotification
   } = useStore();
 
+  const [activeTab, setActiveTab] = useState<'history' | 'new'>('history');
+  const [bulkTransferItems, setBulkTransferItems] = useState<{ productId: string, quantity: number, variant?: string }[]>([]);
+  const [bulkTransferSourceId, setBulkTransferSourceId] = useState(currentBranchId || (branches[0]?.id || ''));
+  const [bulkTransferTargetId, setBulkTransferTargetId] = useState("");
+  const [transferSearch, setTransferSearch] = useState("");
+  const [isExecutingTransfer, setIsExecutingTransfer] = useState(false);
+  const [expandedBatches, setExpandedBatches] = useState<string[]>([]);
+  
   const [showAddModal, setShowAddModal] = useState(false);
   
   const [formData, setFormData] = useState({
@@ -155,16 +168,41 @@ export default function Transfers() {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20 p-4 sm:p-6 max-w-full overflow-x-hidden">
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20 p-4 sm:p-6 max-w-full overflow-x-hidden bg-slate-50/50 min-h-screen">
       
       {/* Header */}
-      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex items-center gap-2">
-          <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight uppercase">Transferencias de Stock</h2>
-          <InfoTooltip text="Mueve stock entre sucursales en tiempo real con verificación atómica para prevenir inventario negativo." position="bottom" />
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-100">
+            <ArrowLeftRight className="w-6 h-6" />
+          </div>
+          <div>
+            <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight uppercase leading-none">Transferencias</h2>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Gestión de inventario entre sucursales</p>
+          </div>
         </div>
         
         <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200">
+            <button
+              onClick={() => setActiveTab('history')}
+              className={cn(
+                "px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
+                activeTab === 'history' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm border border-slate-200" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              Historial
+            </button>
+            <button
+              onClick={() => setActiveTab('new')}
+              className={cn(
+                "px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
+                activeTab === 'new' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm border border-slate-200" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              Nuevo Traslado (Varios)
+            </button>
+          </div>
           <button 
             type="button"
             onClick={() => {
@@ -174,303 +212,575 @@ export default function Transfers() {
                 setFormData(prev => ({ ...prev, productId: products[0].id }));
               }
             }}
-            className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-tight hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 flex items-center gap-2 active:scale-95 whitespace-nowrap"
+            className="bg-slate-900 text-white px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-tight hover:bg-slate-800 transition-all shadow-lg shadow-slate-200 flex items-center gap-2 active:scale-95 whitespace-nowrap"
           >
             <Plus className="w-4 h-4" />
-            Nueva Transferencia
+            Traslado Individual
           </button>
         </div>
       </header>
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Left Column: Transfer History */}
-        <div className="lg:col-span-2">
-          <div className="bg-white rounded-3xl shadow-sm border border-slate-200/80 overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <div className="flex items-center gap-2">
-                <History className="w-4 h-4 text-indigo-600" />
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Historial de Transferencias</h3>
+      {activeTab === 'history' ? (
+        /* Main Content Grid */
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          {/* Left Column: Transfer History */}
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-white">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center">
+                    <History className="w-4 h-4 text-indigo-600" />
+                  </div>
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Historial de Movimientos</h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100">
+                    {transfers.length} Operaciones
+                  </span>
+                </div>
               </div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-                {transfers.length} registros
-              </span>
-            </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="bg-slate-50/80 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
-                    <th className="px-6 py-3.5">Fecha</th>
-                    <th className="px-6 py-3.5">Producto</th>
-                    <th className="px-6 py-3.5">Ruta de Transferencia</th>
-                    <th className="px-6 py-3.5 text-right">Cantidad</th>
-                    <th className="px-6 py-3.5 text-center">Estado</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {transfers.length > 0 ? transfers.map(t => (
-                    <tr key={t.id} className="hover:bg-slate-50/60 transition-colors group">
-                      <td className="px-6 py-4">
-                        <div className="text-xs font-bold text-slate-900">{new Date(t.date).toLocaleDateString()}</div>
-                        <div className="text-[10px] font-mono text-slate-400">{new Date(t.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="text-xs font-black text-slate-900 uppercase tracking-tight">{t.productName}</div>
-                        {t.variantLabel && (
-                          <div className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md inline-block mt-0.5">
-                            {t.variantLabel}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/80 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
+                      <th className="px-6 py-4">Fecha</th>
+                      <th className="px-6 py-4">Productos</th>
+                      <th className="px-6 py-4">Ruta de Transferencia</th>
+                      <th className="px-6 py-4 text-right">Cantidad Total</th>
+                      <th className="px-6 py-4 text-center">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {transfers.length > 0 ? (() => {
+                      const grouped = transfers.reduce((acc, t) => {
+                        const key = t.batchId || t.id;
+                        if (!acc[key]) acc[key] = [];
+                        acc[key].push(t);
+                        return acc;
+                      }, {} as Record<string, typeof transfers>);
+
+                      const sortedGroups = Object.values(grouped).sort((a, b) => 
+                        new Date(b[0].date).getTime() - new Date(a[0].date).getTime()
+                      );
+
+                      return sortedGroups.map(group => {
+                        const first = group[0];
+                        const isBatch = group.length > 1;
+                        const isExpanded = expandedBatches.includes(first.batchId || first.id);
+                        const totalQty = group.reduce((sum, t) => sum + t.quantity, 0);
+                        const visibleItems = isExpanded ? group : group.slice(0, 2);
+                        const hasMore = group.length > 2;
+
+                        return (
+                          <React.Fragment key={first.batchId || first.id}>
+                            <tr className={cn(
+                              "hover:bg-slate-50/60 transition-colors group border-l-4",
+                              isBatch ? "border-l-indigo-500" : "border-l-transparent"
+                            )}>
+                              <td className="px-6 py-4 align-top">
+                                <div className="text-xs font-bold text-slate-900">{new Date(first.date).toLocaleDateString()}</div>
+                                <div className="text-[10px] font-mono text-slate-400">{new Date(first.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                                {isBatch && (
+                                  <div className="mt-1">
+                                    <span className="text-[8px] font-black uppercase text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                                      Lote: {group.length} prod.
+                                    </span>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 align-top">
+                                <div className="space-y-2">
+                                  {visibleItems.map((t, idx) => (
+                                    <div key={t.id} className={cn(
+                                      "flex flex-col",
+                                      idx > 0 && "pt-2 border-t border-slate-50"
+                                    )}>
+                                      <div className="text-xs font-black text-slate-900 uppercase tracking-tight">{t.productName}</div>
+                                      <div className="flex items-center gap-2 mt-0.5">
+                                        {t.variantLabel && (
+                                          <div className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md inline-block">
+                                            {t.variantLabel}
+                                          </div>
+                                        )}
+                                        {isBatch && (
+                                          <span className="text-[9px] font-black text-slate-400">
+                                            {t.quantity} uds
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                  
+                                  {hasMore && !isExpanded && (
+                                    <button 
+                                      onClick={() => setExpandedBatches(prev => [...prev, first.batchId || first.id])}
+                                      className="text-[10px] font-black text-indigo-600 hover:text-indigo-700 flex items-center gap-1 mt-1 uppercase tracking-wider"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                      Ver {group.length - 2} más
+                                    </button>
+                                  )}
+                                  {isExpanded && isBatch && (
+                                    <button 
+                                      onClick={() => setExpandedBatches(prev => prev.filter(id => id !== (first.batchId || first.id)))}
+                                      className="text-[10px] font-black text-slate-400 hover:text-slate-600 flex items-center gap-1 mt-1 uppercase tracking-wider"
+                                    >
+                                      <X className="w-3 h-3" />
+                                      Mostrar menos
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 align-top">
+                                <div className="flex items-center gap-2 mt-1">
+                                  <div className="flex flex-col gap-1 items-center">
+                                    <span className="text-[10px] font-black text-slate-700 uppercase bg-white px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-sm">
+                                      {first.fromBranchName}
+                                    </span>
+                                    <ArrowRight className="w-3.5 h-3.5 text-indigo-400 shrink-0 rotate-90 sm:rotate-0" />
+                                    <span className="text-[10px] font-black text-indigo-700 uppercase bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100 shadow-sm">
+                                      {first.toBranchName}
+                                    </span>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 text-right align-top">
+                                <div className="mt-1">
+                                  <span className={cn(
+                                    "text-xs font-black px-2.5 py-1.5 rounded-xl border inline-block",
+                                    isBatch ? "bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-100" : "bg-slate-100 text-slate-900 border-slate-200"
+                                  )}>
+                                    {totalQty} uds
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 text-center align-top">
+                                <div className="mt-1">
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200">
+                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                    Completado
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          </React.Fragment>
+                        );
+                      });
+                    })() : (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-16 text-center">
+                          <div className="flex flex-col items-center justify-center text-slate-300">
+                            <ArrowLeftRight className="w-12 h-12 mb-3 text-slate-200" />
+                            <p className="text-xs font-black uppercase tracking-widest text-slate-400">Sin registros de transferencia</p>
+                            <p className="text-xs text-slate-400 mt-1 max-w-xs">Usa el botón "Nueva Transferencia" para mover stock entre tus almacenes de manera segura.</p>
                           </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-black text-slate-700 uppercase bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200/80">
-                            {t.fromBranchName}
-                          </span>
-                          <ArrowRight className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                          <span className="text-[10px] font-black text-indigo-700 uppercase bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100">
-                            {t.toBranchName}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <span className="text-xs font-black text-slate-900 bg-slate-100 px-2 py-1 rounded-md">
-                          {t.quantity} uds
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                          <CheckCircle className="w-3 h-3 text-emerald-600" />
-                          Completado
-                        </span>
-                      </td>
-                    </tr>
-                  )) : (
-                    <tr>
-                      <td colSpan={5} className="px-6 py-16 text-center">
-                        <div className="flex flex-col items-center justify-center text-slate-300">
-                          <ArrowLeftRight className="w-12 h-12 mb-3 text-slate-200" />
-                          <p className="text-xs font-black uppercase tracking-widest text-slate-400">Sin registros de transferencia</p>
-                          <p className="text-xs text-slate-400 mt-1 max-w-xs">Usa el botón "Nueva Transferencia" para mover stock entre tus almacenes de manera segura.</p>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: System Status & Diagnostic Summary */}
-        <div className="space-y-4">
-          <div className="bg-slate-900 p-6 rounded-3xl text-white shadow-xl">
-            <h3 className="text-xs font-black uppercase tracking-widest text-indigo-300 mb-4 flex items-center justify-between">
-              <span>Estado del Sistema</span>
-              <Activity className="w-4 h-4 text-indigo-400" />
-            </h3>
-            
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-white/10 rounded-2xl flex items-center justify-center border border-white/10">
-                  <Package className="w-5 h-5 text-indigo-400" />
-                </div>
-                <div>
-                  <p className="text-2xl font-black leading-none">{transfers.length}</p>
-                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-1">Movimientos Totales</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-white/10 rounded-2xl flex items-center justify-center border border-white/10">
-                  <Building2 className="w-5 h-5 text-emerald-400" />
-                </div>
-                <div>
-                  <p className="text-2xl font-black leading-none">{branches.length}</p>
-                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-1">Sucursales Activas</p>
-                </div>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-3">
-            <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-              <Boxes className="w-4 h-4 text-indigo-600" />
-              Garantía de Integridad
-            </h3>
-            <div className="space-y-3 text-xs text-slate-600">
-              <div className="flex gap-2.5 items-start">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                <p className="font-medium leading-relaxed">
-                  <strong className="text-slate-900">Verificación en Tiempo Real:</strong> El stock en el almacén de origen se consulta directamente en Supabase antes de validar el envío.
-                </p>
+          {/* Right Column: System Status & Diagnostic Summary */}
+          <div className="space-y-4">
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <h3 className="text-xs font-black uppercase tracking-widest text-slate-900 mb-5 flex items-center justify-between border-b border-slate-100 pb-3">
+                <span>Métricas de Operación</span>
+                <Activity className="w-4 h-4 text-indigo-600" />
+              </h3>
+              
+              <div className="space-y-4">
+                <div className="flex items-center gap-4 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center border border-slate-200 shadow-xs">
+                    <Package className="w-6 h-6 text-indigo-600" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-black text-slate-900 leading-none">{transfers.length}</p>
+                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-1">Transferencias Totales</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center border border-slate-200 shadow-xs">
+                    <Building2 className="w-6 h-6 text-emerald-600" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-black text-slate-900 leading-none">{branches.length}</p>
+                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-1">Puntos de Distribución</p>
+                  </div>
+                </div>
               </div>
-              <div className="flex gap-2.5 items-start">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                <p className="font-medium leading-relaxed">
-                  <strong className="text-slate-900">Protección Anti-Stock Negativo:</strong> El sistema bloquea transferencias que superen el stock disponible.
-                </p>
+            </div>
+
+            <div className="bg-slate-900 p-6 rounded-2xl text-white shadow-xl">
+              <h3 className="text-xs font-black text-indigo-300 uppercase tracking-widest flex items-center gap-2 mb-4">
+                <Boxes className="w-4 h-4" />
+                Seguridad de Inventario
+              </h3>
+              <div className="space-y-4 text-[11px]">
+                <div className="flex gap-3 items-start">
+                  <div className="w-5 h-5 bg-emerald-500/20 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                  </div>
+                  <p className="font-medium text-slate-300">
+                    <strong className="text-white block mb-0.5 uppercase tracking-wide">Validación Atómica</strong>
+                    El stock se verifica en tiempo real antes de cada movimiento.
+                  </p>
+                </div>
+                <div className="flex gap-3 items-start">
+                  <div className="w-5 h-5 bg-emerald-500/20 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                  </div>
+                  <p className="font-medium text-slate-300">
+                    <strong className="text-white block mb-0.5 uppercase tracking-wide">Trazabilidad Total</strong>
+                    Cada transferencia genera un registro inmutable con ID de lote.
+                  </p>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-300">
+          <div className="p-5 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 flex flex-col lg:flex-row gap-5 shrink-0">
+            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-5">
+              <div>
+                <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1.5 px-1">Origen de Mercancía</label>
+                <div className="relative">
+                  <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <select 
+                    value={bulkTransferSourceId}
+                    onChange={(e) => {
+                      setBulkTransferSourceId(e.target.value);
+                      setBulkTransferItems([]); 
+                    }}
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 rounded-xl pl-10 pr-3 py-3 text-xs font-black uppercase outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm appearance-none"
+                  >
+                    {branches.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1.5 px-1">Destino de Mercancía</label>
+                <div className="relative">
+                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-400" />
+                  <select 
+                    value={bulkTransferTargetId}
+                    onChange={(e) => setBulkTransferTargetId(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-indigo-100 rounded-xl pl-10 pr-3 py-3 text-xs font-black uppercase outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm appearance-none"
+                  >
+                    <option value="">Seleccionar destino...</option>
+                    {branches.filter(b => b.id !== bulkTransferSourceId).map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-end gap-2">
+              <button
+                disabled={isExecutingTransfer || bulkTransferItems.length === 0 || !bulkTransferTargetId}
+                onClick={async () => {
+                  setIsExecutingTransfer(true);
+                  try {
+                    const result = await transferProductsBulk(
+                      bulkTransferSourceId, 
+                      bulkTransferTargetId, 
+                      bulkTransferItems.map(item => ({
+                        productId: item.productId,
+                        quantity: item.quantity,
+                        variant: item.variant
+                      }))
+                    );
+                    
+                    if (result.success) {
+                      addNotification(`Traslado masivo completado exitosamente.`, 'success');
+                      setBulkTransferItems([]);
+                      setActiveTab('history');
+                    } else {
+                      addNotification(result.error || "Error al realizar el traslado masivo.", 'error');
+                    }
+                  } catch (err) {
+                    addNotification("Error al procesar el traslado.", 'error');
+                  } finally {
+                    setIsExecutingTransfer(false);
+                  }
+                }}
+                className="w-full lg:w-auto px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 cursor-pointer h-[42px]"
+              >
+                {isExecutingTransfer ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ArrowLeftRight className="w-3.5 h-3.5" />}
+                Confirmar Envío ({bulkTransferItems.length} tipos)
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 flex flex-col lg:flex-row min-h-0">
+            <div className="flex-1 flex flex-col border-r border-slate-200 min-h-0 bg-slate-50/30 dark:bg-slate-900/30">
+              <div className="p-4 border-b border-slate-200 bg-white dark:bg-slate-900/50">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                  <input 
+                    type="text" 
+                    placeholder="Buscar productos por nombre o SKU..."
+                    value={transferSearch}
+                    onChange={(e) => setTransferSearch(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 rounded-xl text-xs font-black uppercase outline-none focus:ring-2 focus:ring-indigo-500 shadow-xs transition-all"
+                  />
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto p-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {products
+                    .filter(p => 
+                      !bulkTransferItems.some(item => item.productId === p.id) &&
+                      (p.name.toLowerCase().includes(transferSearch.toLowerCase()) || 
+                       p.sku?.toLowerCase().includes(transferSearch.toLowerCase()))
+                    )
+                    .slice(0, 21)
+                    .map(product => {
+                      const stock = inventory.find(inv => inv.productId === product.id && inv.branchId === bulkTransferSourceId)?.quantity || 0;
+                      return (
+                        <button
+                          key={product.id}
+                          disabled={stock <= 0}
+                          onClick={() => setBulkTransferItems(prev => [...prev, { productId: product.id, quantity: 1 }])}
+                          className={cn(
+                            "p-4 rounded-xl border text-left transition-all group flex flex-col gap-2 shadow-sm",
+                            stock > 0 
+                              ? "bg-white dark:bg-slate-800 border-slate-200 hover:border-indigo-500 hover:shadow-md cursor-pointer" 
+                              : "bg-slate-100 dark:bg-slate-900 border-slate-100 opacity-60 grayscale cursor-not-allowed"
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[11px] font-black text-slate-900 dark:text-slate-100 uppercase truncate leading-tight">{product.name}</p>
+                            <div className="w-6 h-6 rounded-lg bg-indigo-50 flex items-center justify-center shrink-0">
+                              <Plus className="w-3.5 h-3.5 text-indigo-600" />
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-50 dark:border-slate-700/50">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Stock Origen</span>
+                            <span className={cn(
+                              "text-[10px] font-black px-2 py-0.5 rounded-md",
+                              stock > 0 ? "text-indigo-600 bg-indigo-50" : "text-slate-400 bg-slate-100"
+                            )}>{stock} uds</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+            </div>
+
+            <div className="w-full lg:w-96 flex flex-col bg-white dark:bg-slate-900 min-h-0 border-l border-slate-200">
+              <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50 dark:bg-slate-800/30 shrink-0">
+                <h3 className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase tracking-widest flex items-center gap-2">
+                  <ArrowLeftRight className="w-4 h-4 text-indigo-600" />
+                  Lista de Envío
+                </h3>
+                <span className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-[10px] font-black shadow-sm">
+                  {bulkTransferItems.length} items
+                </span>
+              </div>
+              <div className="flex-1 overflow-auto p-5 space-y-3">
+                {bulkTransferItems.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-40">
+                    <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mb-4">
+                      <ArrowLeftRight className="w-8 h-8 text-slate-300" />
+                    </div>
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Lista de Envío Vacía</p>
+                    <p className="text-[10px] text-slate-400 mt-2 font-medium">Selecciona productos de la izquierda para comenzar el traslado.</p>
+                  </div>
+                ) : (
+                  bulkTransferItems.map((item, index) => {
+                    const product = products.find(p => p.id === item.productId);
+                    const stock = inventory.find(inv => inv.productId === item.productId && inv.branchId === bulkTransferSourceId)?.quantity || 0;
+                    
+                    return (
+                      <div key={item.productId} className="p-4 bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 shadow-xs animate-in slide-in-from-right-2 duration-200">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <p className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase truncate leading-tight">{product?.name}</p>
+                          <button 
+                            onClick={() => setBulkTransferItems(prev => prev.filter(i => i.productId !== item.productId))}
+                            className="w-6 h-6 rounded-lg bg-rose-50 text-rose-400 hover:bg-rose-100 hover:text-rose-600 flex items-center justify-center transition-all shrink-0"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <div className="flex items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900 p-2.5 rounded-xl border border-slate-100 shadow-inner">
+                          <div className="flex flex-col">
+                            <span className="text-[8px] font-black text-slate-400 uppercase leading-none mb-1">Disponible</span>
+                            <span className="text-[10px] font-black text-slate-700">{stock} uds</span>
+                          </div>
+                          <div className="flex items-center gap-1 bg-white dark:bg-slate-800 rounded-lg p-1 border border-slate-100">
+                            <button 
+                              onClick={() => setBulkTransferItems(prev => prev.map((i, idx) => idx === index ? { ...i, quantity: Math.max(1, i.quantity - 1) } : i))}
+                              className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+                            >
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            <span className="text-xs font-black w-8 text-center text-indigo-600">{item.quantity}</span>
+                            <button 
+                              onClick={() => setBulkTransferItems(prev => prev.map((i, idx) => idx === index ? { ...i, quantity: Math.min(stock, i.quantity + 1) } : i))}
+                              className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Transfer Modal with Real-time Stock Inspector */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden border border-slate-200 animate-in zoom-in-95 my-auto">
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden border border-slate-200 animate-in zoom-in-95 my-auto">
             
             {/* Modal Header */}
             <div className="p-6 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg">
                   <ArrowLeftRight className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-wider">Nueva Transferencia de Stock</h3>
-                  <p className="text-xs text-slate-400">Verificación y balance en tiempo real</p>
+                  <h3 className="text-sm font-black uppercase tracking-wider">Traslado Individual</h3>
+                  <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-0.5 font-bold">Verificación de stock en tiempo real</p>
                 </div>
               </div>
 
               <button 
                 type="button"
                 onClick={() => setShowAddModal(false)}
-                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-colors"
+                className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+            <div className="p-6 space-y-6 max-h-[80vh] overflow-y-auto">
               
               {/* Error Alert */}
               {error && (
-                <div className="p-4 bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl text-xs font-black flex items-start gap-2.5 animate-in shake">
-                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <p>{error}</p>
-                  </div>
+                <div className="p-4 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-black flex items-start gap-3 animate-in shake">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <p>{error}</p>
                 </div>
               )}
 
-              <form onSubmit={handleTransfer} className="space-y-5">
+              <form onSubmit={handleTransfer} className="space-y-6">
                 
                 {/* Branch Selection Row */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">
-                      Almacén Origen (Desde)
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                      Almacén Origen
                     </label>
-                    <select 
-                      required
-                      value={effectiveFromBranchId}
-                      onChange={e => {
-                        setFormData({ ...formData, fromBranchId: e.target.value });
-                        setVariantQuantities({});
-                        setError("");
-                      }}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold text-slate-900"
-                    >
-                      {branches.map(b => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative">
+                      <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <select 
+                        required
+                        value={effectiveFromBranchId}
+                        onChange={e => {
+                          setFormData({ ...formData, fromBranchId: e.target.value });
+                          setVariantQuantities({});
+                          setError("");
+                        }}
+                        className="w-full pl-10 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold text-slate-900 appearance-none"
+                      >
+                        {branches.map(b => (
+                          <option key={b.id} value={b.id}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="block text-[10px] font-black text-indigo-600 uppercase tracking-wider">
-                      Almacén Destino (Hacia)
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black text-indigo-600 uppercase tracking-widest ml-1">
+                      Almacén Destino
                     </label>
-                    <select 
-                      required
-                      value={effectiveToBranchId}
-                      onChange={e => {
-                        setFormData({ ...formData, toBranchId: e.target.value });
-                        setError("");
-                      }}
-                      className="w-full px-3.5 py-2.5 bg-indigo-50/50 border border-indigo-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold text-indigo-950"
-                    >
-                      <option value="">Selecciona Almacén Destino...</option>
-                      {branches.filter(b => b.id !== effectiveFromBranchId).map(b => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative">
+                      <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-400" />
+                      <select 
+                        required
+                        value={effectiveToBranchId}
+                        onChange={e => {
+                          setFormData({ ...formData, toBranchId: e.target.value });
+                          setError("");
+                        }}
+                        className="w-full pl-10 pr-3 py-3 bg-indigo-50/30 border border-indigo-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold text-indigo-950 appearance-none"
+                      >
+                        <option value="">Seleccionar destino...</option>
+                        {branches.filter(b => b.id !== effectiveFromBranchId).map(b => (
+                          <option key={b.id} value={b.id}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
 
                 {/* Product Selection */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">
-                      Producto a Transferir
-                    </label>
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                    Producto a Transferir
+                  </label>
+                  <div className="relative">
+                    <Package className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <select 
+                      required
+                      value={formData.productId}
+                      onChange={e => {
+                        setFormData({ ...formData, productId: e.target.value });
+                        setVariantQuantities({});
+                        setError("");
+                      }}
+                      className="w-full pl-10 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold text-slate-900 appearance-none"
+                    >
+                      <option value="">Selecciona Producto...</option>
+                      {products.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} {p.sku ? `(SKU: ${p.sku})` : ''} - ${p.price}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-
-                  <select 
-                    required
-                    value={formData.productId}
-                    onChange={e => {
-                      setFormData({ ...formData, productId: e.target.value });
-                      setVariantQuantities({});
-                      setError("");
-                    }}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-bold text-slate-900"
-                  >
-                    <option value="">Selecciona Producto...</option>
-                    {products.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} {p.sku ? `(SKU: ${p.sku})` : ''} - ${p.price}
-                      </option>
-                    ))}
-                  </select>
                 </div>
 
                 {/* Stock Info Summary */}
                 {selectedProduct && (
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Boxes className="w-4 h-4 text-indigo-600" />
-                      <span className="text-xs font-black uppercase text-slate-800">
-                        Información de Stock
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className={`p-3 rounded-xl border ${
-                        totalSourceStock > 0 
-                          ? 'bg-white border-emerald-200' 
-                          : 'bg-rose-50/80 border-rose-200'
-                      }`}>
-                        <span className="text-[10px] font-bold text-slate-500 uppercase block">
-                          Origen ({fromBranch?.name || 'Sucursal'})
-                        </span>
-                        <div className="flex items-baseline gap-1.5 mt-0.5">
-                          <span className={`text-xl font-black ${
-                            totalSourceStock > 0 ? 'text-emerald-700' : 'text-rose-600'
-                          }`}>
-                            {totalSourceStock}
-                          </span>
-                          <span className="text-xs font-bold text-slate-500">uds</span>
-                        </div>
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Disponible en Origen</span>
+                      <div className="flex items-center gap-2">
+                        <span className={cn(
+                          "text-lg font-black",
+                          totalSourceStock > 0 ? "text-slate-900" : "text-rose-600"
+                        )}>{totalSourceStock}</span>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase">Unidades</span>
                       </div>
-
-                      <div className="p-3 rounded-xl bg-white border border-indigo-200">
-                        <span className="text-[10px] font-bold text-slate-500 uppercase block">
-                          Destino ({toBranch?.name || 'Seleccionar'})
+                    </div>
+                    <div className="space-y-1 border-l border-slate-200 pl-4">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Stock en Destino</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg font-black text-indigo-600">
+                          {effectiveToBranchId ? totalTargetStock : '--'}
                         </span>
-                        <div className="flex items-baseline gap-1.5 mt-0.5">
-                          <span className="text-xl font-black text-indigo-700">
-                            {effectiveToBranchId ? totalTargetStock : '-'}
-                          </span>
-                          <span className="text-xs font-bold text-slate-500">uds</span>
-                        </div>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase">Unidades</span>
                       </div>
                     </div>
                   </div>
@@ -478,9 +788,9 @@ export default function Transfers() {
 
                 {/* Variant Quantity Inputs OR Single Product Input */}
                 {selectedProduct && hasVariants ? (
-                  <div className="space-y-2">
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">
-                      Variantes de Producto (Indica cantidad para cada una)
+                  <div className="space-y-3">
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                      Variantes de Producto
                     </label>
                     <div className="max-h-56 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                       {variantsList.map(variant => {
@@ -490,24 +800,24 @@ export default function Transfers() {
                         return (
                           <div 
                             key={variant} 
-                            className={`flex justify-between items-center p-3 rounded-2xl border transition-all ${
+                            className={`flex justify-between items-center p-3 rounded-xl border transition-all ${
                               isOutOfStock 
                                 ? 'bg-slate-100/70 border-slate-200 opacity-60' 
-                                : 'bg-slate-50 border-slate-200'
+                                : 'bg-white border-slate-200'
                             }`}
                           >
                             <div>
                               <span className="text-xs font-black text-slate-800 block">
                                 {variant}
                               </span>
-                              <span className={`text-[10px] font-bold ${
-                                isOutOfStock ? 'text-rose-600' : 'text-slate-500'
-                              }`}>
-                                Disponible en origen: <strong>{currentStock} uds</strong>
+                              <span className={`text-[9px] font-bold ${
+                                isOutOfStock ? 'text-rose-600' : 'text-slate-400'
+                              } uppercase tracking-tighter`}>
+                                Disponible: {currentStock} uds
                               </span>
                             </div>
 
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-2">
                               <input 
                                 type="number" 
                                 min="0"
@@ -522,21 +832,9 @@ export default function Transfers() {
                                   });
                                   setError("");
                                 }}
-                                className="w-20 px-3 py-1.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-black text-center disabled:bg-slate-200"
+                                className="w-16 px-2 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-black text-center disabled:bg-slate-100"
                                 placeholder="0"
                               />
-                              {!isOutOfStock && currentStock > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => setVariantQuantities({
-                                    ...variantQuantities,
-                                    [variant]: currentStock
-                                  })}
-                                  className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[9px] font-black uppercase"
-                                >
-                                  Max
-                                </button>
-                              )}
                             </div>
                           </div>
                         );
@@ -544,17 +842,17 @@ export default function Transfers() {
                     </div>
                   </div>
                 ) : selectedProduct && (
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between ml-1">
+                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest">
                         Cantidad a Transferir
                       </label>
-                      <span className="text-[10px] font-bold text-slate-500">
-                        Máximo permitido: <strong className="text-indigo-700">{totalSourceStock} uds</strong>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase">
+                        Máximo: {totalSourceStock} uds
                       </span>
                     </div>
 
-                    <div className="relative flex items-center gap-2">
+                    <div className="relative flex items-center gap-3">
                       <input 
                         type="number" 
                         min="1"
@@ -570,17 +868,17 @@ export default function Transfers() {
                           });
                           setError("");
                         }}
-                        className="flex-1 px-4 py-3 bg-slate-50 border border-slate-300 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-lg font-black text-slate-900 disabled:bg-slate-100 disabled:opacity-50"
-                        placeholder={totalSourceStock <= 0 ? "Sin stock disponible" : "0"}
+                        className="flex-1 px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xl font-black text-slate-900 disabled:opacity-50"
+                        placeholder="0"
                       />
 
                       {totalSourceStock > 0 && (
                         <button
                           type="button"
                           onClick={() => setVariantQuantities({ '': totalSourceStock })}
-                          className="px-3 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-black rounded-2xl text-xs uppercase"
+                          className="px-4 py-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-black rounded-xl text-xs uppercase transition-colors whitespace-nowrap"
                         >
-                          Transferir Todo ({totalSourceStock})
+                          Todo ({totalSourceStock})
                         </button>
                       )}
                     </div>
@@ -588,28 +886,28 @@ export default function Transfers() {
                 )}
 
                 {/* Buttons */}
-                <div className="flex flex-col sm:flex-row gap-3 pt-3 border-t border-slate-100">
+                <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-slate-100">
                   <button 
                     type="button"
                     onClick={() => setShowAddModal(false)}
-                    className="flex-1 py-3 bg-white border border-slate-200 text-slate-600 rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-slate-50 active:scale-95 transition-all"
+                    className="flex-1 py-4 bg-white border border-slate-200 text-slate-500 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 active:scale-95 transition-all"
                   >
                     Cancelar
                   </button>
                   <button 
                     type="submit"
                     disabled={isSubmitting || totalSourceStock <= 0 || totalTransferring <= 0 || !effectiveToBranchId}
-                    className="flex-1 py-3 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-indigo-700 shadow-lg shadow-indigo-200 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    className="flex-1 py-4 bg-slate-900 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 shadow-lg shadow-slate-200 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     {isSubmitting ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
-                        Transfiriendo en Supabase...
+                        Procesando...
                       </>
                     ) : (
                       <>
                         <ArrowLeftRight className="w-4 h-4" />
-                        Confirmar Envío ({totalTransferring} uds)
+                        Confirmar Envío
                       </>
                     )}
                   </button>

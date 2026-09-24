@@ -68,10 +68,9 @@ export default function Inventory() {
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [categoryFormData, setCategoryFormData] = useState({ name: "", department: "" });
   const [batchPriceAdjust, setBatchPriceAdjust] = useState({ type: 'percentage' as 'percentage' | 'fixed', value: 0, direction: 'increase' as 'increase' | 'decrease' });
-  const [bulkChanges, setBulkChanges] = useState<Record<string, { costPrice?: number, price?: number, quantity?: number, baseSalary?: number, commissionRate?: number }>>({});
+  const [bulkChanges, setBulkChanges] = useState<Record<string, { costPrice?: number, price?: number, quantity?: number, commissionValue?: number }>>({});
   const [isSavingBulk, setIsSavingBulk] = useState(false);
   const [bulkBranchId, setBulkBranchId] = useState<string>(branches[0]?.id || "");
-  const [bulkMode, setBulkMode] = useState<'products' | 'users'>('products');
 
   const [transferSubTab, setTransferSubTab] = useState<'history' | 'new'>('history');
   const [bulkTransferItems, setBulkTransferItems] = useState<{ productId: string, quantity: number, variant?: string }[]>([]);
@@ -87,7 +86,7 @@ export default function Inventory() {
     }
   }, [branches, bulkBranchId]);
 
-  const handleBulkChange = (id: string, field: 'costPrice' | 'price' | 'quantity' | 'baseSalary' | 'commissionRate', value: number) => {
+  const handleBulkChange = (id: string, field: 'costPrice' | 'price' | 'quantity' | 'commissionValue', value: number) => {
     const [prodId, branchId] = id.split(':::');
     
     setBulkChanges(prev => {
@@ -96,15 +95,10 @@ export default function Inventory() {
       if (field === 'quantity') {
         // Quantity is branch-specific
         next[id] = { ...(next[id] || {}), [field]: value };
-      } else if (field === 'baseSalary' || field === 'commissionRate') {
-        // User fields
-        next[id] = { ...(next[id] || {}), [field]: value };
       } else {
-        // Price/Cost are global for the product. Update ALL rows for this product.
-        // We find all keys starting with this prodId and update them to keep UI in sync
+        // Price/Cost/Commission are global for the product. Update ALL rows for this product.
         const productRows = Object.keys(next).filter(key => key.startsWith(`${prodId}:::`));
         
-        // If no rows exist yet for this product in next, create one for current row
         if (productRows.length === 0) {
           next[id] = { ...(next[id] || {}), [field]: value };
         } else {
@@ -120,41 +114,22 @@ export default function Inventory() {
   const saveBulkChanges = async () => {
     setIsSavingBulk(true);
     try {
-      // Collect unique product updates to avoid redundant calls
-      const productUpdates: Record<string, { costPrice?: number, price?: number }> = {};
-      const userUpdates: Record<string, { baseSalary?: number, commissionRate?: number }> = {};
+      const productUpdates: Record<string, { costPrice?: number, price?: number, commissionValue?: number }> = {};
       
       for (const [id, changes] of Object.entries(bulkChanges)) {
-        if (id.startsWith('user:::')) {
-          const userId = id.replace('user:::', '');
-          userUpdates[userId] = {
-            ...userUpdates[userId],
-            ...(changes.baseSalary !== undefined ? { baseSalary: changes.baseSalary } : {}),
-            ...(changes.commissionRate !== undefined ? { commissionRate: changes.commissionRate } : {})
-          };
-          continue;
-        }
-
         const [prodId] = id.split(':::');
         
-        // Latest request: Only Price and User salary
-        if (changes.price !== undefined) {
+        if (changes.price !== undefined || changes.commissionValue !== undefined) {
           productUpdates[prodId] = {
             ...productUpdates[prodId],
-            price: changes.price
+            ...(changes.price !== undefined ? { price: changes.price } : {}),
+            ...(changes.commissionValue !== undefined ? { commissionValue: changes.commissionValue } : {})
           };
         }
       }
 
-      // Apply product updates (price/cost)
       for (const [prodId, updates] of Object.entries(productUpdates)) {
         updateProduct(prodId, updates);
-      }
-
-      // Apply user updates (salaries)
-      const { updateUser } = useStore.getState();
-      for (const [userId, updates] of Object.entries(userUpdates)) {
-        updateUser(userId, updates);
       }
 
       setBulkChanges({});
@@ -615,8 +590,7 @@ export default function Inventory() {
 
       {/* Tabs - High contrast and modern segmented design */}
       <div className="flex items-center gap-1.5 bg-secondary p-1 rounded-xl border border-base shrink-0 w-fit shadow-xs">
-        {(['products', 'transfers', 'restock', 'bulk'] as const)
-          .filter(tab => tab !== 'transfers' || transfers.length > 0)
+        {(['products', 'restock', 'bulk'] as const)
           .map(tab => {
             const isActive = activeTab === tab;
             return (
@@ -630,7 +604,7 @@ export default function Inventory() {
                     : "text-secondary hover:text-primary hover:bg-subtle"
                 )}
               >
-                {tab === 'products' ? 'Existencias' : tab === 'transfers' ? 'Traslados' : tab === 'restock' ? 'Alertas' : 'Edición Masiva'}
+                {tab === 'products' ? 'Existencias' : tab === 'restock' ? 'Alertas' : 'Edición Masiva'}
               </button>
             );
         })}
@@ -648,47 +622,8 @@ export default function Inventory() {
             <div className="flex items-center gap-4">
               <div>
                 <h2 className="text-sm font-black text-primary uppercase tracking-tight">Edición Masiva</h2>
-                <p className="text-[10px] font-bold text-muted uppercase">Actualiza precios y salarios rápidamente</p>
+                <p className="text-[10px] font-bold text-muted uppercase">Actualiza precios y salarios por producto rápidamente</p>
               </div>
-              
-              {/* Bulk Mode Toggle */}
-              <div className="flex bg-slate-200 dark:bg-slate-800 p-0.5 rounded-xl ml-2">
-                <button
-                  onClick={() => setBulkMode('products')}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
-                    bulkMode === 'products' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  )}
-                >
-                  Precios
-                </button>
-                <button
-                  onClick={() => setBulkMode('users')}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
-                    bulkMode === 'users' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  )}
-                >
-                  Salarios
-                </button>
-              </div>
-
-              {/* Branch Selector for Bulk Edition - Only for products if we care about stock, but user said remove stock */}
-              {bulkMode === 'products' && (
-                <div className="flex flex-col gap-1 ml-2">
-                  <span className="text-[8px] font-black text-muted uppercase tracking-widest px-1">Filtrar por Sala</span>
-                  <select 
-                    value={bulkBranchId}
-                    onChange={(e) => setBulkBranchId(e.target.value)}
-                    className="bg-white dark:bg-slate-800 border border-base rounded-xl px-3 py-1.5 text-[10px] font-black uppercase tracking-tight outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm min-w-[140px]"
-                  >
-                    <option value="">Todas las Salas</option>
-                    {branches.map(b => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
             </div>
 
             <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -712,429 +647,83 @@ export default function Inventory() {
           </div>
 
           <div className="flex-1 overflow-auto">
-            {bulkMode === 'products' ? (
-              <table className="w-full text-left border-collapse min-w-[700px]">
-                <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800 border-b border-base">
-                  <tr>
-                    <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest">Producto</th>
-                    <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest">SKU</th>
-                    <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest text-center">Precio de Venta ({baseCurrency.symbol})</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-base">
-                  {products.filter(p => 
-                    p.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) || 
-                    p.sku?.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
-                    p.barcode?.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
-                  ).map(product => {
-                    // Prices are global, so we only show one row per product in this view
-                    const rowKey = `${product.id}:::global`;
-                    
-                    // Look for price changes in ANY row of the same product to keep UI consistent
-                    const otherRows = Object.entries(bulkChanges).find(([key, val]) => 
-                      key.startsWith(`${product.id}:::`) && val.price !== undefined
-                    );
-                    const globalPriceChange = otherRows ? otherRows[1].price : undefined;
-                    
-                    return (
-                      <tr key={product.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-3">
-                            <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold", product.color || 'bg-slate-100')}>
-                              {product.name.charAt(0)}
-                            </div>
-                            <div>
-                              <div className="text-[11px] font-black text-primary uppercase leading-tight">{product.name}</div>
-                              <div className="text-[8px] font-bold text-muted uppercase tracking-tighter">
-                                {categories.find(c => c.id === product.categoryId)?.name || 'Sin Categoría'}
-                              </div>
+            <table className="w-full text-left border-collapse min-w-[700px]">
+              <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800 border-b border-base">
+                <tr>
+                  <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest">Producto</th>
+                  <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest">SKU</th>
+                  <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest text-center">Precio de Venta ({baseCurrency.symbol})</th>
+                  <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest text-center">Salario/Comisión (CUP)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-base">
+                {products.filter(p => 
+                  p.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) || 
+                  p.sku?.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+                  p.barcode?.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
+                ).map(product => {
+                  const rowKey = `${product.id}:::global`;
+                  const changes = bulkChanges[rowKey] || {};
+                  
+                  return (
+                    <tr key={product.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold", product.color || 'bg-slate-100')}>
+                            {product.name.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="text-[11px] font-black text-primary uppercase leading-tight">{product.name}</div>
+                            <div className="text-[8px] font-bold text-muted uppercase tracking-tighter">
+                              {categories.find(c => c.id === product.categoryId)?.name || 'Sin Categoría'}
                             </div>
                           </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="text-[10px] font-black text-secondary uppercase tracking-tight">
-                            {product.sku || 'SIN SKU'}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-center">
-                            <input
-                              type="number"
-                              value={globalPriceChange !== undefined ? globalPriceChange : product.price}
-                              onChange={(e) => handleBulkChange(rowKey, 'price', parseFloat(e.target.value) || 0)}
-                              className={cn(
-                                "w-32 px-3 py-2 bg-white dark:bg-slate-800 border rounded-xl text-xs font-black text-center outline-none focus:ring-2 focus:ring-indigo-500",
-                                globalPriceChange !== undefined ? "border-amber-500 ring-1 ring-amber-500" : "border-base shadow-sm"
-                              )}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            ) : (
-              <table className="w-full text-left border-collapse min-w-[700px]">
-                <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800 border-b border-base">
-                  <tr>
-                    <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest">Trabajador</th>
-                    <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest">Rol</th>
-                    <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest text-center">Salario Base (CUP)</th>
-                    <th className="px-4 py-3 text-[9px] font-black text-muted uppercase tracking-widest text-center">Comisión (%)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-base">
-                  {users.filter(u => u.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase())).map(user => {
-                    const rowKey = `user:::${user.id}`;
-                    const changes = bulkChanges[rowKey] || {};
-                    
-                    return (
-                      <tr key={user.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-black uppercase">
-                              {user.name.charAt(0)}
-                            </div>
-                            <div>
-                              <div className="text-[11px] font-black text-primary uppercase leading-tight">{user.name}</div>
-                              <div className="text-[8px] font-bold text-muted uppercase tracking-tighter">{user.email}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={cn(
-                            "px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest",
-                            user.role === 'admin' ? "bg-rose-100 text-rose-600" : "bg-blue-100 text-blue-600"
-                          )}>
-                            {user.role}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-center">
-                            {!user.isIndependent ? (
-                              <input
-                                type="number"
-                                value={changes.baseSalary !== undefined ? changes.baseSalary : (user.baseSalary || 0)}
-                                onChange={(e) => handleBulkChange(rowKey, 'baseSalary', parseFloat(e.target.value) || 0)}
-                                className={cn(
-                                  "w-32 px-3 py-2 bg-white dark:bg-slate-800 border rounded-xl text-xs font-black text-center outline-none focus:ring-2 focus:ring-indigo-500",
-                                  changes.baseSalary !== undefined ? "border-amber-500 ring-1 ring-amber-500" : "border-base shadow-sm"
-                                )}
-                              />
-                            ) : (
-                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg">IDN (Sin Salario)</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="text-[10px] font-black text-secondary uppercase tracking-tight">
+                          {product.sku || 'SIN SKU'}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-center">
+                          <input
+                            type="number"
+                            value={changes.price !== undefined ? changes.price : product.price}
+                            onChange={(e) => handleBulkChange(rowKey, 'price', parseFloat(e.target.value) || 0)}
+                            className={cn(
+                              "w-32 px-3 py-2 bg-white dark:bg-slate-800 border rounded-xl text-xs font-black text-center outline-none focus:ring-2 focus:ring-indigo-500",
+                              changes.price !== undefined ? "border-amber-500 ring-1 ring-amber-500" : "border-base shadow-sm"
                             )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-center">
-                            {!user.isIndependent ? (
-                              <input
-                                type="number"
-                                step="0.1"
-                                value={changes.commissionRate !== undefined ? changes.commissionRate : (user.commissionRate || 0)}
-                                onChange={(e) => handleBulkChange(rowKey, 'commissionRate', parseFloat(e.target.value) || 0)}
-                                className={cn(
-                                  "w-32 px-3 py-2 bg-white dark:bg-slate-800 border rounded-xl text-xs font-black text-center outline-none focus:ring-2 focus:ring-indigo-500",
-                                  changes.commissionRate !== undefined ? "border-amber-500 ring-1 ring-amber-500" : "border-base shadow-sm"
-                                )}
-                              />
-                            ) : (
-                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg">IDN (Sin Comisión)</span>
+                          />
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-center">
+                          <input
+                            type="number"
+                            value={changes.commissionValue !== undefined ? changes.commissionValue : (product.commissionValue || 0)}
+                            onChange={(e) => handleBulkChange(rowKey, 'commissionValue', parseFloat(e.target.value) || 0)}
+                            className={cn(
+                              "w-32 px-3 py-2 bg-white dark:bg-slate-800 border rounded-xl text-xs font-black text-center outline-none focus:ring-2 focus:ring-indigo-500",
+                              changes.commissionValue !== undefined ? "border-amber-500 ring-1 ring-amber-500" : "border-base shadow-sm"
                             )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
           
-          {((bulkMode === 'products' && products.length === 0) || (bulkMode === 'users' && users.length === 0)) && (
+          {products.length === 0 && (
             <div className="py-20 text-center shrink-0">
               <Package className="w-12 h-12 text-slate-200 mx-auto mb-4" />
               <p className="text-xs font-bold text-muted uppercase">No se encontraron datos para editar</p>
             </div>
           )}
-        </div>
-      )}
-      {activeTab === 'transfers' && (
-        <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-base overflow-hidden animate-in fade-in zoom-in-95 duration-300">
-          <div className="p-4 border-b border-base bg-slate-50/50 dark:bg-slate-800/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
-            <div className="flex items-center gap-4">
-              <div>
-                <h2 className="text-sm font-black text-primary uppercase tracking-tight">Traslados de Mercancía</h2>
-                <p className="text-[10px] font-bold text-muted uppercase">Mueve inventario entre salas de forma individual o masiva</p>
-              </div>
-              
-              <div className="flex bg-slate-200 dark:bg-slate-800 p-0.5 rounded-xl ml-2">
-                <button
-                  onClick={() => setTransferSubTab('history')}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
-                    transferSubTab === 'history' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  )}
-                >
-                  Historial
-                </button>
-                <button
-                  onClick={() => setTransferSubTab('new')}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
-                    transferSubTab === 'new' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  )}
-                >
-                  Nuevo Traslado
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-hidden flex flex-col">
-            {transferSubTab === 'history' ? (
-              <div className="flex-1 overflow-auto p-4">
-                <TransferHistory />
-              </div>
-            ) : (
-              <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border-b border-base flex flex-col lg:flex-row gap-4 shrink-0">
-                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[8px] font-black text-muted uppercase tracking-widest mb-1 px-1">Sala de Origen</label>
-                      <select 
-                        value={bulkTransferSourceId}
-                        onChange={(e) => {
-                          setBulkTransferSourceId(e.target.value);
-                          setBulkTransferItems([]); // Clear items if source changes
-                        }}
-                        className="w-full bg-white dark:bg-slate-800 border border-base rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
-                      >
-                        {branches.map(b => (
-                          <option key={b.id} value={b.id}>{b.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[8px] font-black text-muted uppercase tracking-widest mb-1 px-1">Sala de Destino</label>
-                      <select 
-                        value={bulkTransferTargetId}
-                        onChange={(e) => setBulkTransferTargetId(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-800 border border-base rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
-                      >
-                        <option value="">Seleccionar destino...</option>
-                        {branches.filter(b => b.id !== bulkTransferSourceId).map(b => (
-                          <option key={b.id} value={b.id}>{b.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <button
-                      disabled={isExecutingTransfer || bulkTransferItems.length === 0 || !bulkTransferTargetId}
-                      onClick={async () => {
-                        setIsExecutingTransfer(true);
-                        try {
-                          let successCount = 0;
-                          for (const item of bulkTransferItems) {
-                            const success = await transferInventory(item.productId, bulkTransferSourceId, bulkTransferTargetId, item.quantity, item.variant);
-                            if (success) successCount++;
-                          }
-                          if (successCount === bulkTransferItems.length) {
-                            addNotification(`Traslado masivo completado: ${successCount} productos enviados.`, 'success');
-                            setBulkTransferItems([]);
-                            setTransferSubTab('history');
-                          } else if (successCount > 0) {
-                            addNotification(`Se trasladaron ${successCount} de ${bulkTransferItems.length} productos. Revisa el stock disponible.`, 'warning');
-                          } else {
-                            addNotification("No se pudo realizar el traslado. Verifica el stock disponible.", 'error');
-                          }
-                        } catch (err) {
-                          addNotification("Error al procesar el traslado masivo.", 'error');
-                        } finally {
-                          setIsExecutingTransfer(false);
-                        }
-                      }}
-                      className="w-full lg:w-auto px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 cursor-pointer h-[42px]"
-                    >
-                      {isExecutingTransfer ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ArrowRightLeft className="w-3.5 h-3.5" />}
-                      Ejecutar Traslado ({bulkTransferItems.length})
-                    </button>
-                    {bulkTransferItems.length > 0 && (
-                      <button
-                        onClick={() => setBulkTransferItems([])}
-                        className="p-2.5 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400 rounded-xl hover:bg-slate-300 transition-all h-[42px]"
-                        title="Vaciar lista"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex-1 flex flex-col lg:flex-row min-h-0">
-                  {/* Product Search & Selection */}
-                  <div className="flex-1 flex flex-col border-r border-base min-h-0 bg-slate-50/30 dark:bg-slate-900/30">
-                    <div className="p-4 border-b border-base bg-white dark:bg-slate-900/50">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-                        <input 
-                          type="text" 
-                          placeholder="Buscar productos para trasladar..."
-                          value={transferSearch}
-                          onChange={(e) => setTransferSearch(e.target.value)}
-                          className="w-full pl-9 pr-4 py-2.5 bg-white dark:bg-slate-800 border border-base rounded-xl text-xs font-black uppercase outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex-1 overflow-auto p-2">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-                        {products
-                          .filter(p => 
-                            !bulkTransferItems.some(item => item.productId === p.id) &&
-                            (p.name.toLowerCase().includes(transferSearch.toLowerCase()) || 
-                             p.sku?.toLowerCase().includes(transferSearch.toLowerCase()))
-                          )
-                          .slice(0, 20)
-                          .map(product => {
-                            const stock = inventory.find(inv => inv.productId === product.id && inv.branchId === bulkTransferSourceId)?.quantity || 0;
-                            return (
-                              <button
-                                key={product.id}
-                                disabled={stock <= 0}
-                                onClick={() => {
-                                  setBulkTransferItems(prev => [...prev, { productId: product.id, quantity: 1 }]);
-                                }}
-                                className={cn(
-                                  "p-3 rounded-2xl border text-left transition-all group flex flex-col gap-1.5",
-                                  stock > 0 
-                                    ? "bg-white dark:bg-slate-800 border-base hover:border-indigo-500 hover:shadow-md cursor-pointer" 
-                                    : "bg-slate-50 dark:bg-slate-900 border-base opacity-60 grayscale cursor-not-allowed"
-                                )}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-2">
-                                    <div className={cn("w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-bold", product.color)}>
-                                      {product.name.charAt(0)}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <p className="text-[10px] font-black text-primary uppercase truncate leading-none mb-0.5">{product.name}</p>
-                                      <p className="text-[8px] font-bold text-muted uppercase tracking-tighter truncate">{product.sku || 'SIN SKU'}</p>
-                                    </div>
-                                  </div>
-                                  <Plus className="w-3.5 h-3.5 text-indigo-400 group-hover:text-indigo-600 transition-colors" />
-                                </div>
-                                <div className="flex items-center justify-between mt-auto pt-1.5 border-t border-slate-50 dark:border-slate-700/50">
-                                  <span className="text-[8px] font-black text-muted uppercase tracking-widest">Disponible:</span>
-                                  <span className={cn(
-                                    "text-[9px] font-black px-1.5 py-0.5 rounded-md",
-                                    stock > 5 ? "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30" : "text-amber-600 bg-amber-50 dark:bg-amber-950/30"
-                                  )}>
-                                    {stock} u.
-                                  </span>
-                                </div>
-                              </button>
-                            );
-                          })}
-                      </div>
-                      {transferSearch && products.filter(p => (p.name.toLowerCase().includes(transferSearch.toLowerCase()) || p.sku?.toLowerCase().includes(transferSearch.toLowerCase()))).length === 0 && (
-                        <div className="py-10 text-center">
-                          <Package className="w-8 h-8 text-slate-200 mx-auto mb-2" />
-                          <p className="text-[10px] font-bold text-muted uppercase">No se encontraron productos</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Selected Items List */}
-                  <div className="w-full lg:w-96 flex flex-col bg-white dark:bg-slate-900 min-h-0 border-l border-base">
-                    <div className="p-4 border-b border-base flex items-center justify-between bg-slate-50 dark:bg-slate-800/30 shrink-0">
-                      <h3 className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-2">
-                        <List className="w-3.5 h-3.5 text-indigo-500" />
-                        Lista de Traslado
-                      </h3>
-                      <span className="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 rounded-lg text-[10px] font-black">
-                        {bulkTransferItems.length}
-                      </span>
-                    </div>
-                    <div className="flex-1 overflow-auto p-4 space-y-2">
-                      {bulkTransferItems.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-center p-6 grayscale opacity-60">
-                          <ArrowRightLeft className="w-12 h-12 text-slate-300 mb-4" />
-                          <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Tu lista está vacía</p>
-                          <p className="text-[10px] font-bold text-slate-400 uppercase">Busca y añade productos para comenzar el traslado</p>
-                        </div>
-                      ) : (
-                        bulkTransferItems.map((item, index) => {
-                          const product = products.find(p => p.id === item.productId);
-                          const stock = inventory.find(inv => inv.productId === item.productId && inv.branchId === bulkTransferSourceId)?.quantity || 0;
-                          
-                          return (
-                            <div key={item.productId} className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-base group animate-in slide-in-from-right-2 duration-200">
-                              <div className="flex items-center justify-between gap-3 mb-2">
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-[10px] font-black text-primary uppercase truncate leading-tight">{product?.name}</p>
-                                  <p className="text-[8px] font-bold text-muted uppercase tracking-tighter truncate">{product?.sku}</p>
-                                </div>
-                                <button 
-                                  onClick={() => setBulkTransferItems(prev => prev.filter(i => i.productId !== item.productId))}
-                                  className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-all"
-                                >
-                                  <X className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                              <div className="flex items-center justify-between gap-4 bg-white dark:bg-slate-900 p-2 rounded-xl border border-base shadow-sm">
-                                <div className="flex flex-col">
-                                  <span className="text-[7px] font-black text-muted uppercase tracking-widest">Disponible</span>
-                                  <span className="text-[10px] font-black text-secondary">{stock} u.</span>
-                                </div>
-                                <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
-                                  <button 
-                                    onClick={() => {
-                                      if (item.quantity > 1) {
-                                        setBulkTransferItems(prev => prev.map((i, idx) => idx === index ? { ...i, quantity: i.quantity - 1 } : i));
-                                      }
-                                    }}
-                                    className="w-6 h-6 flex items-center justify-center text-slate-500 hover:text-primary transition-colors disabled:opacity-30"
-                                    disabled={item.quantity <= 1}
-                                  >
-                                    <Minus className="w-3.5 h-3.5" />
-                                  </button>
-                                  <input 
-                                    type="number"
-                                    value={item.quantity}
-                                    onChange={(e) => {
-                                      const val = parseInt(e.target.value) || 0;
-                                      const finalVal = Math.min(Math.max(0, val), stock);
-                                      setBulkTransferItems(prev => prev.map((i, idx) => idx === index ? { ...i, quantity: finalVal } : i));
-                                    }}
-                                    className="w-12 bg-transparent text-center text-xs font-black outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                  />
-                                  <button 
-                                    onClick={() => {
-                                      if (item.quantity < stock) {
-                                        setBulkTransferItems(prev => prev.map((i, idx) => idx === index ? { ...i, quantity: i.quantity + 1 } : i));
-                                      }
-                                    }}
-                                    className="w-6 h-6 flex items-center justify-center text-slate-500 hover:text-primary transition-colors disabled:opacity-30"
-                                    disabled={item.quantity >= stock}
-                                  >
-                                    <Plus className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       )}
       {activeTab === 'products' && (

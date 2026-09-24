@@ -1199,7 +1199,8 @@ export async function pushInventoryTransferToSupabase(transfer: InventoryTransfe
       variants: transfer.variants || [],
       date: transfer.date,
       user_id: validUserId,
-      status: transfer.status || 'completed'
+      status: transfer.status || 'completed',
+      batch_id: transfer.batchId || null
     };
     const { error } = await safeUpsert(supabase, 'inventory_transfers', row);
     if (error) {

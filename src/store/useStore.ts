@@ -118,12 +118,13 @@ interface AppState {
   deleteProduct: (id: string) => void;
   batchDeleteProducts: (ids: string[]) => void;
   batchUpdateProducts: (ids: string[], updates: Partial<Product>) => void;
-  transferInventory: (productId: string, fromBranchId: string, toBranchId: string, quantity: number, variantLabel?: string) => Promise<{ success: boolean; error?: string } | boolean>;
-  transferInventoryBatch: (productId: string, fromBranchId: string, toBranchId: string, variants: { variantLabel: string; quantity: number }[]) => Promise<{ success: boolean; error?: string }>;
+  transferInventory: (productId: string, fromBranchId: string, toBranchId: string, quantity: number, variantLabel?: string, transactionId?: string) => Promise<{ success: boolean; error?: string } | boolean>;
+  transferInventoryBatch: (productId: string, fromBranchId: string, toBranchId: string, variants: { variantLabel: string; quantity: number }[], transactionId?: string, batchId?: string) => Promise<{ success: boolean; error?: string }>;
   reconcileProductStock: (productId: string, corrections: { branchId: string; variantLabel?: string; quantity: number; minQuantity?: number }[]) => Promise<{ success: boolean; error?: string }>;
   repairOrphanedInventoryLevels: () => Promise<{ repaired: number; message: string }>;
   adjustInventory: (productId: string, branchId: string, delta: number, variantLabel?: string, minQuantity?: number) => void;
   setInventoryQuantity: (productId: string, branchId: string, quantity: number, variantLabel?: string, minQuantity?: number) => void;
+  transferProductsBulk: (fromBranchId: string, toBranchId: string, items: { productId: string; quantity: number; variant?: string }[]) => Promise<{ success: boolean; error?: string }>;
   
   // Carrito POS
   cart: CartItem[];
@@ -642,17 +643,18 @@ export const useStore = create<AppState>()(
     }));
     deleteProductFromSupabase(id);
   },
-  transferInventory: async (productId, fromBranchId, toBranchId, quantity, variantLabel) => {
+  transferInventory: async (productId, fromBranchId, toBranchId, quantity, variantLabel, transactionId) => {
     const res = await get().transferInventoryBatch(
       productId,
       fromBranchId,
       toBranchId,
-      [{ variantLabel: variantLabel || '', quantity }]
+      [{ variantLabel: variantLabel || '', quantity }],
+      transactionId
     );
     return res.success;
   },
 
-  transferInventoryBatch: async (productId, fromBranchId, toBranchId, variants) => {
+  transferInventoryBatch: async (productId, fromBranchId, toBranchId, variants, transactionId, batchId) => {
     if (!productId || !fromBranchId || !toBranchId) {
       return { success: false, error: 'Información incompleta para realizar la transferencia.' };
     }
@@ -736,7 +738,7 @@ export const useStore = create<AppState>()(
       ? (activeVariants[0].variantLabel || 'Producto Base') 
       : activeVariants.map(v => `${v.variantLabel || 'Base'}: ${v.quantity}`).join(', ');
 
-    const transferRecord: InventoryTransfer = {
+    const transferRecord: import('../types').InventoryTransfer = {
       id: crypto.randomUUID(),
       productId,
       productName: product?.name || 'Producto',
@@ -747,9 +749,11 @@ export const useStore = create<AppState>()(
       quantity: totalQuantity,
       variants: activeVariants,
       date: new Date().toISOString(),
-      userId: (get().currentUser?.id && get().users.some(u => u.id === get().currentUser?.id)) ? get().currentUser!.id : undefined,
+      userId: (get().currentUser?.id && get().users.some(u => u.id === get().currentUser?.id)) ? get().currentUser!.id : 'system',
       status: 'completed',
-      variantLabel: variantSummary
+      variantLabel: variantSummary,
+      transactionId,
+      batchId
     };
 
     get().addTransfer(transferRecord);
@@ -879,6 +883,38 @@ export const useStore = create<AppState>()(
     });
     const inv = get().inventory.find(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
     if (inv) pushInventoryToSupabase(inv).catch(() => {});
+  },
+
+  transferProductsBulk: async (fromBranchId, toBranchId, items) => {
+    if (items.length === 0) return { success: true };
+    const batchId = crypto.randomUUID();
+    let successCount = 0;
+    let lastError = "";
+
+    for (const item of items) {
+      const res = await get().transferInventoryBatch(
+        item.productId,
+        fromBranchId,
+        toBranchId,
+        [{ variantLabel: item.variant || '', quantity: item.quantity }],
+        undefined,
+        batchId
+      );
+      if (res.success) {
+        successCount++;
+      } else {
+        lastError = res.error || "Error desconocido";
+      }
+    }
+
+    if (successCount === items.length) {
+      return { success: true };
+    } else {
+      return { 
+        success: false, 
+        error: `Se transfirieron ${successCount} de ${items.length} productos. ${lastError}` 
+      };
+    }
   },
   
   cart: [],
@@ -1138,10 +1174,33 @@ export const useStore = create<AppState>()(
       // Delete the transaction from Supabase
       deleteTransactionFromSupabase(id).catch(() => {});
 
+      // Delete associated transfers if any
+      const updatedTransfers = (state.transfers || []).filter(tr => 
+        tr.transactionId !== id &&
+        !tr.id.includes(id) && 
+        !(tr.productName.includes(id)) 
+      );
+
       return {
         transactions: state.transactions.filter(t => t.id !== id),
         inventory: updatedInventory,
-        warranties: state.warranties.filter(w => w.transactionId !== id)
+        warranties: state.warranties.filter(w => w.transactionId !== id),
+        transfers: updatedTransfers
+      };
+    });
+  },
+
+  deleteCashSession: (id: string) => {
+    set((state) => {
+      const sessionToDelete = state.cashSessions.find(s => s.id === id);
+      if (!sessionToDelete) return state;
+
+      // Delete session from Supabase
+      deleteCashSessionFromSupabase(id).catch(() => {});
+
+      return {
+        cashSessions: state.cashSessions.filter(s => s.id !== id),
+        salarySettlements: state.salarySettlements.filter(st => st.sessionId !== id)
       };
     });
   },
@@ -1313,12 +1372,6 @@ export const useStore = create<AppState>()(
     }));
 
     pushCashSessionToSupabase(updatedSession).catch(() => {});
-  },
-  deleteCashSession: (id: string) => {
-    set((state) => ({
-      cashSessions: (state.cashSessions || []).filter(s => s.id !== id)
-    }));
-    deleteCashSessionFromSupabase(id).catch(() => {});
   },
   getCurrentSession: (branchId, userId) => {
     const sessions = get().cashSessions || [];

@@ -253,7 +253,9 @@ export interface InventoryTransfer {
   variants?: { variantLabel: string; quantity: number }[]; // For grouped transfers
   date: string;
   userId: string;
-  status: 'pending' | 'completed' | 'cancelled';
+  transactionId?: string;
+  batchId?: string; // For grouping multiple products in a single operation
+  status: 'completed' | 'cancelled';
 }
 
 export interface Supplier {

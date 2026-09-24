@@ -101,6 +101,8 @@ export default function POS() {
   const [cashManagementTab, setCashManagementTab] = useState<'movements' | 'close' | 'sales'>('movements');
   const [closingBalances, setClosingBalances] = useState<{ [key: string]: number }>({});
   const [showDiscrepancyModal, setShowDiscrepancyModal] = useState(false);
+  const [aiAnalysis, setAiAnalysis] = useState<{ analysis: string, suggestions: string[] } | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [finalBalancesToClose, setFinalBalancesToClose] = useState<Payment[]>([]);
   const [movementData, setMovementData] = useState({ type: 'expense' as 'income' | 'expense', amount: '', currencyCode: 'CUP', description: '' });
 
@@ -568,6 +570,43 @@ export default function POS() {
     }
   };
 
+  const runAIDiscrepancyAnalysis = async (expected: Payment[], actual: Payment[]) => {
+    setIsAnalyzing(true);
+    setAiAnalysis(null);
+    try {
+      const sessionTxs = transactions.filter(t => 
+        t.branchId === currentBranchId && 
+        currentSession && 
+        (
+          t.sessionId 
+            ? t.sessionId === currentSession.id
+            : (new Date(t.date).getTime() >= new Date(currentSession.openedAt).getTime() &&
+               (!currentSession.closedAt || new Date(t.date).getTime() <= new Date(currentSession.closedAt).getTime()))
+        )
+      );
+
+      const response = await fetch('/api/ai-analyze-discrepancy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expectedBalances: expected,
+          actualBalances: actual,
+          transactions: sessionTxs,
+          baseCurrency: baseCurrency
+        })
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setAiAnalysis(result.data);
+      }
+    } catch (err) {
+      console.error("AI Analysis failed:", err);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   const handleClose = (e: React.FormEvent) => {
     e.preventDefault();
     if (currentSession) {
@@ -601,6 +640,7 @@ export default function POS() {
       if (hasDiscrepancy) {
         setFinalBalancesToClose(finalBalances);
         setShowDiscrepancyModal(true);
+        runAIDiscrepancyAnalysis(expectedBalances, finalBalances);
       } else {
         processClose(finalBalances);
         setPosSuccess("Caja cerrada exitosamente.");
@@ -634,7 +674,7 @@ export default function POS() {
     setSessionWorkerName("");
     setSessionClosingDate(new Date().toISOString().split('T')[0]);
     setShowCashManagementModal(false);
-    setShowSalarySummary(false);
+    setShowSalarySummary(true);
     setShowOpenShiftModal(false);
   };
 
@@ -3550,28 +3590,104 @@ export default function POS() {
       {/* Discrepancy Modal */}
       {showDiscrepancyModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 border border-rose-100">
-            <div className="p-6 text-center space-y-4">
-              <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 border border-rose-100 flex flex-col max-h-[90vh]">
+            <div className="p-6 text-center space-y-4 shrink-0 border-b border-slate-100 bg-rose-50/30">
+              <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
                 <AlertCircle className="w-8 h-8" />
               </div>
-              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tighter">Discrepancia Detectada</h3>
-              <p className="text-xs font-bold text-slate-500">Hay diferencias entre el dinero declarado y lo esperado por el sistema. ¿Deseas cerrar la caja asumiendo la pérdida/sobrante?</p>
-              
-              <div className="flex gap-3 pt-4">
-                <button 
-                  onClick={() => setShowDiscrepancyModal(false)}
-                  className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-colors"
-                >
-                  Revisar
-                </button>
-                <button 
-                  onClick={confirmClose}
-                  className="flex-1 py-3 bg-rose-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-md shadow-rose-100"
-                >
-                  Forzar Cierre
-                </button>
+              <div>
+                <h3 className="text-lg font-black text-slate-900 uppercase tracking-tighter">Discrepancia Detectada</h3>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Revisión de Auditoría por IA</p>
               </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {isAnalyzing ? (
+                <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                  <div className="relative">
+                    <div className="w-12 h-12 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-2 h-2 bg-indigo-600 rounded-full animate-pulse"></div>
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs font-black text-slate-800 uppercase tracking-widest">Análisis de IA en curso...</p>
+                    <p className="text-[10px] text-slate-400 font-bold mt-1">Comparando ventas, cobros y stock del turno</p>
+                  </div>
+                </div>
+              ) : aiAnalysis ? (
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-2 opacity-10">
+                      <MessageSquare className="w-12 h-12 text-indigo-600" />
+                    </div>
+                    <h4 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                      <ShieldCheck className="w-3 h-3" />
+                      Diagnóstico del Auditor IA
+                    </h4>
+                    <p className="text-xs text-slate-700 leading-relaxed font-medium">
+                      {aiAnalysis.analysis}
+                    </p>
+                  </div>
+
+                  {aiAnalysis.suggestions && aiAnalysis.suggestions.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest px-1">Sugerencias para el Cuadre</h4>
+                      <div className="grid grid-cols-1 gap-2">
+                        {aiAnalysis.suggestions.map((s, idx) => (
+                          <div key={idx} className="flex gap-3 items-start p-3 bg-white border border-slate-100 rounded-xl shadow-sm hover:border-indigo-200 transition-colors">
+                            <div className="w-5 h-5 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center shrink-0 mt-0.5 font-black text-[10px]">
+                              {idx + 1}
+                            </div>
+                            <p className="text-[11px] font-bold text-slate-600 leading-tight">{s}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Resumen de Descuadres</p>
+                    <div className="space-y-2">
+                      {expectedBalances.map(eb => {
+                        const actual = finalBalancesToClose.find(fb => fb.currencyCode === eb.currencyCode && fb.method === eb.method)?.amount || 0;
+                        const diff = actual - eb.amount;
+                        if (Math.abs(diff) < 0.01) return null;
+                        return (
+                          <div key={`${eb.currencyCode}-${eb.method}`} className="flex items-center justify-between py-1 border-b border-slate-200 last:border-0">
+                            <span className="text-[10px] font-bold text-slate-600 uppercase">{eb.currencyCode} ({eb.method === 'cash' ? 'Efectivo' : 'Transf.'})</span>
+                            <span className={cn(
+                              "text-xs font-black",
+                              diff > 0 ? "text-emerald-600" : "text-rose-600"
+                            )}>
+                              {diff > 0 ? '+' : ''}{diff.toLocaleString('es-CU')}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-xs font-bold text-slate-500">No se pudo generar el análisis automático. Por favor, revisa manualmente.</p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3 shrink-0">
+              <button 
+                onClick={() => setShowDiscrepancyModal(false)}
+                className="flex-1 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-colors shadow-sm"
+              >
+                Volver a Revisar
+              </button>
+              <button 
+                onClick={confirmClose}
+                className="flex-1 py-3 bg-rose-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-200"
+              >
+                Forzar Cierre
+              </button>
             </div>
           </div>
         </div>
@@ -3779,39 +3895,46 @@ export default function POS() {
           showMobileCart ? "hidden md:flex" : "flex"
         )}>
           {/* Header Sub-bar: Search & Categories */}
-          <div className="p-2 sm:p-2.5 border-b border-slate-200/80 bg-white sticky top-0 z-30 space-y-1.5">
-            <div className="flex flex-col sm:flex-row items-center gap-2">
-              <div className="relative flex-1 w-full order-2 sm:order-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
+          <div className="p-3 sm:p-4 border-b border-slate-200/80 bg-white sticky top-0 z-30 shadow-sm">
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              {/* Category Selector First */}
+              <div className="w-full sm:w-64 relative group">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 group-focus-within:text-indigo-500 transition-colors">
+                  <Filter className="w-3.5 h-3.5" />
+                </div>
+                <select 
+                  value={activeCategoryId}
+                  onChange={(e) => setActiveCategoryId(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all appearance-none cursor-pointer shadow-sm"
+                >
+                  <option value="Todos">Todas las Categorías</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </div>
+              </div>
+              
+              {/* Search Bar - Main Focus */}
+              <div className="relative flex-1 w-full">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
                 <input 
                   type="text" 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar productos, SKUs o código..." 
-                  className="w-full pl-8 pr-8 py-2 bg-subtle border border-base rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-xs font-black text-primary placeholder:text-muted shadow-sm"
+                  placeholder="Busca productos por nombre, SKU o código de barras..." 
+                  className="w-full pl-11 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all text-sm font-bold text-slate-900 placeholder:text-slate-400 shadow-sm"
                 />
                 {searchQuery && (
                   <button
                     type="button"
                     onClick={() => setSearchQuery("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-muted hover:text-primary rounded-full hover:bg-subtle transition-colors"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-50 transition-all"
                     title="Limpiar búsqueda"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    <X className="w-4 h-4" />
                   </button>
                 )}
-              </div>
-              
-              <div className="w-full sm:w-auto order-1 sm:order-2">
-                <select 
-                  value={activeCategoryId}
-                  onChange={(e) => setActiveCategoryId(e.target.value)}
-                  className="w-full sm:w-56 px-3 py-2 bg-white dark:bg-slate-800 border border-base rounded-xl text-[10px] font-black uppercase tracking-tight outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm appearance-none cursor-pointer"
-                  style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 24 24\' stroke=\'%2364748b\'%3E%3Cpath stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'2\' d=\'M19 9l-7 7-7-7\'%3E%3C/path%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.75rem center', backgroundSize: '1rem' }}
-                >
-                  <option value="Todos">Todas las Categorías</option>
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
               </div>
             </div>
           </div>
@@ -4268,7 +4391,10 @@ export default function POS() {
                   (lastClosedSession.closedAt ? new Date(t.date) <= new Date(lastClosedSession.closedAt) : true)
                 );
 
-                const commissions = sessionTransactions.reduce((sum, tx) => {
+                const employee = users.find(u => u.id === lastClosedSession.userId || u.name === lastClosedSession.workerName) || users.find(u => u.name?.toLowerCase() === lastClosedSession.workerName?.toLowerCase()) || users.find(u => u.role === 'employee') || currentUser;
+                const isIndependent = employee?.isIndependent === true;
+
+                const commissions = isIndependent ? 0 : sessionTransactions.reduce((sum, tx) => {
                   return sum + (tx.items || []).reduce((s, item) => {
                     const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
                     const prod = products.find(p => p.id === prodId);
@@ -4278,8 +4404,7 @@ export default function POS() {
                   }, 0);
                 }, 0);
 
-                const employee = users.find(u => u.id === lastClosedSession.userId || u.name === lastClosedSession.workerName) || users.find(u => u.name?.toLowerCase() === lastClosedSession.workerName?.toLowerCase()) || users.find(u => u.role === 'employee') || currentUser;
-                const baseSalary = employee?.baseSalary || 0;
+                const baseSalary = isIndependent ? 0 : (employee?.baseSalary || 0);
                 const totalSalary = baseSalary + commissions;
                 const totalSales = sessionTransactions.reduce((sum, tx) => sum + (tx.total || 0), 0);
                 const totalItems = sessionTransactions.reduce((sum, tx) => sum + (tx.items || []).reduce((s, i) => s + (i.quantity || 0), 0), 0);

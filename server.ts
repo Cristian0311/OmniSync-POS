@@ -208,6 +208,95 @@ Genera un informe ejecutivo de auditoría contable y operativa con recomendacion
     }
   });
 
+  // AI Discrepancy Analyzer for Cash Closing
+  app.post('/api/ai-analyze-discrepancy', async (req, res) => {
+    try {
+      const {
+        expectedBalances = [],
+        actualBalances = [],
+        transactions = [],
+        baseCurrency = { code: 'CUP', symbol: '$' }
+      } = req.body;
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.trim().length < 10) {
+        return res.json({
+          success: true,
+          data: {
+            analysis: "No se puede realizar el análisis de IA sin una clave de API válida. Por favor, verifica tu configuración.",
+            suggestions: ["Verifica manualmente los tickets de venta", "Comprueba si hubo gastos no registrados"]
+          }
+        });
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+      
+      const sessionSummary = transactions.map((t: any) => ({
+        id: t.id,
+        total: t.total,
+        paymentMethod: t.paymentMethod,
+        items: t.items.map((i: any) => `${i.quantity}x ${i.product.name}`).join(', ')
+      }));
+
+      const discrepancies = expectedBalances.map((eb: any) => {
+        const actual = actualBalances.find((ab: any) => ab.currencyCode === eb.currencyCode && ab.method === eb.method)?.amount || 0;
+        const diff = actual - eb.amount;
+        return {
+          currency: eb.currencyCode,
+          method: eb.method,
+          expected: eb.amount,
+          actual: actual,
+          difference: diff
+        };
+      }).filter((d: any) => Math.abs(d.difference) > 0.01);
+
+      const prompt = `Actúa como un auditor contable experto. Se ha detectado una discrepancia en el cierre de caja de una tienda POS.
+      
+CONTEXTO:
+- Moneda Base: ${baseCurrency.code} (${baseCurrency.symbol})
+- Discrepancias detectadas (Diferencia = Real - Esperado):
+${discrepancias.map((d: any) => `- ${d.currency} (${d.method}): Diferencia de ${d.difference.toLocaleString()} (Esperado: ${d.expected}, Real: ${d.actual})`).join('\n')}
+
+TRANSACCIONES DEL TURNO (Últimas 50):
+${JSON.stringify(sessionSummary.slice(-50), null, 2)}
+
+TAREA:
+1. Analiza las discrepancias comparándolas con los montos de las transacciones y sus productos.
+2. Identifica posibles causas: productos vendidos pero no anotados (busca coincidencias de precios), errores en vueltos, transacciones duplicadas o cobros mal registrados (ej: era transferencia pero se marcó efectivo).
+3. Da sugerencias específicas y amigables al cajero para encontrar el descuadre.
+
+Responde con un objeto JSON:
+{
+  "analysis": "Explicación detallada de lo que pudo haber pasado basándote en los datos.",
+  "suggestions": ["Sugerencia específica 1", "Sugerencia específica 2", "Posible producto olvidado: Nombre del Producto (Precio)"]
+}`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          systemInstruction: 'Eres un asistente contable de IA para un sistema POS. Tu objetivo es ayudar a encontrar descuadres de caja analizando ventas y discrepancias.'
+        }
+      });
+
+      if (response.text) {
+        res.json({
+          success: true,
+          data: JSON.parse(response.text)
+        });
+      } else {
+        throw new Error("No response from AI");
+      }
+    } catch (error: any) {
+      console.error('[AI Discrepancy Error]', error);
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Error al procesar el análisis de discrepancia'
+      });
+    }
+  });
+
   // Vite middleware in dev mode
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

@@ -205,6 +205,10 @@ export default function Reports() {
     id: string;
     label: string;
   } | null>(null);
+  const [deletePin, setDeletePin] = useState("");
+  const [deletePinError, setDeletePinError] = useState(false);
+
+  const REQUIRED_DELETE_PIN = "03111166702";
 
   // Filtro y resumen de transacciones de Vendedores Independientes (IDN)
   const idnTransactions = useMemo(() => {
@@ -2875,7 +2879,7 @@ export default function Reports() {
 
       {/* Modal: Detalle de Ventas por Producto */}
       {selectedProductStatsDetail && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 border border-white/20">
             <div className="bg-slate-900 p-5 text-white flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -2966,28 +2970,59 @@ export default function Reports() {
               <p className="text-xs font-semibold text-slate-600 mt-1">
                 {deleteConfirmTarget.label}
               </p>
-              <p className="text-[11px] text-slate-400 mt-2">
-                Esta acción eliminará el registro de este dispositivo y de la base de datos en Supabase permanentemente.
+              <p className="text-[10px] text-slate-400 mt-2">
+                Esta acción es irreversible y restaurará el stock al almacén original.
               </p>
             </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[9px] font-black text-slate-500 uppercase ml-1">PIN de Seguridad Requerido</label>
+              <input 
+                type="password"
+                value={deletePin}
+                onChange={(e) => {
+                  setDeletePin(e.target.value);
+                  setDeletePinError(false);
+                }}
+                placeholder="Ingresa el PIN para confirmar"
+                className={cn(
+                  "w-full px-4 py-3 bg-slate-50 border rounded-xl text-center text-sm font-black outline-none transition-all",
+                  deletePinError ? "border-rose-500 bg-rose-50 ring-2 ring-rose-500/10" : "border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10"
+                )}
+              />
+              {deletePinError && (
+                <p className="text-[9px] font-bold text-rose-600 text-center uppercase tracking-wider animate-bounce">PIN Incorrecto</p>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-2 pt-2">
               <button
-                onClick={() => setDeleteConfirmTarget(null)}
+                onClick={() => {
+                  setDeleteConfirmTarget(null);
+                  setDeletePin("");
+                  setDeletePinError(false);
+                }}
                 className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs uppercase tracking-wider transition-colors"
               >
                 Cancelar
               </button>
               <button
                 onClick={() => {
-                  if (deleteConfirmTarget.type === 'transaction') {
-                    store.deleteTransaction(deleteConfirmTarget.id);
-                  } else if (deleteConfirmTarget.type === 'session') {
-                    store.deleteCashSession(deleteConfirmTarget.id);
+                  if (deletePin === REQUIRED_DELETE_PIN) {
+                    if (deleteConfirmTarget.type === 'transaction') {
+                      store.deleteTransaction(deleteConfirmTarget.id);
+                    } else if (deleteConfirmTarget.type === 'session') {
+                      store.deleteCashSession(deleteConfirmTarget.id);
+                    }
+                    if (expandedSession === deleteConfirmTarget.id) {
+                      setExpandedSession(null);
+                    }
+                    setDeleteConfirmTarget(null);
+                    setDeletePin("");
+                    setDeletePinError(false);
+                  } else {
+                    setDeletePinError(true);
                   }
-                  if (expandedSession === deleteConfirmTarget.id) {
-                    setExpandedSession(null);
-                  }
-                  setDeleteConfirmTarget(null);
                 }}
                 className="py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-colors shadow-sm"
               >
