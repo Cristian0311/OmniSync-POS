@@ -170,6 +170,30 @@ export interface CashRegisterSession {
   movements?: CashMovement[];
   closingDate?: string;
   notes?: string;
+  isForcedClose?: boolean;
+  forcedCloseReason?: string;
+  discrepancyNote?: string;
+  hasDiscrepancy?: boolean;
+  discrepancyDetails?: {
+    currencyCode: string;
+    method: 'cash' | 'transfer';
+    expected: number;
+    actual: number;
+    difference: number;
+  }[];
+  discrepancyDeductionApplied?: number;
+  deductedFromSalary?: boolean;
+  aiDiagnostic?: {
+    analysis: string;
+    suggestions: string[];
+  };
+  matchingProductsAnalysis?: {
+    currencyCode: string;
+    difference: number;
+    matchedProducts: { id: string; name: string; price: number }[];
+  }[];
+  auditStatus?: 'pending_review' | 'reviewed' | 'resolved';
+  auditNotes?: string;
 }
 
 export interface CashMovement {
@@ -179,6 +203,10 @@ export interface CashMovement {
   currencyCode: string;
   description: string;
   date: string;
+  sessionId?: string;
+  branchId?: string;
+  workerName?: string;
+  category?: string;
 }
 
 export interface User {

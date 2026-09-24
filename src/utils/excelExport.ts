@@ -825,7 +825,19 @@ export function exportFullReportsToExcel(data: ExcelExportData) {
   formatWorksheet(idnWs, idnAoa, 0, true);
   XLSX.utils.book_append_sheet(wb, idnWs, 'Liquidaciones IDN');
 
-  // 10. Diagnóstico Inteligente IA (si está disponible o generado)
+  // 10. Auditoría de Descuadres y Cierres Forzados
+  const discAoa = generateDiscrepanciesSheet(data);
+  const discWs = XLSX.utils.aoa_to_sheet(discAoa);
+  formatWorksheet(discWs, discAoa, 0, true);
+  XLSX.utils.book_append_sheet(wb, discWs, 'Descuadres y Cierres');
+
+  // 11. Movimientos de Caja POS (Egresos e Ingresos)
+  const movAoa = generateCashMovementsSheet(data);
+  const movWs = XLSX.utils.aoa_to_sheet(movAoa);
+  formatWorksheet(movWs, movAoa, 0, true);
+  XLSX.utils.book_append_sheet(wb, movWs, 'Movimientos POS');
+
+  // 12. Diagnóstico Inteligente IA (si está disponible o generado)
   if (data.aiDiagnostic) {
     const aiAoa = generateAIDiagnosticSheet(data.aiDiagnostic, data.baseCurrency);
     const aiWs = XLSX.utils.aoa_to_sheet(aiAoa);
@@ -906,9 +918,204 @@ export function generateIDNSettlementsSheet(data: ExcelExportData): any[][] {
   return rows;
 }
 
+// SHEET: DESCUADRES Y CIERRES FORZADOS
+export function generateDiscrepanciesSheet(data: ExcelExportData): any[][] {
+  const { cashSessions, transactions, branches, currencies, baseCurrency } = data;
+
+  const rows: any[][] = [
+    [
+      'ID Turno',
+      'Sucursal',
+      'Cajero / Responsable',
+      'Fecha Cierre',
+      'Tipo de Cierre',
+      'Estado Auditoría',
+      'Moneda',
+      'Método Pago',
+      'Monto Teórico Esperado',
+      'Monto Físico Declarado',
+      'Diferencia / Descuadre',
+      'Tipo Descuadre',
+      'Deducción Salarial Aplicada (' + baseCurrency.code + ')',
+      'Productos Coincidentes Detectados',
+      'Diagnóstico / Notas Operativas'
+    ]
+  ];
+
+  cashSessions.forEach(session => {
+    const isForced = Boolean(session.isForcedClose);
+    let details: { currencyCode: string; method: 'cash' | 'transfer'; expected: number; actual: number; difference: number }[] = [...(session.discrepancyDetails || [])];
+
+    // If details are empty but session is closed and has closingBalances, compute expected on the fly
+    if (details.length === 0 && session.status === 'closed' && session.closingBalances && session.closingBalances.length > 0) {
+      const openDate = new Date(session.openedAt).getTime();
+      const closeDate = session.closedAt ? new Date(session.closedAt).getTime() : Date.now();
+      const sessionTx = (transactions || []).filter(t => 
+        t.sessionId 
+          ? t.sessionId === session.id 
+          : (t.branchId === session.branchId && new Date(t.date).getTime() >= openDate && new Date(t.date).getTime() <= closeDate)
+      );
+
+      const expected: { currencyCode: string; method: 'cash' | 'transfer'; amount: number }[] = [];
+      const baseCode = baseCurrency?.code || 'CUP';
+      expected.push({ currencyCode: baseCode, method: 'cash', amount: session.openingBalance || 0 });
+
+      sessionTx.forEach(tx => {
+        (tx.payments || []).forEach(p => {
+          const ex = expected.find(e => e.currencyCode === p.currencyCode && e.method === p.method);
+          if (ex) ex.amount += p.amount;
+          else expected.push({ currencyCode: p.currencyCode, method: p.method, amount: p.amount });
+        });
+        (tx.changePayments || []).forEach(cp => {
+          const ex = expected.find(e => e.currencyCode === cp.currencyCode && e.method === cp.method);
+          if (ex) ex.amount -= cp.amount;
+        });
+      });
+
+      (session.movements || []).forEach(m => {
+        const ex = expected.find(e => e.currencyCode === m.currencyCode && e.method === 'cash');
+        if (ex) ex.amount += (m.type === 'income' ? m.amount : -m.amount);
+        else expected.push({ currencyCode: m.currencyCode, method: 'cash', amount: m.type === 'income' ? m.amount : -m.amount });
+      });
+
+      expected.forEach(eb => {
+        const act = session.closingBalances?.find(cb => cb.currencyCode === eb.currencyCode && cb.method === eb.method)?.amount || 0;
+        const diff = act - eb.amount;
+        if (Math.abs(diff) > 0.01) {
+          details.push({
+            currencyCode: eb.currencyCode,
+            method: eb.method,
+            expected: eb.amount,
+            actual: act,
+            difference: diff
+          });
+        }
+      });
+
+      session.closingBalances.forEach(cb => {
+        if (!expected.some(eb => eb.currencyCode === cb.currencyCode && eb.method === cb.method)) {
+          if (cb.amount > 0.01) {
+            details.push({
+              currencyCode: cb.currencyCode,
+              method: cb.method as any,
+              expected: 0,
+              actual: cb.amount,
+              difference: cb.amount
+            });
+          }
+        }
+      });
+    }
+
+    const hasDiscrepancy = Boolean(session.hasDiscrepancy) || details.length > 0;
+    if (!isForced && !hasDiscrepancy) return;
+
+    const branchName = branches.find(b => b.id === session.branchId)?.name || 'Sucursal';
+    const workerName = session.workerName || 'Cajero';
+    const closeDate = session.closingDate || session.closedAt || session.openedAt;
+    const dateStr = new Date(closeDate).toLocaleString('es-CU');
+    const auditStatus = session.auditStatus === 'resolved' ? 'Resuelto' : session.auditStatus === 'reviewed' ? 'Auditado' : 'Pendiente Revisión';
+    const deduction = session.discrepancyDeductionApplied || 0;
+
+    if (details.length > 0) {
+      details.forEach(d => {
+        const matchingForCurrency = session.matchingProductsAnalysis?.find(m => m.currencyCode === d.currencyCode);
+        const matchStr = matchingForCurrency?.matchedProducts?.map(p => `${p.name} ($${p.price})`).join('; ') || 'Ninguno';
+        const aiNote = session.aiDiagnostic?.analysis || session.notes || session.auditNotes || (isForced ? `Cierre forzado: ${session.forcedCloseReason || 'Diferencia registrada'}` : 'Cierre con descuadre registrado');
+
+        rows.push([
+          session.id,
+          branchName,
+          workerName,
+          dateStr,
+          isForced ? 'Cierre Forzado' : 'Cierre Normal',
+          auditStatus,
+          d.currencyCode,
+          d.method === 'cash' ? 'Efectivo' : 'Transferencia',
+          Number(d.expected.toFixed(2)),
+          Number(d.actual.toFixed(2)),
+          Number(d.difference.toFixed(2)),
+          d.difference < 0 ? 'FALTANTE' : 'SOBRANTE',
+          Number(deduction.toFixed(2)),
+          matchStr,
+          aiNote
+        ]);
+      });
+    } else {
+      rows.push([
+        session.id,
+        branchName,
+        workerName,
+        dateStr,
+        isForced ? 'Cierre Forzado' : 'Cierre Normal',
+        auditStatus,
+        baseCurrency.code,
+        'General',
+        0,
+        0,
+        0,
+        'DESCUADRE REPORTADO',
+        Number(deduction.toFixed(2)),
+        'N/A',
+        session.forcedCloseReason || session.notes || session.auditNotes || 'Cierre forzado registrado sin detalle granular'
+      ]);
+    }
+  });
+
+  return rows;
+}
+
+// SHEET: MOVIMIENTOS DE CAJA POS (EGRESOS E INGRESOS)
+export function generateCashMovementsSheet(data: ExcelExportData): any[][] {
+  const { cashSessions, branches, currencies, baseCurrency } = data;
+
+  const rows: any[][] = [
+    [
+      'ID Movimiento',
+      'Fecha y Hora',
+      'ID Turno',
+      'Sucursal',
+      'Cajero Responsable',
+      'Tipo de Operación',
+      'Concepto / Descripción',
+      'Importe Moneda Original',
+      'Moneda',
+      'Equivalente Moneda Base (' + baseCurrency.code + ')',
+      'Estado del Turno'
+    ]
+  ];
+
+  cashSessions.forEach(session => {
+    const branchName = branches.find(b => b.id === session.branchId)?.name || 'Sucursal';
+    const workerName = session.workerName || 'Cajero';
+
+    (session.movements || []).forEach(m => {
+      const dateStr = new Date(m.date).toLocaleString('es-CU');
+      const rate = currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1;
+      const cupEquiv = m.amount * rate;
+
+      rows.push([
+        m.id,
+        dateStr,
+        session.id,
+        branchName,
+        m.workerName || workerName,
+        m.type === 'income' ? 'INGRESO (ENTRADA)' : 'EGRESO (GASTO)',
+        m.description,
+        Number(m.amount.toFixed(2)),
+        m.currencyCode,
+        Number(cupEquiv.toFixed(2)),
+        session.status === 'closed' ? 'Turno Cerrado' : 'Turno Abierto'
+      ]);
+    });
+  });
+
+  return rows;
+}
+
 // EXPORT SINGLE SECTION
 export function exportSingleSectionToExcel(
-  section: 'summary' | 'sales' | 'items' | 'sessions' | 'payroll' | 'products' | 'returns' | 'banks' | 'idn',
+  section: 'summary' | 'sales' | 'items' | 'sessions' | 'payroll' | 'products' | 'returns' | 'banks' | 'idn' | 'discrepancies' | 'movements',
   data: ExcelExportData
 ) {
   const wb = XLSX.utils.book_new();
@@ -946,6 +1153,12 @@ export function exportSingleSectionToExcel(
   } else if (section === 'idn') {
     aoa = generateIDNSettlementsSheet(data);
     sheetName = 'Liquidaciones IDN';
+  } else if (section === 'discrepancies') {
+    aoa = generateDiscrepanciesSheet(data);
+    sheetName = 'Descuadres y Cierres';
+  } else if (section === 'movements') {
+    aoa = generateCashMovementsSheet(data);
+    sheetName = 'Movimientos POS';
   }
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);

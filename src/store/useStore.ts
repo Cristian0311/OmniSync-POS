@@ -159,7 +159,8 @@ interface AppState {
   // Caja
   cashSessions: CashRegisterSession[];
   openSession: (session: CashRegisterSession) => void;
-  closeSession: (sessionId: string, closingBalances: import('../types').Payment[], workerName?: string, closingDate?: string, discrepancyDeduction?: number) => void;
+  closeSession: (sessionId: string, closingBalances: import('../types').Payment[], workerName?: string, closingDate?: string, discrepancyDeduction?: number, sessionMeta?: Partial<CashRegisterSession>) => void;
+  updateCashSession: (id: string, updates: Partial<CashRegisterSession>) => void;
   cancelSession: (sessionId: string) => void;
   deleteCashSession: (id: string) => void;
   getCurrentSession: (branchId: string, userId: string) => CashRegisterSession | undefined;
@@ -1337,7 +1338,7 @@ export const useStore = create<AppState>()(
     }));
     pushCashSessionToSupabase(sessionWithSequentialId).catch(() => {});
   },
-  closeSession: (sessionId, closingBalances, workerName, closingDate, discrepancyDeduction) => {
+  closeSession: (sessionId, closingBalances, workerName, closingDate, discrepancyDeduction, sessionMeta) => {
     const finalClosingDate = closingDate || new Date().toISOString();
     const session = get().cashSessions.find(s => s.id === sessionId);
     if (!session) return;
@@ -1385,7 +1386,8 @@ export const useStore = create<AppState>()(
       status: 'closed' as 'closed',
       closingBalances: closingBalances || [],
       workerName: finalSellerName,
-      closingDate: finalClosingDate
+      closingDate: finalClosingDate,
+      ...(sessionMeta || {})
     };
 
     set((state) => ({
@@ -1396,6 +1398,17 @@ export const useStore = create<AppState>()(
     }));
 
     pushCashSessionToSupabase(updatedSession).catch(() => {});
+  },
+  updateCashSession: (id, updates) => {
+    set((state) => ({
+      cashSessions: (state.cashSessions || []).map(s => 
+        s.id === id ? { ...s, ...updates } : s
+      )
+    }));
+    const updated = get().cashSessions.find(s => s.id === id);
+    if (updated) {
+      pushCashSessionToSupabase(updated).catch(() => {});
+    }
   },
   getCurrentSession: (branchId, userId) => {
     const sessions = get().cashSessions || [];

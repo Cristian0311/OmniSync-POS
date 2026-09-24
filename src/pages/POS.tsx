@@ -679,7 +679,7 @@ export default function POS() {
     }
   };
 
-  const processClose = (balances: Payment[], discrepancyDeduction?: number) => {
+  const processClose = (balances: Payment[], discrepancyDeduction?: number, sessionMeta?: Partial<CashRegisterSession>) => {
     if (!currentSession) return;
     let finalClosingDate = new Date().toISOString();
     if (sessionClosingDate) {
@@ -690,15 +690,16 @@ export default function POS() {
         finalClosingDate = d.toISOString();
       }
     }
-    const sessionToClose = { 
+    const sessionToClose: CashRegisterSession = { 
       ...currentSession, 
       status: 'closed' as const, 
       closedAt: finalClosingDate, 
       closingBalances: balances, 
       workerName: sessionWorkerName || currentSession.workerName,
-      closingDate: finalClosingDate
+      closingDate: finalClosingDate,
+      ...(sessionMeta || {})
     };
-    closeSession(currentSession.id, balances, sessionWorkerName || currentSession.workerName, finalClosingDate, discrepancyDeduction);
+    closeSession(currentSession.id, balances, sessionWorkerName || currentSession.workerName, finalClosingDate, discrepancyDeduction, sessionMeta);
     setLastClosedSession(sessionToClose);
     setClosingBalances({});
     setSessionWorkerName("");
@@ -723,12 +724,71 @@ export default function POS() {
         });
       }
 
-      processClose(finalBalancesToClose, totalDeduction);
+      // Build discrepancy details
+      const discrepancyDetails: {
+        currencyCode: string;
+        method: 'cash' | 'transfer';
+        expected: number;
+        actual: number;
+        difference: number;
+      }[] = [];
+
+      expectedBalances.forEach(eb => {
+        const actual = finalBalancesToClose.find(fb => fb.currencyCode === eb.currencyCode && fb.method === eb.method)?.amount || 0;
+        const diff = actual - eb.amount;
+        if (Math.abs(diff) > 0.01) {
+          discrepancyDetails.push({
+            currencyCode: eb.currencyCode,
+            method: eb.method as any,
+            expected: eb.amount,
+            actual,
+            difference: diff
+          });
+        }
+      });
+
+      finalBalancesToClose.forEach(fb => {
+        if (!expectedBalances.some(eb => eb.currencyCode === fb.currencyCode && eb.method === fb.method)) {
+          discrepancyDetails.push({
+            currencyCode: fb.currencyCode,
+            method: fb.method as any,
+            expected: 0,
+            actual: fb.amount,
+            difference: fb.amount
+          });
+        }
+      });
+
+      const matchingProductsAnalysis = discrepancyDetails.map(dd => {
+        const matchedProducts = products
+          .filter(p => Math.abs(p.price - Math.abs(dd.difference)) < 1)
+          .slice(0, 3)
+          .map(p => ({ id: p.id, name: p.name, price: p.price }));
+        return {
+          currencyCode: dd.currencyCode,
+          difference: dd.difference,
+          matchedProducts
+        };
+      }).filter(m => m.matchedProducts.length > 0);
+
+      const sessionMeta: Partial<CashRegisterSession> = {
+        isForcedClose: true,
+        hasDiscrepancy: discrepancyDetails.length > 0,
+        discrepancyDetails,
+        discrepancyDeductionApplied: totalDeduction,
+        deductedFromSalary: deductFromSalary,
+        aiDiagnostic: aiAnalysis || undefined,
+        matchingProductsAnalysis,
+        auditStatus: 'pending_review',
+        notes: `Cierre forzado con descuadre. Deducción salarial: ${totalDeduction > 0 ? `${totalDeduction} CUP` : 'No aplicada'}.`
+      };
+
+      processClose(finalBalancesToClose, totalDeduction, sessionMeta);
       setShowDiscrepancyModal(false);
       setDeductFromSalary(false);
       setFinalBalancesToClose([]);
-      setPosSuccess("Caja cerrada. Se aplicaron los descuentos correspondientes.");
-      setTimeout(() => setPosSuccess(""), 3000);
+      setPosSuccess("Caja cerrada. Se registraron los datos para la auditoría de descuadres en Reportes.");
+      setTimeout(() => setPosSuccess(""), 3500);
     }
   };
 
@@ -740,6 +800,9 @@ export default function POS() {
 
     addCashMovement(currentSession.id, {
       id: crypto.randomUUID(),
+      sessionId: currentSession.id,
+      branchId: currentSession.branchId || currentBranchId,
+      workerName: currentSession.workerName || sessionWorkerName || currentUser?.name || 'Vendedor',
       type: movementData.type,
       amount: amt,
       currencyCode: movementData.currencyCode,
@@ -2095,87 +2158,89 @@ export default function POS() {
 
         {/* Modal Vale de Liquidación IDN (con opciones de impresión manual) */}
         {showIDNReceiptModal && (
-          <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-            <div className="bg-white rounded-[2rem] max-w-lg w-full p-6 shadow-2xl space-y-4 border border-slate-100 animate-in zoom-in-95 my-auto">
-              <div className="text-center space-y-1 pb-3 border-b border-slate-100">
-                <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto text-amber-600 mb-2">
-                  <CheckCircle className="w-6 h-6" />
+          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50 overflow-hidden animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl max-w-lg w-full max-h-[94vh] sm:max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 overflow-hidden">
+              <div className="text-center space-y-1 p-3.5 sm:p-4 border-b border-slate-100 dark:border-slate-800 bg-amber-50/40 dark:bg-amber-950/20 shrink-0">
+                <div className="w-10 h-10 bg-amber-100 dark:bg-amber-900/50 rounded-2xl flex items-center justify-center mx-auto text-amber-700 dark:text-amber-300 mb-1">
+                  <CheckCircle className="w-5 h-5" />
                 </div>
-                <h3 className="text-base font-black text-slate-900 uppercase">Vale de Liquidación IDN</h3>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white uppercase">Vale de Liquidación IDN</h3>
+                <p className="text-[9px] sm:text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
                   {showIDNReceiptModal.workerName} • {showIDNReceiptModal.branchName}
                 </p>
-                <p className="text-[9px] font-bold text-slate-400">
+                <p className="text-[8px] font-medium text-slate-400">
                   {new Date(showIDNReceiptModal.date).toLocaleString()}
                 </p>
               </div>
 
-              {/* Detalle de Productos Vendidos */}
-              <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200/60 max-h-60 overflow-y-auto space-y-2">
-                <div className="flex justify-between text-[9px] font-black text-slate-400 uppercase tracking-wider px-1">
-                  <span>Producto / Cantidad</span>
-                  <span>Monto Liquidado</span>
-                </div>
-                {showIDNReceiptModal.details.length === 0 ? (
-                  <div className="text-center py-6 text-slate-400 text-[10px] uppercase font-black tracking-widest bg-white rounded-xl border border-dashed border-slate-200">
-                    Sin ventas registradas en este turno
+              {/* Detalle de Productos Vendidos - Scrollable */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-4 space-y-2.5">
+                <div className="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-2.5 border border-slate-200/60 dark:border-slate-700/60 space-y-1.5">
+                  <div className="flex justify-between text-[8px] font-black text-slate-400 uppercase tracking-wider px-1">
+                    <span>Producto / Cantidad</span>
+                    <span>Monto Liquidado</span>
                   </div>
-                ) : (
-                  showIDNReceiptModal.details.map((item: any, idx: number) => (
-                    <div key={idx} className="flex justify-between items-center bg-white p-2 rounded-xl border border-slate-100 text-xs">
-                      <div>
-                        <p className="font-black text-slate-900 uppercase text-[11px]">{item.name}</p>
-                        <p className="text-[9px] font-bold text-slate-400 uppercase">
-                          {item.qty} uds × {baseCurrency.symbol}{item.price.toLocaleString()} CUP
-                        </p>
-                      </div>
-                      <span className="font-mono font-black text-amber-700 text-xs">
-                        {baseCurrency.symbol}{item.subtotal.toLocaleString()} CUP
-                      </span>
+                  {showIDNReceiptModal.details.length === 0 ? (
+                    <div className="text-center py-4 text-slate-400 text-[9px] uppercase font-black tracking-widest bg-white dark:bg-slate-800 rounded-lg border border-dashed border-slate-200 dark:border-slate-700">
+                      Sin ventas registradas en este turno
                     </div>
-                  ))
-                )}
-              </div>
-
-              {/* Gran Total */}
-              <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 flex justify-between items-center">
-                <div>
-                  <span className="text-[9px] font-black uppercase text-amber-800 tracking-wider block">Total Entregado / Liquidado</span>
-                  <span className="text-[10px] font-bold text-amber-700">Calculado en base a precio de liquidación pactado</span>
+                  ) : (
+                    showIDNReceiptModal.details.map((item: any, idx: number) => (
+                      <div key={idx} className="flex justify-between items-center bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700 text-xs">
+                        <div className="min-w-0 flex-1 pr-2">
+                          <p className="font-black text-slate-900 dark:text-white uppercase text-[10px] sm:text-[11px] truncate">{item.name}</p>
+                          <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase">
+                            {item.qty} uds × {baseCurrency.symbol}{item.price.toLocaleString()} CUP
+                          </p>
+                        </div>
+                        <span className="font-mono font-black text-amber-700 dark:text-amber-400 text-xs shrink-0">
+                          {baseCurrency.symbol}{item.subtotal.toLocaleString()} CUP
+                        </span>
+                      </div>
+                    ))
+                  )}
                 </div>
-                <span className="text-xl font-black text-amber-800 font-mono">
-                  {baseCurrency.symbol}{showIDNReceiptModal.totalToPay.toLocaleString()} CUP
-                </span>
+
+                {/* Gran Total */}
+                <div className="bg-amber-50 dark:bg-amber-950/40 p-3 rounded-xl border border-amber-200 dark:border-amber-900/60 flex justify-between items-center">
+                  <div>
+                    <span className="text-[8px] sm:text-[9px] font-black uppercase text-amber-800 dark:text-amber-300 tracking-wider block">Total Entregado / Liquidado</span>
+                    <span className="text-[8px] text-amber-700 dark:text-amber-400">Precio liquidación pactado</span>
+                  </div>
+                  <span className="text-base sm:text-lg font-black text-amber-800 dark:text-amber-300 font-mono">
+                    {baseCurrency.symbol}{showIDNReceiptModal.totalToPay.toLocaleString()} CUP
+                  </span>
+                </div>
               </div>
 
-              {/* Botones de Impresión y Acción */}
-              <div className="space-y-2 pt-2">
+              {/* Botones de Impresión y Acción - Sticky Footer */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 space-y-2 shrink-0">
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => handlePrintIDNThermal(showIDNReceiptModal)}
-                    className="py-3 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                    className="py-2.5 px-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-black text-[9px] sm:text-[10px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
                   >
-                    <Printer className="w-4 h-4 text-slate-600" />
-                    Imprimir Ticket 58mm
+                    <Printer className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" />
+                    <span>Ticket 58mm</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => handlePrintIDNThermal(showIDNReceiptModal, { preferRawBT: true })}
-                    className="py-3 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                    className="py-2.5 px-2 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-xl font-black text-[9px] sm:text-[10px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
                   >
-                    <Share2 className="w-4 h-4 text-indigo-600" />
-                    RawBT (Móvil)
+                    <Share2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                    <span>RawBT (Móvil)</span>
                   </button>
                 </div>
 
                 <button
                   type="button"
                   onClick={handleFinishIDNAndGoHome}
-                  className="w-full py-3.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-lg shadow-amber-600/20 active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-black text-[11px] sm:text-xs uppercase tracking-widest transition-all shadow-md shadow-amber-600/20 active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
-                  Finalizar y Volver al Inicio
+                  <span>Finalizar y Volver al Inicio</span>
                 </button>
               </div>
             </div>
@@ -2541,24 +2606,25 @@ export default function POS() {
 
       {/* Checkout Modal - Compact & Linear Redesign */}
       {showCheckoutModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[80] flex items-center justify-center p-2 sm:p-4">
-          <div className="bg-white rounded-[1.5rem] sm:rounded-[2rem] shadow-2xl w-full max-w-md sm:max-w-lg overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[98vh] border border-white/20">
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[80] flex items-center justify-center p-2 sm:p-4 overflow-hidden animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md sm:max-w-lg overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[94vh] sm:max-h-[90vh] border border-slate-200 dark:border-slate-800">
             
             {/* Header: Total Summary (Compact) */}
-            <div className="bg-slate-900 text-white p-4 sm:p-5 relative shrink-0">
+            <div className="bg-slate-900 text-white p-3.5 sm:p-4 relative shrink-0">
               <button 
                 onClick={() => { setShowCheckoutModal(false); setPaymentLines([]); setActivePaymentLineId(null); }}
-                className="absolute right-3 top-3 sm:right-4 sm:top-4 p-1.5 hover:bg-white/10 rounded-full transition-colors"
+                className="absolute right-3 top-3 p-1.5 hover:bg-white/10 rounded-full transition-colors text-slate-400 hover:text-white"
+                title="Cerrar cobro"
               >
                 <Plus className="w-5 h-5 rotate-45" />
               </button>
               
               <div className="text-center">
-                <p className="text-slate-400 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] mb-0.5 sm:mb-1">Total a Cobrar</p>
+                <p className="text-slate-400 text-[8px] sm:text-[9px] font-black uppercase tracking-[0.2em] mb-0.5">Total a Cobrar</p>
                 <h3 className="text-2xl sm:text-3xl font-black tracking-tight">{formatMoney(totalBase, baseCurrency.symbol)}</h3>
-                <div className="mt-1 sm:mt-1.5 flex flex-wrap justify-center gap-1.5 sm:gap-2">
+                <div className="mt-1 flex flex-wrap justify-center gap-1.5">
                   {currencies.filter(c => !c.isBase).map(c => (
-                    <span key={c.code} className="text-[8px] sm:text-[9px] font-black bg-white/5 border border-white/10 px-2 py-0.5 rounded-lg text-slate-300">
+                    <span key={c.code} className="text-[8px] font-black bg-white/5 border border-white/10 px-2 py-0.5 rounded-lg text-slate-300">
                       {c.code}: {formatMoney(totalBase / c.rateToBase, c.symbol)}
                     </span>
                   ))}
@@ -2899,11 +2965,11 @@ export default function POS() {
               )}
             </div>
 
-            <div className="p-5 bg-slate-50 border-t border-slate-100">
+            <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0">
               <button 
                 disabled={remainingBase > 0.01 || paymentLines.length === 0 || paymentLines.some(l => l.method === 'transfer' && bankCards.length > 0 && !l.bankCardId)}
                 onClick={handleCheckout}
-                className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-base uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 disabled:opacity-30 disabled:grayscale disabled:shadow-none active:scale-95"
+                className="w-full py-3 sm:py-3.5 bg-indigo-600 text-white rounded-xl sm:rounded-2xl font-black text-sm sm:text-base uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-30 disabled:grayscale disabled:shadow-none active:scale-95 cursor-pointer"
               >
                 CONFIRMAR COBRO
               </button>
@@ -3332,13 +3398,20 @@ export default function POS() {
                                       </div>
 
                                       <div className="flex items-center gap-2 shrink-0">
-                                        <span className="text-xs font-black text-slate-900">
+                                        <span className="text-xs font-black text-slate-900 dark:text-white">
                                           {formatMoney(tx.total, baseCurrency.symbol)}
                                         </span>
                                         <div className="flex items-center gap-1">
                                           <button
+                                            onClick={() => setShowReceiptModal(tx)}
+                                            className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-lg transition-colors cursor-pointer"
+                                            title="Ver Comprobante Flotante"
+                                          >
+                                            <Receipt className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
                                             onClick={() => handleThermalPrint(tx)}
-                                            className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                            className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-lg transition-colors cursor-pointer"
                                             title="Imprimir Ticket Térmico"
                                           >
                                             <Printer className="w-3.5 h-3.5" />
@@ -3350,7 +3423,7 @@ export default function POS() {
                                                 addNotification(`Ticket ${tx.id} eliminado y stock restaurado.`, 'info');
                                               }
                                             }}
-                                            className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                            className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
                                             title="Anular/Eliminar Venta"
                                           >
                                             <Trash2 className="w-3.5 h-3.5" />
@@ -3359,8 +3432,8 @@ export default function POS() {
                                       </div>
                                     </div>
 
-                                    {/* Products list in this ticket */}
-                                    <div className="bg-slate-50 rounded-lg p-2 space-y-1 text-[9px]">
+                                    {/* Products list in this ticket - Compact & Contained */}
+                                    <div className="bg-slate-50 dark:bg-slate-800/40 rounded-lg p-2 space-y-1 text-[9px] max-h-24 sm:max-h-28 overflow-y-auto custom-scrollbar">
                                       {tx.items.map((item, idx) => (
                                         <div key={idx} className="flex justify-between items-center text-slate-700 font-bold">
                                           <span className="truncate pr-2">
@@ -4200,8 +4273,8 @@ export default function POS() {
               </div>
             ) : (
               cart.map(item => (
-                <div key={item.id} className="p-2 rounded-xl bg-subtle border border-base hover:bg-secondary transition-colors flex gap-2.5">
-                  <div className="w-11 h-11 bg-secondary rounded-lg overflow-hidden shrink-0 border border-base">
+                <div key={item.id} className="p-1.5 sm:p-2 rounded-xl bg-subtle border border-base hover:bg-secondary transition-colors flex gap-2">
+                  <div className="w-9 h-9 sm:w-10 sm:h-10 bg-secondary rounded-lg overflow-hidden shrink-0 border border-base">
                     {item.product.image ? (
                       <img 
                         src={item.product.image} 
@@ -4214,39 +4287,39 @@ export default function POS() {
                         }}
                       />
                     ) : (
-                      <div className={cn("w-full h-full opacity-20 flex items-center justify-center font-bold text-[10px] text-muted", item.product.color)}>
+                      <div className={cn("w-full h-full opacity-20 flex items-center justify-center font-bold text-[9px] text-muted", item.product.color)}>
                         {item.product.name.substring(0, 2).toUpperCase()}
                       </div>
                     )}
                   </div>
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <div className="flex justify-between items-start gap-1.5">
+                  <div className="flex-1 min-w-0 space-y-0.5">
+                    <div className="flex justify-between items-start gap-1">
                       <div className="min-w-0 flex-1">
-                        <h4 className="text-[10px] font-bold text-primary leading-snug line-clamp-2">{item.product.name}</h4>
+                        <h4 className="text-[10px] font-bold text-primary leading-tight line-clamp-1">{item.product.name}</h4>
                         <p className="text-[8px] font-semibold text-muted">{formatMoney(item.product.price, baseCurrency.symbol)} / u.</p>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        <span className="text-[11px] font-black text-primary">{formatMoney(item.product.price * item.quantity, baseCurrency.symbol)}</span>
+                        <span className="text-[10px] sm:text-[11px] font-black text-primary font-mono">{formatMoney(item.product.price * item.quantity, baseCurrency.symbol)}</span>
                         <button
                           type="button"
                           onClick={() => updateCartQty(item.id, -item.quantity)}
-                          className="p-0.5 text-muted hover:text-rose-500 rounded transition-colors"
+                          className="p-0.5 text-muted hover:text-rose-500 rounded transition-colors cursor-pointer"
                           title="Eliminar producto"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                    <div className="flex items-center justify-between gap-1 pt-0.5">
                       <div className="flex items-center bg-secondary rounded-md p-0.5 border border-base">
                         <button 
                           onClick={() => updateCartQty(item.id, -1)} 
-                          className="p-1 rounded hover:bg-subtle text-secondary hover:text-rose-500 transition-all active:scale-90"
+                          className="p-0.5 sm:p-1 rounded hover:bg-subtle text-secondary hover:text-rose-500 transition-all active:scale-90 cursor-pointer"
                           title="Disminuir"
                         >
-                          <Minus className="w-3 h-3" />
+                          <Minus className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
                         </button>
-                        <span className="w-6 text-center text-[10px] font-black text-primary">{item.quantity}</span>
+                        <span className="w-5 text-center text-[10px] font-black text-primary font-mono">{item.quantity}</span>
                         <button 
                           onClick={() => {
                             if (getCartQuantity(item.product.id, item.variantLabel) >= getProductStock(item.product.id, item.variantLabel)) {
@@ -4254,15 +4327,15 @@ export default function POS() {
                             } else updateCartQty(item.id, 1);
                           }} 
                           disabled={item.product.hasSerial}
-                          className="p-1 rounded hover:bg-subtle text-secondary hover:text-indigo-600 transition-all disabled:opacity-20 active:scale-90"
+                          className="p-0.5 sm:p-1 rounded hover:bg-subtle text-secondary hover:text-indigo-600 transition-all disabled:opacity-20 active:scale-90 cursor-pointer"
                           title="Aumentar"
                         >
-                          <Plus className="w-3 h-3" />
+                          <Plus className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
                         </button>
                       </div>
                       <div className="flex gap-1 flex-wrap justify-end">
-                        {item.variantLabel && <span className="px-1.5 py-0.5 bg-subtle text-secondary text-[7px] font-black rounded uppercase border border-base">{item.variantLabel}</span>}
-                        {item.serialNumber && <span className="px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[7px] font-black rounded border border-indigo-100 dark:border-indigo-900">SN: {item.serialNumber}</span>}
+                        {item.variantLabel && <span className="px-1 py-0.2 bg-subtle text-secondary text-[7px] font-black rounded uppercase border border-base">{item.variantLabel}</span>}
+                        {item.serialNumber && <span className="px-1 py-0.2 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[7px] font-black rounded border border-indigo-100 dark:border-indigo-900">SN: {item.serialNumber}</span>}
                       </div>
                     </div>
                   </div>
@@ -4329,131 +4402,247 @@ export default function POS() {
       </div>
 
       {showReceiptModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[90] flex items-center justify-center p-4">
-          <div className="bg-white shadow-xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 print:w-full print:max-w-none print:shadow-none print:bg-white print:fixed print:inset-0">
-            <div className="p-6 text-sm text-center print:p-2" id="print-area">
-              <h2 className="text-xl font-bold uppercase">{useStore.getState().receiptConfig.businessName}</h2>
-              {useStore.getState().receiptConfig.showAddress && (
-                <p className="text-slate-500 text-xs mt-1">{useStore.getState().receiptConfig.businessAddress}</p>
-              )}
-              {useStore.getState().receiptConfig.showPhone && (
-                <p className="text-slate-500 text-xs">{useStore.getState().receiptConfig.businessPhone}</p>
-              )}
-              
-              <div className="border-t border-dashed border-slate-300 my-4"></div>
-              
-              <div className="flex justify-between text-xs mb-1">
-                <span>Fecha: {new Date(showReceiptModal.date).toLocaleString()}</span>
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[95] flex items-center justify-center p-2 sm:p-4 overflow-hidden animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-sm sm:max-w-md max-h-[94vh] sm:max-h-[90vh] flex flex-col overflow-hidden border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 print:w-full print:max-w-none print:shadow-none print:bg-white print:fixed print:inset-0 print:border-none print:max-h-none print:rounded-none">
+            
+            {/* Top Bar with Ticket ID and Quick Close (Hidden when printing) */}
+            <div className="px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-900 text-white flex items-center justify-between gap-2 shrink-0 border-b border-slate-800 print:hidden">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-6 h-6 rounded-lg bg-indigo-600 flex items-center justify-center text-white shrink-0 shadow-xs">
+                  <Receipt className="w-3.5 h-3.5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-mono text-[10px] sm:text-[11px] font-black uppercase tracking-wider text-white truncate">
+                      Ticket #{showReceiptModal.id}
+                    </span>
+                    <span className="px-1.5 py-0.2 bg-indigo-500/20 text-indigo-300 text-[8px] font-black rounded-md border border-indigo-500/30 shrink-0">
+                      {(showReceiptModal.items || []).reduce((s, i) => s + i.quantity, 0)} {((showReceiptModal.items || []).reduce((s, i) => s + i.quantity, 0)) === 1 ? 'artículo' : 'artículos'}
+                    </span>
+                  </div>
+                  <p className="text-[8px] font-medium text-slate-400 truncate">
+                    {new Date(showReceiptModal.date).toLocaleString('es-CU', { dateStyle: 'short', timeStyle: 'short' })}
+                  </p>
+                </div>
               </div>
-              <div className="flex justify-between text-xs mb-1">
-                <span>Cliente: {useStore.getState().customers.find(c => c.id === showReceiptModal.customerId)?.name || 'Consumidor Final'}</span>
+              <button 
+                onClick={() => setShowReceiptModal(null)}
+                className="w-7 h-7 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-all shrink-0 active:scale-95 border border-slate-700"
+                title="Cerrar ticket"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Scrollable Printable Ticket Area */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-5 text-xs text-center print:p-2 print:overflow-visible space-y-2" id="print-area">
+              <div>
+                <h2 className="text-base sm:text-lg font-black uppercase tracking-tight text-slate-900 dark:text-white print:text-black">
+                  {useStore.getState().receiptConfig.businessName || 'MARÉ'}
+                </h2>
+                {useStore.getState().receiptConfig.showAddress && (
+                  <p className="text-slate-500 dark:text-slate-400 text-[9px] sm:text-[10px] mt-0.5 leading-snug print:text-black">
+                    {useStore.getState().receiptConfig.businessAddress}
+                  </p>
+                )}
+                {useStore.getState().receiptConfig.showPhone && (
+                  <p className="text-slate-500 dark:text-slate-400 text-[9px] sm:text-[10px] print:text-black font-mono">
+                    {useStore.getState().receiptConfig.businessPhone}
+                  </p>
+                )}
               </div>
-              <div className="flex justify-between text-xs mb-4">
-                <span className="font-bold">Ticket ID: {showReceiptModal.id}</span>
+              
+              <div className="border-t border-dashed border-slate-300 dark:border-slate-700 my-2 print:border-black"></div>
+              
+              {/* Metadata Micro-Grid */}
+              <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[9px] text-slate-600 dark:text-slate-400 print:text-black text-left">
+                <div>
+                  <span className="font-bold text-slate-400 dark:text-slate-500 uppercase text-[7px] block">Fecha y Hora</span>
+                  <span className="font-medium text-slate-800 dark:text-slate-200 print:text-black truncate block">
+                    {new Date(showReceiptModal.date).toLocaleString()}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-bold text-slate-400 dark:text-slate-500 uppercase text-[7px] block">Cliente</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 print:text-black truncate block">
+                    {useStore.getState().customers.find(c => c.id === showReceiptModal.customerId)?.name || 'Consumidor Final'}
+                  </span>
+                </div>
+                {showReceiptModal.cashierName && (
+                  <div>
+                    <span className="font-bold text-slate-400 dark:text-slate-500 uppercase text-[7px] block">Cajero / Vendedor</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-200 print:text-black truncate block">
+                      {showReceiptModal.cashierName}
+                    </span>
+                  </div>
+                )}
+                <div>
+                  <span className="font-bold text-slate-400 dark:text-slate-500 uppercase text-[7px] block">Comprobante</span>
+                  <span className="font-mono font-bold text-slate-800 dark:text-slate-200 print:text-black">
+                    #{showReceiptModal.id}
+                  </span>
+                </div>
               </div>
 
-              <div className="space-y-2 mb-4 text-left">
-                {(showReceiptModal.items || []).map(item => (
-                  <div key={item.id} className="text-xs">
-                    <div className="flex justify-between">
-                      <span className="font-semibold">{item.quantity}x {item.product.name}</span>
-                      <span className="font-bold">{formatMoney(item.product.price * item.quantity, baseCurrency.symbol)}</span>
+              <div className="border-t border-dashed border-slate-300 dark:border-slate-700 my-2 print:border-black"></div>
+
+              {/* Items Table Header */}
+              <div className="flex justify-between items-center text-[8px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1 px-1 text-left">
+                <span>Cant • Descripción</span>
+                <span className="text-right">Importe</span>
+              </div>
+
+              {/* Items List - Compact and cleanly spaced */}
+              <div className="space-y-1 text-left">
+                {(showReceiptModal.items || []).map((item, idx) => (
+                  <div 
+                    key={item.id || idx} 
+                    className="p-1.5 sm:p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800/60 print:bg-transparent print:border-none print:p-0 transition-colors"
+                  >
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="flex items-start gap-1.5 min-w-0 flex-1">
+                        <span className="font-mono font-black text-indigo-600 dark:text-indigo-400 print:text-black text-[10px] bg-indigo-50 dark:bg-indigo-950/60 px-1 py-0.5 rounded shrink-0">
+                          {item.quantity}x
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <span className="font-bold text-slate-900 dark:text-slate-100 print:text-black text-[10px] sm:text-[11px] leading-tight block">
+                            {item.product.name}
+                          </span>
+                          <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                            {item.quantity > 1 && (
+                              <span className="text-[8px] font-medium text-slate-500 dark:text-slate-400">
+                                @{formatMoney(item.product.price, baseCurrency.symbol)}/u
+                              </span>
+                            )}
+                            {item.variantLabel && (
+                              <span className="px-1 py-0.2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded text-[7px] font-bold uppercase">
+                                {item.variantLabel}
+                              </span>
+                            )}
+                            {item.serialNumber && (
+                              <span className="px-1 py-0.2 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 rounded font-mono text-[7px] font-bold border border-blue-200 dark:border-blue-900">
+                                SN: {item.serialNumber}
+                              </span>
+                            )}
+                            {item.warrantyCode && (
+                              <span className="px-1 py-0.2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 rounded font-mono text-[7px] font-bold border border-emerald-200 dark:border-emerald-900">
+                                Gda: {item.warrantyCode} ({item.product.warrantyDays || 0}d)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="font-mono font-black text-slate-900 dark:text-white print:text-black text-[11px] shrink-0 pt-0.5">
+                        {formatMoney(item.product.price * item.quantity, baseCurrency.symbol)}
+                      </span>
                     </div>
-                    {item.serialNumber && (
-                      <div className="pl-4 text-slate-500 mt-0.5 font-mono text-[10px]">
-                        Serie: {item.serialNumber}
-                      </div>
-                    )}
-                    {item.warrantyCode && (
-                      <div className="pl-4 text-slate-500 mt-0.5 font-mono text-[10px]">
-                        ID Gda: {item.warrantyCode} ({item.product.warrantyDays || 0}d)
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
 
-              <div className="border-t border-dashed border-slate-300 my-4"></div>
+              <div className="border-t border-dashed border-slate-300 dark:border-slate-700 my-2 print:border-black"></div>
               
-              <div className="flex justify-between font-bold text-sm">
-                <span>TOTAL</span>
-                <span>{baseCurrency.symbol}{showReceiptModal.total.toFixed(2)} {baseCurrency.code}</span>
+              {/* Total Box */}
+              <div className="p-2 sm:p-2.5 bg-indigo-50/80 dark:bg-indigo-950/50 border border-indigo-100 dark:border-indigo-900/50 rounded-xl print:bg-transparent print:border-none print:p-0 flex justify-between items-center">
+                <div className="text-left">
+                  <span className="text-[9px] font-black uppercase text-indigo-950 dark:text-indigo-300 print:text-black tracking-wider block">
+                    TOTAL TICKET
+                  </span>
+                  <span className="text-[8px] font-medium text-slate-500 dark:text-slate-400">
+                    {(showReceiptModal.items || []).reduce((s, i) => s + i.quantity, 0)} {((showReceiptModal.items || []).reduce((s, i) => s + i.quantity, 0)) === 1 ? 'artículo' : 'artículos'}
+                  </span>
+                </div>
+                <span className="text-sm sm:text-base font-black text-indigo-600 dark:text-indigo-400 print:text-black font-mono">
+                  {baseCurrency.symbol}{showReceiptModal.total.toFixed(2)} {baseCurrency.code}
+                </span>
               </div>
 
-              <div className="mt-4 text-left space-y-1">
-                <div className="text-xs font-semibold mb-1">Pagos recibidos:</div>
+              {/* Payments breakdown */}
+              <div className="mt-2 text-left space-y-1">
+                <div className="text-[8px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest px-0.5">
+                  Pagos Recibidos:
+                </div>
                 {(showReceiptModal.payments || []).map((p, i) => (
-                  <div key={i} className="text-xs flex justify-between text-slate-600">
-                    <span>{p.method === 'cash' ? 'Efectivo' : 'Transferencia'} ({p.currencyCode})</span>
-                    <span>{formatMoney(p.amount, currencies.find(c => c.code === p.currencyCode)?.symbol || '')}</span>
+                  <div key={i} className="text-[9px] sm:text-[10px] flex justify-between items-center text-slate-700 dark:text-slate-300 print:text-black px-1.5 py-0.5 rounded bg-slate-50 dark:bg-slate-800/30">
+                    <span className="font-medium">
+                      {p.method === 'cash' ? '💵 Efectivo' : '💳 Transferencia'} ({p.currencyCode})
+                    </span>
+                    <span className="font-mono font-black">
+                      {formatMoney(p.amount, currencies.find(c => c.code === p.currencyCode)?.symbol || '')}
+                    </span>
                   </div>
                 ))}
               </div>
 
-              {showReceiptModal.changePayments && showReceiptModal.changePayments.length > 0 && (
-                <div className="mt-4 text-left space-y-1">
-                  <div className="text-xs font-semibold mb-1">Vuelto entregado:</div>
-                  {(showReceiptModal.changePayments || []).map((p, i) => (
-                    <div key={i} className="text-xs flex justify-between text-emerald-600 font-medium">
-                      <span>Efectivo ({p.currencyCode})</span>
-                      <span>{formatMoney(p.amount, currencies.find(c => c.code === p.currencyCode)?.symbol || '')}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {(!showReceiptModal.changePayments || showReceiptModal.changePayments.length === 0) && showReceiptModal.changeGiven && showReceiptModal.changeGiven > 0 && (
-                <div className="mt-4 text-left space-y-1">
-                  <div className="text-xs font-semibold mb-1">Vuelto entregado:</div>
-                  <div className="text-xs flex justify-between text-emerald-600 font-medium">
-                    <span>Efectivo ({baseCurrency.code})</span>
-                    <span>{formatMoney(showReceiptModal.changeGiven, baseCurrency.symbol)}</span>
+              {/* Change returned */}
+              {((showReceiptModal.changePayments && showReceiptModal.changePayments.length > 0) || (showReceiptModal.changeGiven && showReceiptModal.changeGiven > 0)) && (
+                <div className="mt-2 p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 text-left">
+                  <div className="text-[8px] font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-widest mb-0.5">
+                    Vuelto Entregado:
                   </div>
+                  {showReceiptModal.changePayments && showReceiptModal.changePayments.length > 0 ? (
+                    showReceiptModal.changePayments.map((p, i) => (
+                      <div key={i} className="text-[9px] sm:text-[10px] flex justify-between text-emerald-700 dark:text-emerald-400 font-bold font-mono">
+                        <span>Efectivo ({p.currencyCode})</span>
+                        <span>{formatMoney(p.amount, currencies.find(c => c.code === p.currencyCode)?.symbol || '')}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-[9px] sm:text-[10px] flex justify-between text-emerald-700 dark:text-emerald-400 font-bold font-mono">
+                      <span>Efectivo ({baseCurrency.code})</span>
+                      <span>{formatMoney(showReceiptModal.changeGiven || 0, baseCurrency.symbol)}</span>
+                    </div>
+                  )}
                 </div>
               )}
 
-              <div className="border-t border-dashed border-slate-300 my-4"></div>
               {useStore.getState().receiptConfig.showFooter && (
-                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight leading-relaxed">
-                  {useStore.getState().receiptConfig.footerText}
-                </p>
+                <>
+                  <div className="border-t border-dashed border-slate-300 dark:border-slate-700 my-2 print:border-black"></div>
+                  <p className="text-[8px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium uppercase tracking-tight leading-relaxed">
+                    {useStore.getState().receiptConfig.footerText}
+                  </p>
+                </>
               )}
             </div>
             
-            <div className="p-3 bg-slate-50 flex flex-wrap gap-2 print:hidden justify-center items-center">
-              <button 
-                onClick={() => setShowReceiptModal(null)}
-                className="px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all shadow-sm active:scale-95"
-              >
-                Cerrar
-              </button>
-              
-              <button 
-                onClick={() => handleWhatsAppReceipt(showReceiptModal)}
-                className="px-3.5 py-2 bg-emerald-500 text-white rounded-xl text-xs font-bold hover:bg-emerald-600 transition-all flex items-center gap-1.5 shadow-sm shadow-emerald-200 active:scale-95"
-                title="Enviar por WhatsApp"
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-                WhatsApp
-              </button>
-              
-              <button 
-                onClick={() => handleThermalPrint(showReceiptModal, { preferRawBT: true })}
-                className="px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all flex items-center gap-1.5 shadow-sm shadow-indigo-200 active:scale-95"
-                title="Impresión directa para Android con RawBT"
-              >
-                <Smartphone className="w-3.5 h-3.5" />
-                RawBT (Android)
-              </button>
+            {/* Sticky Action Footer - Fully adapted for PC, tablet and mobile */}
+            <div className="p-2 sm:p-2.5 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0 print:hidden">
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-1.5 sm:gap-2 justify-end items-center">
+                <button 
+                  onClick={() => setShowReceiptModal(null)}
+                  className="order-1 py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider hover:bg-slate-100 dark:hover:bg-slate-750 transition-all shadow-2xs active:scale-95 text-center cursor-pointer"
+                >
+                  Cerrar
+                </button>
+                
+                <button 
+                  onClick={() => handleWhatsAppReceipt(showReceiptModal)}
+                  className="order-2 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm shadow-emerald-200 dark:shadow-none active:scale-95 cursor-pointer"
+                  title="Enviar ticket por WhatsApp"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-white shrink-0" />
+                  <span>WhatsApp</span>
+                </button>
+                
+                <button 
+                  onClick={() => handleThermalPrint(showReceiptModal, { preferRawBT: true })}
+                  className="order-3 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm shadow-indigo-200 dark:shadow-none active:scale-95 cursor-pointer"
+                  title="Impresión directa para Android con RawBT"
+                >
+                  <Smartphone className="w-3.5 h-3.5 text-indigo-200 shrink-0" />
+                  <span>RawBT</span>
+                </button>
 
-              <button 
-                onClick={() => handleThermalPrint(showReceiptModal)}
-                className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
-                title="Impresión Térmica Directa 58mm (Bluetooth / USB)"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                Imprimir Térmica 58mm
-              </button>
+                <button 
+                  onClick={() => handleThermalPrint(showReceiptModal)}
+                  className="order-4 py-2 px-3 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white text-white rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+                  title="Impresión Térmica Directa 58mm (Bluetooth / USB)"
+                >
+                  <Printer className="w-3.5 h-3.5 shrink-0" />
+                  <span>Imprimir 58mm</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -4490,23 +4679,31 @@ export default function POS() {
         </div>
       )}
       {showSalarySummary && lastClosedSession && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 border border-indigo-100">
-            <div className="p-6 text-center space-y-5">
-              <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-1">
-                <ShieldCheck className="w-8 h-8" />
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[95] flex items-center justify-center p-2 sm:p-4 overflow-hidden animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md max-h-[94vh] sm:max-h-[90vh] flex flex-col overflow-hidden border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
+            {/* Header: Compact & Sticky */}
+            <div className="p-3.5 sm:p-4 text-center border-b border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80 shrink-0">
+              <div className="w-10 h-10 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-1 border border-emerald-100 dark:border-emerald-900/50 shadow-xs">
+                <ShieldCheck className="w-5 h-5" />
               </div>
-              
-              <div>
-                <span className="bg-indigo-50 text-indigo-700 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider border border-indigo-100">
+              <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                <span className="bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 text-[9px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider border border-indigo-100 dark:border-indigo-900">
                   {lastClosedSession.id}
                 </span>
-                <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight mt-2">Turno Cerrado con Éxito</h3>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
-                  {new Date(lastClosedSession.closingDate || lastClosedSession.closedAt || new Date()).toLocaleString()} • {lastClosedSession.workerName || 'Vendedor'}
-                </p>
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase">
+                  {lastClosedSession.workerName || 'Vendedor'}
+                </span>
               </div>
+              <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white uppercase tracking-tight mt-0.5">
+                Turno Cerrado con Éxito
+              </h3>
+              <p className="text-[8px] sm:text-[9px] font-medium text-slate-400 uppercase tracking-wider">
+                {new Date(lastClosedSession.closingDate || lastClosedSession.closedAt || new Date()).toLocaleString()}
+              </p>
+            </div>
 
+            {/* Scrollable Body */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-5 space-y-3 text-left">
               {(() => {
                 const sessionTransactions = transactions.filter(t => 
                   t.branchId === lastClosedSession.branchId && 
@@ -4545,101 +4742,110 @@ export default function POS() {
                 });
 
                 return (
-                  <div className="space-y-4 text-left">
+                  <div className="space-y-3">
                     {/* Resumen de Productos */}
-                    <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex justify-between">
+                    <div className="bg-slate-50 dark:bg-slate-800/40 rounded-xl sm:rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
+                      <p className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2 flex justify-between">
                         <span>Resumen de Venta</span>
-                        <span className="text-indigo-600">{totalItems} uds.</span>
+                        <span className="text-indigo-600 dark:text-indigo-400">{totalItems} {totalItems === 1 ? 'unidad' : 'unidades'}</span>
                       </p>
-                      <div className="max-h-32 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                      <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
                         {Object.entries(groupedProducts).map(([name, qty]) => (
-                          <div key={name} className="flex justify-between items-center text-[11px]">
-                            <span className="font-bold text-slate-600 truncate max-w-[180px]">{name}</span>
-                            <span className="font-black text-slate-900">x{qty}</span>
+                          <div key={name} className="flex justify-between items-center text-[10px] sm:text-[11px] py-0.5 border-b border-slate-100 dark:border-slate-800/50 last:border-0">
+                            <span className="font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[200px] sm:max-w-[240px]">{name}</span>
+                            <span className="font-mono font-black text-slate-900 dark:text-white bg-white dark:bg-slate-700 px-1.5 py-0.2 rounded border border-slate-200 dark:border-slate-600 shrink-0">x{qty}</span>
                           </div>
                         ))}
                         {Object.keys(groupedProducts).length === 0 && (
-                          <p className="text-[10px] text-slate-400 italic">No se registraron ventas en este turno.</p>
+                          <p className="text-[10px] text-slate-400 italic py-1">No se registraron ventas en este turno.</p>
                         )}
                       </div>
                     </div>
 
                     {/* Liquidación de Salario */}
-                    <div className="bg-white rounded-2xl p-4 border-2 border-indigo-50 space-y-3 shadow-sm">
-                      <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest border-b border-indigo-50 pb-2">
-                        Liquidación de Salario
+                    <div className="bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl p-3 border border-indigo-100 dark:border-indigo-900/50 space-y-2 shadow-2xs">
+                      <div className="text-[9px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest border-b border-indigo-50 dark:border-indigo-950 pb-1.5 flex justify-between">
+                        <span>Liquidación de Salario</span>
+                        <span className="text-slate-400 font-bold">{lastClosedSession.workerName}</span>
                       </div>
                       
-                      <div className="space-y-2">
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="font-bold text-slate-500 uppercase">Salario Base</span>
-                          <span className="font-black text-slate-900">{formatMoney(baseSalary, baseCurrency.symbol)}</span>
+                      <div className="space-y-1 text-xs">
+                        <div className="flex justify-between items-center">
+                          <span className="font-semibold text-slate-500 dark:text-slate-400 text-[10px] uppercase">Salario Base</span>
+                          <span className="font-mono font-bold text-slate-900 dark:text-slate-100">{formatMoney(baseSalary, baseCurrency.symbol)}</span>
                         </div>
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="font-bold text-slate-500 uppercase">Comisiones</span>
-                          <span className="font-black text-emerald-600">+{formatMoney(commissions, baseCurrency.symbol)}</span>
+                        <div className="flex justify-between items-center">
+                          <span className="font-semibold text-slate-500 dark:text-slate-400 text-[10px] uppercase">Comisiones</span>
+                          <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">+{formatMoney(commissions, baseCurrency.symbol)}</span>
                         </div>
                         
                         {deduction > 0 && (
-                          <div className="flex justify-between items-center text-xs p-2 bg-rose-50 rounded-lg border border-rose-100">
-                            <span className="font-bold text-rose-600 uppercase">Descuento Descuadre</span>
-                            <span className="font-black text-rose-600">-{formatMoney(deduction, baseCurrency.symbol)}</span>
+                          <div className="flex justify-between items-center p-1.5 bg-rose-50 dark:bg-rose-950/30 rounded-lg border border-rose-100 dark:border-rose-900/50">
+                            <span className="font-bold text-rose-600 dark:text-rose-400 text-[9px] uppercase">Descuento Descuadre</span>
+                            <span className="font-mono font-black text-rose-600 dark:text-rose-400">-{formatMoney(deduction, baseCurrency.symbol)}</span>
                           </div>
                         )}
                       </div>
 
-                      <div className="pt-3 border-t border-slate-100 border-dashed flex justify-between items-center">
+                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800 border-dashed flex justify-between items-center">
                         <div>
-                          <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest block">Neto a Recibir</span>
-                          <span className="text-[8px] font-bold text-slate-400 uppercase">Cobro Final del Turno</span>
+                          <span className="text-[9px] font-black text-slate-900 dark:text-white uppercase tracking-wider block">Neto a Recibir</span>
+                          <span className="text-[7px] font-bold text-slate-400 uppercase">Liquidación Total Turno</span>
                         </div>
-                        <span className="text-2xl font-black text-indigo-600 tracking-tighter">{formatMoney(totalSalary, baseCurrency.symbol)}</span>
+                        <span className="text-lg sm:text-xl font-black text-indigo-600 dark:text-indigo-400 font-mono tracking-tight">
+                          {formatMoney(totalSalary, baseCurrency.symbol)}
+                        </span>
                       </div>
                     </div>
 
                     {/* Totales de Turno */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-100">
-                        <p className="text-[9px] font-black text-emerald-800 uppercase tracking-tight">Total Vendido</p>
-                        <p className="text-sm font-black text-emerald-600">{formatMoney(totalSales, baseCurrency.symbol)}</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="bg-emerald-50 dark:bg-emerald-950/30 rounded-xl p-2.5 border border-emerald-100 dark:border-emerald-900/50">
+                        <p className="text-[8px] font-black text-emerald-800 dark:text-emerald-400 uppercase tracking-tight">Total Vendido</p>
+                        <p className="text-xs sm:text-sm font-black text-emerald-700 dark:text-emerald-300 font-mono">{formatMoney(totalSales, baseCurrency.symbol)}</p>
                       </div>
-                      <div className="bg-slate-900 rounded-xl p-3 text-white">
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-tight">Ventas Turno</p>
-                        <p className="text-sm font-black">{sessionTransactions.length} Tickets</p>
+                      <div className="bg-slate-900 dark:bg-slate-800 rounded-xl p-2.5 text-white">
+                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-tight">Ventas Turno</p>
+                        <p className="text-xs sm:text-sm font-black font-mono">{sessionTransactions.length} Tickets</p>
                       </div>
                     </div>
                   </div>
                 );
               })()}
+            </div>
 
-              <div className="space-y-2.5 pt-2">
+            {/* Action Footer - Sticky and Compact */}
+            <div className="p-2.5 sm:p-3 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 space-y-1.5 shrink-0">
+              <div className="grid grid-cols-2 gap-1.5">
                 <button 
                   onClick={() => handlePrintClosureThermal(lastClosedSession)}
-                  className="w-full py-3.5 bg-slate-900 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+                  className="py-2.5 px-2 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white text-white rounded-xl font-black text-[9px] sm:text-[10px] uppercase tracking-wider transition-all shadow-xs active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                  title="Impresión Térmica 58mm"
                 >
-                  <Printer className="w-4 h-4" />
-                  Imprimir Cierre Térmico (Directo 58mm)
+                  <Printer className="w-3.5 h-3.5 shrink-0" />
+                  <span>Imprimir 58mm</span>
                 </button>
 
                 <button 
                   onClick={() => handlePrintClosureThermal(lastClosedSession, { preferRawBT: true })}
-                  className="w-full py-3 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md active:scale-95 flex items-center justify-center gap-2"
+                  className="py-2.5 px-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[9px] sm:text-[10px] uppercase tracking-wider transition-all shadow-xs active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                  title="Imprimir con RawBT (Android)"
                 >
-                  <Smartphone className="w-4 h-4" />
-                  Imprimir con RawBT (Android)
-                </button>
-
-                <button 
-                  onClick={() => {
-                    setShowSalarySummary(false);
-                    navigate('/');
-                  }}
-                  className="w-full py-2.5 bg-slate-100 text-slate-700 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95 flex items-center justify-center gap-2"
-                >
-                  Finalizar e Ir al Menú <ArrowRight className="w-4 h-4" />
+                  <Smartphone className="w-3.5 h-3.5 shrink-0" />
+                  <span>RawBT</span>
                 </button>
               </div>
+
+              <button 
+                onClick={() => {
+                  setShowSalarySummary(false);
+                  navigate('/');
+                }}
+                className="w-full py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-wider hover:bg-slate-100 dark:hover:bg-slate-750 transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <span>Finalizar e Ir al Menú</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
         </div>

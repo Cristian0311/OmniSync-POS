@@ -1,16 +1,17 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { 
   TrendingUp, DollarSign, Calendar, Calculator, Package, User, Users, Smartphone, Eye,
-  X, ArrowDownRight, History, Download, Printer, CheckCircle2, 
-  Clock, AlertCircle, FileSpreadsheet, ChevronDown, Check,
-  Sparkles, Brain, ListChecks, ShieldAlert, Loader2, Trash2, PieChart as PieChartIcon, BarChart3
+  X, ArrowDownRight, ArrowUpRight, ArrowLeftRight, History, Download, Printer, CheckCircle2, 
+  Clock, AlertCircle, AlertTriangle, FileSpreadsheet, ChevronDown, Check,
+  Sparkles, Brain, ListChecks, ShieldAlert, ShieldCheck, Loader2, Trash2, PieChart as PieChartIcon, BarChart3,
+  HelpCircle, Edit3, Save, FileText, CheckCircle
 } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
   PieChart, Pie, Cell 
 } from "recharts";
 import { useStore } from "../store/useStore";
-import { Transaction, Product } from "../types";
+import { Transaction, Product, CashRegisterSession, CashMovement } from "../types";
 import { cn } from "../lib/utils";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { 
@@ -38,6 +39,8 @@ export default function Reports() {
   const salarySettlements = store.salarySettlements || [];
   const addSalarySettlement = store.addSalarySettlement;
   const updateSalarySettlement = store.updateSalarySettlement;
+  const updateCashSession = store.updateCashSession;
+  const addNotification = store.addNotification;
   const receiptConfig = store.receiptConfig;
   const getBaseCurrency = store.getBaseCurrency;
 
@@ -187,7 +190,14 @@ export default function Reports() {
     return itemProduct.name || 'Desconocido';
   };
 
-  const [activeTab, setActiveTab] = useState<'sales' | 'payroll' | 'sessions' | 'products' | 'idn'>('sales');
+  const [activeTab, setActiveTab] = useState<'sales' | 'payroll' | 'sessions' | 'discrepancies' | 'movements' | 'products' | 'idn'>('sales');
+  const [discrepancyTypeFilter, setDiscrepancyTypeFilter] = useState<'all' | 'shortage' | 'overage' | 'deducted' | 'pending'>('all');
+  const [movementTypeFilter, setMovementTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
+  const [movementCurrencyFilter, setMovementCurrencyFilter] = useState<string>('all');
+  const [editingAuditSessionId, setEditingAuditSessionId] = useState<string | null>(null);
+  const [editingAuditNotes, setEditingAuditNotes] = useState<string>("");
+  const [editingAuditStatus, setEditingAuditStatus] = useState<'pending_review' | 'reviewed' | 'resolved'>('pending_review');
+  const [selectedDiscrepancyDetailSession, setSelectedDiscrepancyDetailSession] = useState<CashRegisterSession | null>(null);
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
   const [sessionFilter, setSessionFilter] = useState<'all' | 'today' | 'custom'>('all');
   const [selectedFilterDate, setSelectedFilterDate] = useState<string>('');
@@ -199,6 +209,20 @@ export default function Reports() {
     productId: string;
     productName: string;
     transactions: Transaction[];
+  } | null>(null);
+  const [selectedMovementDetail, setSelectedMovementDetail] = useState<{
+    id: string;
+    sessionId: string;
+    turnLabel: string;
+    branchId: string;
+    branchName: string;
+    workerName: string;
+    type: 'income' | 'expense';
+    amount: number;
+    currencyCode: string;
+    description: string;
+    date: string;
+    session: CashRegisterSession;
   } | null>(null);
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<{
     type: 'transaction' | 'session';
@@ -623,6 +647,390 @@ export default function Reports() {
     }
   };
 
+  // Helper to compute discrepancy data for any session (persisted or computed)
+  const getSessionDiscrepancyInfo = (session: typeof cashSessions[0]) => {
+    // 1. If it already has persisted discrepancy details
+    if (session.discrepancyDetails && session.discrepancyDetails.length > 0) {
+      let totalShortageBase = 0;
+      let totalOverageBase = 0;
+      session.discrepancyDetails.forEach(dd => {
+        const rate = currencies.find(c => c.code === dd.currencyCode)?.rateToBase || 1;
+        if (dd.difference < 0) {
+          totalShortageBase += Math.abs(dd.difference) * rate;
+        } else if (dd.difference > 0) {
+          totalOverageBase += dd.difference * rate;
+        }
+      });
+
+      const settlement = salarySettlements.find(st => st.sessionId === session.id);
+      const deductionAmount = session.discrepancyDeductionApplied ?? settlement?.discrepancyDeduction ?? 0;
+
+      return {
+        hasDiscrepancy: true,
+        isForcedClose: Boolean(session.isForcedClose),
+        details: session.discrepancyDetails,
+        totalShortageBase,
+        totalOverageBase,
+        netDifferenceBase: totalOverageBase - totalShortageBase,
+        deducted: session.deductedFromSalary || deductionAmount > 0,
+        deductionAmount,
+        aiDiagnostic: session.aiDiagnostic,
+        matchingProducts: session.matchingProductsAnalysis || [],
+        auditStatus: session.auditStatus || 'pending_review',
+        auditNotes: session.auditNotes || ''
+      };
+    }
+
+    // 2. Dynamic check for any session with closingBalances
+    if (!session.closingBalances || session.closingBalances.length === 0) {
+      if (session.isForcedClose || session.hasDiscrepancy) {
+        return {
+          hasDiscrepancy: true,
+          isForcedClose: true,
+          details: [],
+          totalShortageBase: 0,
+          totalOverageBase: 0,
+          netDifferenceBase: 0,
+          deducted: false,
+          deductionAmount: 0,
+          aiDiagnostic: session.aiDiagnostic,
+          matchingProducts: session.matchingProductsAnalysis || [],
+          auditStatus: session.auditStatus || 'pending_review',
+          auditNotes: session.auditNotes || ''
+        };
+      }
+      return null;
+    }
+
+    const expected: { currencyCode: string; method: 'cash' | 'transfer'; amount: number }[] = [
+      { currencyCode: baseCurrency.code, method: 'cash', amount: session.openingBalance || 0 }
+    ];
+
+    const sessionTxs = transactions.filter(t => 
+      t.sessionId 
+        ? t.sessionId === session.id
+        : (t.branchId === session.branchId && 
+           new Date(t.date).getTime() >= new Date(session.openedAt).getTime() && 
+           (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
+    );
+
+    sessionTxs.forEach(tx => {
+      (tx.payments || []).forEach(p => {
+        const ex = expected.find(e => e.currencyCode === p.currencyCode && e.method === p.method);
+        if (ex) ex.amount += p.amount;
+        else expected.push({ currencyCode: p.currencyCode, method: p.method as any, amount: p.amount });
+      });
+      if (tx.changePayments && tx.changePayments.length > 0) {
+        tx.changePayments.forEach(cp => {
+          const ex = expected.find(e => e.currencyCode === cp.currencyCode && e.method === cp.method);
+          if (ex) ex.amount -= cp.amount;
+          else expected.push({ currencyCode: cp.currencyCode, method: cp.method as any, amount: -cp.amount });
+        });
+      } else if (tx.changeGiven && tx.changeGiven > 0) {
+        const ex = expected.find(e => e.currencyCode === baseCurrency.code && e.method === 'cash');
+        if (ex) ex.amount -= tx.changeGiven;
+        else expected.push({ currencyCode: baseCurrency.code, method: 'cash', amount: -tx.changeGiven });
+      }
+    });
+
+    (session.movements || []).forEach(m => {
+      const ex = expected.find(e => e.currencyCode === m.currencyCode && e.method === 'cash');
+      if (ex) ex.amount += (m.type === 'income' ? m.amount : -m.amount);
+      else expected.push({ currencyCode: m.currencyCode, method: 'cash', amount: m.type === 'income' ? m.amount : -m.amount });
+    });
+
+    const details: {
+      currencyCode: string;
+      method: 'cash' | 'transfer';
+      expected: number;
+      actual: number;
+      difference: number;
+    }[] = [];
+
+    expected.forEach(eb => {
+      const act = session.closingBalances?.find(cb => cb.currencyCode === eb.currencyCode && cb.method === eb.method)?.amount || 0;
+      const diff = act - eb.amount;
+      if (Math.abs(diff) > 0.01) {
+        details.push({
+          currencyCode: eb.currencyCode,
+          method: eb.method,
+          expected: eb.amount,
+          actual: act,
+          difference: diff
+        });
+      }
+    });
+
+    session.closingBalances?.forEach(cb => {
+      if (!expected.some(eb => eb.currencyCode === cb.currencyCode && eb.method === cb.method)) {
+        if (cb.amount > 0.01) {
+          details.push({
+            currencyCode: cb.currencyCode,
+            method: cb.method as any,
+            expected: 0,
+            actual: cb.amount,
+            difference: cb.amount
+          });
+        }
+      }
+    });
+
+    if (details.length === 0 && !session.isForcedClose && !session.hasDiscrepancy) {
+      return null;
+    }
+
+    let totalShortageBase = 0;
+    let totalOverageBase = 0;
+    details.forEach(dd => {
+      const rate = currencies.find(c => c.code === dd.currencyCode)?.rateToBase || 1;
+      if (dd.difference < 0) totalShortageBase += Math.abs(dd.difference) * rate;
+      else if (dd.difference > 0) totalOverageBase += dd.difference * rate;
+    });
+
+    const matchingProducts = details.map(dd => {
+      const matchedProducts = products
+        .filter(p => Math.abs(p.price - Math.abs(dd.difference)) < 1)
+        .slice(0, 3)
+        .map(p => ({ id: p.id, name: p.name, price: p.price }));
+      return {
+        currencyCode: dd.currencyCode,
+        difference: dd.difference,
+        matchedProducts
+      };
+    }).filter(m => m.matchedProducts.length > 0);
+
+    const settlement = salarySettlements.find(st => st.sessionId === session.id);
+    const deductionAmount = session.discrepancyDeductionApplied ?? settlement?.discrepancyDeduction ?? 0;
+
+    return {
+      hasDiscrepancy: true,
+      isForcedClose: Boolean(session.isForcedClose),
+      details,
+      totalShortageBase,
+      totalOverageBase,
+      netDifferenceBase: totalOverageBase - totalShortageBase,
+      deducted: deductionAmount > 0,
+      deductionAmount,
+      aiDiagnostic: session.aiDiagnostic,
+      matchingProducts,
+      auditStatus: session.auditStatus || 'pending_review',
+      auditNotes: session.auditNotes || ''
+    };
+  };
+
+  const allDiscrepancySessions = useMemo(() => {
+    const list: {
+      session: typeof cashSessions[0];
+      info: NonNullable<ReturnType<typeof getSessionDiscrepancyInfo>>;
+    }[] = [];
+
+    cashSessions.forEach(s => {
+      const info = getSessionDiscrepancyInfo(s);
+      if (info && info.hasDiscrepancy) {
+        list.push({ session: s, info });
+      }
+    });
+
+    return list.sort((a, b) => {
+      const dateA = new Date(a.session.closingDate || a.session.closedAt || a.session.openedAt).getTime();
+      const dateB = new Date(b.session.closingDate || b.session.closedAt || b.session.openedAt).getTime();
+      return dateB - dateA;
+    });
+  }, [cashSessions, transactions, baseCurrency, currencies, salarySettlements, products]);
+
+  const filteredDiscrepancySessions = useMemo(() => {
+    return allDiscrepancySessions.filter(({ session, info }) => {
+      if (selectedBranchFilter !== 'all' && session.branchId !== selectedBranchFilter) {
+        return false;
+      }
+      const dateObj = new Date(session.closingDate || session.closedAt || session.openedAt);
+      if (selectedFilterDate) {
+        if (dateObj.toISOString().split('T')[0] !== selectedFilterDate) return false;
+      } else if (sessionFilter === 'today') {
+        if (dateObj.toLocaleDateString() !== new Date().toLocaleDateString()) return false;
+      }
+
+      if (discrepancyTypeFilter === 'shortage') {
+        return info.totalShortageBase > 0;
+      }
+      if (discrepancyTypeFilter === 'overage') {
+        return info.totalOverageBase > 0;
+      }
+      if (discrepancyTypeFilter === 'deducted') {
+        return info.deducted;
+      }
+      if (discrepancyTypeFilter === 'pending') {
+        return info.auditStatus === 'pending_review';
+      }
+      return true;
+    });
+  }, [allDiscrepancySessions, selectedBranchFilter, selectedFilterDate, sessionFilter, discrepancyTypeFilter]);
+
+  const allDetailedMovements = useMemo(() => {
+    const list: {
+      id: string;
+      sessionId: string;
+      turnLabel: string;
+      branchId: string;
+      branchName: string;
+      workerName: string;
+      type: 'income' | 'expense';
+      amount: number;
+      currencyCode: string;
+      description: string;
+      date: string;
+      session: typeof cashSessions[0];
+    }[] = [];
+
+    cashSessions.forEach(session => {
+      const turnLabel = sessionTurnMap.get(session.id) || session.id;
+      const branchName = branches.find(b => b.id === session.branchId)?.name || 'Sucursal';
+      const workerName = session.workerName || users.find(u => u.id === session.userId)?.name || 'Cajero';
+
+      (session.movements || []).forEach(m => {
+        list.push({
+          id: m.id,
+          sessionId: session.id,
+          turnLabel,
+          branchId: m.branchId || session.branchId,
+          branchName,
+          workerName: m.workerName || workerName,
+          type: m.type,
+          amount: m.amount,
+          currencyCode: m.currencyCode,
+          description: m.description,
+          date: m.date,
+          session
+        });
+      });
+    });
+
+    return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [cashSessions, sessionTurnMap, branches, users]);
+
+  const filteredDetailedMovements = useMemo(() => {
+    return allDetailedMovements.filter(m => {
+      if (selectedBranchFilter !== 'all' && m.branchId !== selectedBranchFilter) {
+        return false;
+      }
+      const dateObj = new Date(m.date);
+      if (selectedFilterDate) {
+        if (dateObj.toISOString().split('T')[0] !== selectedFilterDate) return false;
+      } else if (sessionFilter === 'today') {
+        if (dateObj.toLocaleDateString() !== new Date().toLocaleDateString()) return false;
+      }
+
+      if (movementTypeFilter !== 'all' && m.type !== movementTypeFilter) {
+        return false;
+      }
+      if (movementCurrencyFilter !== 'all' && m.currencyCode !== movementCurrencyFilter) {
+        return false;
+      }
+      return true;
+    });
+  }, [allDetailedMovements, selectedBranchFilter, selectedFilterDate, sessionFilter, movementTypeFilter, movementCurrencyFilter]);
+
+  const handlePrintDiscrepancyTicket = async (session: typeof cashSessions[0]) => {
+    const info = getSessionDiscrepancyInfo(session);
+    if (!info) return;
+
+    try {
+      const { printThermalReceipt, format58mmLine } = await import('../lib/escpos');
+      const branch = branches.find(b => b.id === session.branchId);
+      const sequentialTurn = sessionTurnMap.get(session.id) || session.id;
+      const workerName = session.workerName || users.find(u => u.id === session.userId)?.name || 'Cajero';
+
+      const lines: string[] = [];
+      lines.push("CENTER|BOLD|MARÉ");
+      lines.push(`CENTER|${(branch?.name || 'Sucursal Principal').toUpperCase()}`);
+      lines.push("CENTER|BOLD|AUDITORIA DE DESCUADRE");
+      lines.push("CENTER|CIERRE FORZADO DE CAJA");
+      lines.push("---");
+      lines.push(format58mmLine("FECHA:", new Date(session.closingDate || session.closedAt || session.openedAt).toLocaleDateString(), 32));
+      lines.push(format58mmLine("HORA:", new Date(session.closingDate || session.closedAt || session.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), 32));
+      lines.push(format58mmLine("TURNO:", sequentialTurn, 32));
+      lines.push(format58mmLine("CAJERO:", workerName.slice(0, 18), 32));
+      lines.push("---");
+      lines.push("BOLD|DETALLE DE DIFERENCIAS:");
+      info.details.forEach(d => {
+        const methodLabel = d.method === 'cash' ? 'EFEC' : 'TRANSF';
+        const typeLabel = d.difference > 0 ? '+SOBRANTE' : '-FALTANTE';
+        lines.push(format58mmLine(`${d.currencyCode} (${methodLabel})`, `${d.actual.toFixed(2)} / ${d.expected.toFixed(2)}`, 32));
+        lines.push(format58mmLine(`DIFERENCIA:`, `${typeLabel} ${Math.abs(d.difference).toFixed(2)}`, 32));
+      });
+      lines.push("---");
+      if (info.totalShortageBase > 0) {
+        lines.push(format58mmLine("TOTAL FALTANTE:", `-${formatMoney(info.totalShortageBase)}`, 32));
+      }
+      if (info.totalOverageBase > 0) {
+        lines.push(format58mmLine("TOTAL SOBRANTE:", `+${formatMoney(info.totalOverageBase)}`, 32));
+      }
+      if (info.deducted) {
+        lines.push(format58mmLine("DESC. SALARIO:", `-${formatMoney(info.deductionAmount)}`, 32));
+      }
+      if (session.auditNotes) {
+        lines.push("---");
+        lines.push(`NOTA: ${session.auditNotes.slice(0, 30)}`);
+      }
+      lines.push("---");
+      lines.push("CENTER|Firma Cajero: ____________");
+      lines.push("CENTER|Firma Auditor: ___________");
+      lines.push("CENTER|MARÉ SISTEMA POS");
+
+      await printThermalReceipt({
+        lines,
+        openDrawer: false,
+        width: '58mm'
+      });
+      if (addNotification) addNotification("Comprobante de auditoría enviado a impresión", "success");
+    } catch (e) {
+      console.error("Error printing discrepancy ticket:", e);
+    }
+  };
+
+  const handlePrintCashMovementTicket = async (movement: {
+    id: string;
+    turnLabel: string;
+    branchName: string;
+    workerName: string;
+    type: 'income' | 'expense';
+    amount: number;
+    currencyCode: string;
+    description: string;
+    date: string;
+  }) => {
+    try {
+      const { printThermalReceipt, format58mmLine } = await import('../lib/escpos');
+      const lines: string[] = [];
+      lines.push("CENTER|BOLD|MARÉ POS");
+      lines.push(`CENTER|${movement.branchName.toUpperCase()}`);
+      lines.push(`CENTER|BOLD|VALE DE ${movement.type === 'income' ? 'INGRESO (ENTRADA)' : 'EGRESO (GASTO)'}`);
+      lines.push("---");
+      lines.push(format58mmLine("FECHA:", new Date(movement.date).toLocaleDateString(), 32));
+      lines.push(format58mmLine("HORA:", new Date(movement.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), 32));
+      lines.push(format58mmLine("TURNO:", movement.turnLabel, 32));
+      lines.push(format58mmLine("CAJERO:", movement.workerName.slice(0, 18), 32));
+      lines.push("---");
+      lines.push(format58mmLine("CONCEPTO:", movement.description.slice(0, 20), 32));
+      lines.push(format58mmLine("TIPO:", movement.type === 'income' ? 'ENTRADA DE CAJA' : 'GASTO / SALIDA', 32));
+      lines.push(format58mmLine("MONEDA:", movement.currencyCode, 32));
+      lines.push(format58mmLine("IMPORTE:", formatMoney(movement.amount, movement.currencyCode), 32));
+      lines.push("---");
+      lines.push("CENTER|Firma Entrega: ___________");
+      lines.push("CENTER|Firma Recibe:  ___________");
+      lines.push("CENTER|COMPROBANTE DE CAJA");
+
+      await printThermalReceipt({
+        lines,
+        openDrawer: false,
+        width: '58mm'
+      });
+      if (addNotification) addNotification("Vale de movimiento enviado a impresión", "success");
+    } catch (e) {
+      console.error("Error printing cash movement voucher:", e);
+    }
+  };
+
   // State for Excel Export Menu
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
@@ -681,7 +1089,7 @@ export default function Reports() {
     setTimeout(() => setExportSuccess(false), 2500);
   };
 
-  const handleExportSectionExcel = (sec: 'summary' | 'sales' | 'items' | 'sessions' | 'payroll' | 'products' | 'returns' | 'banks' | 'idn') => {
+  const handleExportSectionExcel = (sec: 'summary' | 'sales' | 'items' | 'sessions' | 'payroll' | 'products' | 'returns' | 'banks' | 'idn' | 'discrepancies' | 'movements') => {
     const data = getExportData();
     exportSingleSectionToExcel(sec, data);
     setShowExportMenu(false);
@@ -1000,6 +1408,24 @@ export default function Reports() {
                     <Users className="w-3.5 h-3.5 text-indigo-600" />
                     <span>Solo Liquidaciones Vendedores IDN</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleExportSectionExcel('discrepancies')}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg text-[9px] font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors flex items-center gap-2"
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Solo Descuadres y Cierres Forzados</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleExportSectionExcel('movements')}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg text-[9px] font-bold text-slate-700 dark:text-slate-300 hover:bg-subtle transition-colors flex items-center gap-2"
+                  >
+                    <ArrowDownRight className="w-3.5 h-3.5 text-slate-700 dark:text-slate-300" />
+                    <span>Solo Egresos e Ingresos POS</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -1007,9 +1433,23 @@ export default function Reports() {
 
           <div className="w-px h-6 bg-subtle mx-1 hidden sm:block" />
           {[
-            { id: 'sales', label: 'Registro de Ventas por Turno', icon: TrendingUp },
-            { id: 'payroll', label: 'Nómina y Liquidación Diaria', icon: Calculator },
+            { id: 'sales', label: 'Ventas por Turno', icon: TrendingUp },
+            { id: 'payroll', label: 'Nómina y Liquidación', icon: Calculator },
             { id: 'sessions', label: 'Historial de Cajas', icon: History },
+            { 
+              id: 'discrepancies', 
+              label: 'Descuadres y Cierres Forzados', 
+              icon: AlertTriangle, 
+              badge: allDiscrepancySessions.length,
+              badgeClass: 'bg-rose-600 text-white shadow-xs'
+            },
+            { 
+              id: 'movements', 
+              label: 'Egresos e Ingresos POS', 
+              icon: ArrowDownRight, 
+              badge: allDetailedMovements.length,
+              badgeClass: 'bg-slate-700 text-white'
+            },
             { id: 'products', label: 'Productos Vendidos', icon: Package },
             { id: 'idn', label: 'Vendedores IDN', icon: Users, badge: idnTransactions.length }
           ].map(tab => {
@@ -1019,7 +1459,7 @@ export default function Reports() {
                 key={tab.id} 
                 onClick={() => setActiveTab(tab.id as any)} 
                 className={cn(
-                  "px-3 py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5",
+                  "px-3 py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 shrink-0",
                   activeTab === tab.id 
                     ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" 
                     : "bg-subtle text-secondary hover:text-primary hover:bg-subtle"
@@ -1030,7 +1470,7 @@ export default function Reports() {
                 {tab.badge !== undefined && tab.badge > 0 && (
                   <span className={cn(
                     "px-1.5 py-0.2 text-[8px] font-black rounded-full ml-1",
-                    activeTab === tab.id ? "bg-white/30 text-white" : "bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300"
+                    activeTab === tab.id ? "bg-white/30 text-white" : (tab.badgeClass || "bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300")
                   )}>
                     {tab.badge}
                   </span>
@@ -1555,13 +1995,23 @@ export default function Reports() {
 
                         {/* Acciones */}
                         <td className="px-3 py-2 text-center whitespace-nowrap">
-                          <button
-                            onClick={() => handlePrintShiftTicket(item.sessionId)}
-                            title="Imprimir Comprobante de Liquidación"
-                            className="p-1.5 bg-subtle text-primary rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-all border border-base active:scale-95"
-                          >
-                            <Printer className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => setExpandedSession(item.sessionId)}
+                              title="Ver Detalle del Turno y Liquidación"
+                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-[8px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-900/50 transition-all flex items-center gap-1 active:scale-95 shadow-2xs cursor-pointer"
+                            >
+                              <Eye className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                              <span>Detalle</span>
+                            </button>
+                            <button
+                              onClick={() => handlePrintShiftTicket(item.sessionId)}
+                              title="Imprimir Comprobante de Liquidación"
+                              className="p-1.5 bg-subtle text-primary rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-all border border-base active:scale-95 cursor-pointer"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1668,7 +2118,7 @@ export default function Reports() {
                   <th className="px-3 py-2.5">Cierre</th>
                   <th className="px-3 py-2.5">Fondo Inicial</th>
                   <th className="px-3 py-2.5">Estado</th>
-                  <th className="px-3 py-2.5 text-center">Ticket</th>
+                  <th className="px-3 py-2.5 text-center">Detalle / Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
@@ -1709,13 +2159,23 @@ export default function Reports() {
                     <td className="px-3 py-2 text-center whitespace-nowrap">
                       <div className="flex items-center justify-center gap-1.5">
                         {session.status === 'closed' && (
-                          <button
-                            onClick={() => handlePrintShiftTicket(session.id)}
-                            title="Imprimir Ticket de Cierre"
-                            className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-all border border-slate-200 active:scale-95"
-                          >
-                            <Printer className="w-3 h-3" />
-                          </button>
+                          <>
+                            <button
+                              onClick={() => setExpandedSession(session.id)}
+                              title="Ver Detalle Completo del Turno"
+                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[8px] font-black uppercase rounded-lg border border-indigo-200 transition-all flex items-center gap-1 active:scale-95 shadow-2xs cursor-pointer"
+                            >
+                              <Eye className="w-3 h-3 text-indigo-600" />
+                              <span>Detalle</span>
+                            </button>
+                            <button
+                              onClick={() => handlePrintShiftTicket(session.id)}
+                              title="Imprimir Ticket de Cierre"
+                              className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-all border border-slate-200 active:scale-95 cursor-pointer"
+                            >
+                              <Printer className="w-3 h-3" />
+                            </button>
+                          </>
                         )}
                         <button
                           onClick={() => setDeleteConfirmTarget({ 
@@ -1741,6 +2201,488 @@ export default function Reports() {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: AUDITORÍA DE DESCUADRES Y CIERRES FORZADOS */}
+      {activeTab === 'discrepancies' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Top KPI Cards for Discrepancies */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-rose-50 dark:bg-rose-950/50 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Cierres con Descuadre</p>
+                <p className="text-base font-black text-rose-600 mt-0.5">{filteredDiscrepancySessions.length}</p>
+                <p className="text-[7px] font-bold text-muted uppercase">{filteredDiscrepancySessions.filter(d => d.info.isForcedClose).length} Forzados</p>
+              </div>
+            </div>
+
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-rose-50 dark:bg-rose-950/50 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
+                <ArrowDownRight className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Total Faltante (Caja)</p>
+                <p className="text-base font-black text-rose-600 mt-0.5">
+                  -{formatMoney(filteredDiscrepancySessions.reduce((acc, d) => acc + d.info.totalShortageBase, 0))}
+                </p>
+                <p className="text-[7px] font-bold text-rose-400 uppercase">Dinero de menos</p>
+              </div>
+            </div>
+
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
+                <ArrowUpRight className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Total Sobrante (Caja)</p>
+                <p className="text-base font-black text-emerald-600 mt-0.5">
+                  +{formatMoney(filteredDiscrepancySessions.reduce((acc, d) => acc + d.info.totalOverageBase, 0))}
+                </p>
+                <p className="text-[7px] font-bold text-emerald-500 uppercase">Dinero de más</p>
+              </div>
+            </div>
+
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/50 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+                <Calculator className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Descontado Salarios</p>
+                <p className="text-base font-black text-amber-600 mt-0.5">
+                  {formatMoney(filteredDiscrepancySessions.reduce((acc, d) => acc + d.info.deductionAmount, 0))}
+                </p>
+                <p className="text-[7px] font-bold text-amber-500 uppercase">Deducido en liquidación</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Subfilters bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-secondary rounded-2xl border border-base">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[9px] font-black uppercase text-muted tracking-wider mr-1">Filtrar por:</span>
+              {[
+                { id: 'all', label: `Todos (${allDiscrepancySessions.length})` },
+                { id: 'shortage', label: '⚠️ Solo Faltantes' },
+                { id: 'overage', label: '💵 Solo Sobrantes' },
+                { id: 'deducted', label: '📉 Con Descuento Salario' },
+                { id: 'pending', label: '⏳ Pendientes Auditoría' }
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setDiscrepancyTypeFilter(f.id as any)}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer",
+                    discrepancyTypeFilter === f.id
+                      ? "bg-indigo-600 text-white shadow-xs"
+                      : "bg-subtle text-secondary hover:text-primary"
+                  )}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-[9px] font-bold text-muted">
+              Mostrando {filteredDiscrepancySessions.length} cierres con descuadre
+            </div>
+          </div>
+
+          {/* Discrepancy Sessions Table */}
+          <div className="bg-secondary rounded-2xl shadow-xs border border-base overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-subtle border-b border-base text-[8px] font-black text-muted uppercase tracking-[0.15em]">
+                    <th className="px-3 py-2.5">Turno / Tipo Cierre</th>
+                    <th className="px-3 py-2.5">Cajero / Sucursal</th>
+                    <th className="px-3 py-2.5">Fecha y Hora</th>
+                    <th className="px-3 py-2.5">Descuadre por Moneda</th>
+                    <th className="px-3 py-2.5 text-right">Faltante / Sobrante Total</th>
+                    <th className="px-3 py-2.5 text-center">Descuento Salario</th>
+                    <th className="px-3 py-2.5 text-center">Estado Auditoría</th>
+                    <th className="px-3 py-2.5 text-center">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-base text-sm">
+                  {filteredDiscrepancySessions.map(({ session, info }) => {
+                    const branch = branches.find(b => b.id === session.branchId);
+                    const turnLabel = sessionTurnMap.get(session.id) || session.id;
+                    const dateObj = new Date(session.closingDate || session.closedAt || session.openedAt);
+
+                    return (
+                      <tr key={session.id} className="hover:bg-subtle/50 transition-colors">
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <div className="flex flex-col gap-1">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/50 tracking-wider w-fit">
+                              {turnLabel}
+                            </span>
+                            {info.isForcedClose ? (
+                              <span className="inline-flex items-center gap-1 text-[7px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 dark:bg-rose-950/40 px-1.5 py-0.5 rounded border border-rose-200 dark:border-rose-900/40 w-fit">
+                                <AlertTriangle className="w-2.5 h-2.5" /> Forzado
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[7px] font-black uppercase tracking-wider text-slate-500 bg-subtle px-1.5 py-0.5 rounded border border-base w-fit">
+                                Cuadre con dif.
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] font-black text-primary uppercase">
+                              {session.workerName || users.find(u => u.id === session.userId)?.name || 'Vendedor'}
+                            </span>
+                            <span className="text-[8px] font-bold text-muted uppercase bg-subtle px-1.5 py-0.5 rounded border border-base">
+                              {branch?.name}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <div className="text-[10px] font-bold text-primary">
+                            {dateObj.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                          </div>
+                          <div className="text-[8px] font-mono text-muted">
+                            {dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2.5">
+                          <div className="flex flex-wrap gap-1 max-w-xs">
+                            {info.details.map((d, i) => (
+                              <span
+                                key={i}
+                                className={cn(
+                                  "px-1.5 py-0.5 rounded text-[8px] font-black font-mono border",
+                                  d.difference > 0
+                                    ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800"
+                                    : "bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800"
+                                )}
+                              >
+                                {d.currencyCode} ({d.method === 'cash' ? 'Ef' : 'Tr'}): {d.difference > 0 ? '+' : ''}{d.difference.toLocaleString('es-CU', { minimumFractionDigits: 2 })}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                          {info.totalShortageBase > 0 && (
+                            <div className="text-xs font-black text-rose-600">
+                              -{formatMoney(info.totalShortageBase)}
+                            </div>
+                          )}
+                          {info.totalOverageBase > 0 && (
+                            <div className="text-xs font-black text-emerald-600">
+                              +{formatMoney(info.totalOverageBase)}
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          {info.deducted ? (
+                            <span className="inline-flex items-center gap-1 text-[8px] font-black uppercase text-amber-700 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200">
+                              <CheckCircle className="w-2.5 h-2.5" /> -{formatMoney(info.deductionAmount)}
+                            </span>
+                          ) : (
+                            <span className="text-[8px] font-bold text-muted uppercase">No descontado</span>
+                          )}
+                        </td>
+
+                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          <select
+                            value={info.auditStatus}
+                            onChange={(e) => {
+                              const newStatus = e.target.value as any;
+                              updateCashSession(session.id, { auditStatus: newStatus });
+                              addNotification(`Turno ${turnLabel} marcado como ${newStatus === 'resolved' ? 'Resuelto' : newStatus === 'reviewed' ? 'Auditado' : 'Pendiente'}`, 'info');
+                            }}
+                            className={cn(
+                              "px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider border outline-none cursor-pointer",
+                              info.auditStatus === 'resolved'
+                                ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 border-emerald-200"
+                                : info.auditStatus === 'reviewed'
+                                ? "bg-blue-50 dark:bg-blue-950/40 text-blue-700 border-blue-200"
+                                : "bg-amber-50 dark:bg-amber-950/40 text-amber-700 border-amber-200"
+                            )}
+                          >
+                            <option value="pending_review">⚠️ Pendiente</option>
+                            <option value="reviewed">✓ Auditado</option>
+                            <option value="resolved">★ Resuelto</option>
+                          </select>
+                        </td>
+
+                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => {
+                                setSelectedDiscrepancyDetailSession(session);
+                                setEditingAuditSessionId(session.id);
+                                setEditingAuditNotes(session.auditNotes || "");
+                                setEditingAuditStatus(info.auditStatus || 'pending_review');
+                              }}
+                              title="Ver Detalle de Auditoría de Descuadre"
+                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-[8px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-900/50 transition-all flex items-center gap-1 active:scale-95 shadow-2xs cursor-pointer"
+                            >
+                              <Eye className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                              <span>Auditoría</span>
+                            </button>
+                            <button
+                              onClick={() => handlePrintDiscrepancyTicket(session)}
+                              title="Imprimir Comprobante de Descuadre (58mm)"
+                              className="p-1 bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary rounded-lg transition-all border border-base active:scale-95 cursor-pointer"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {filteredDiscrepancySessions.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-6 py-12 text-center text-muted text-[10px] font-bold uppercase">
+                        No hay cierres con descuadre o forzados registrados para el filtro seleccionado.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: MOVIMIENTOS DE CAJA (EGRESOS E INGRESOS DEL POS) */}
+      {activeTab === 'movements' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Top KPI Cards for Movements */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-rose-50 dark:bg-rose-950/50 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
+                <ArrowDownRight className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Total Egresos (Gastos)</p>
+                <p className="text-base font-black text-rose-600 mt-0.5">
+                  -{formatMoney(filteredDetailedMovements.filter(m => m.type === 'expense').reduce((acc, m) => acc + (m.amount * (currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1)), 0))}
+                </p>
+                <p className="text-[7px] font-bold text-rose-400 uppercase">{filteredDetailedMovements.filter(m => m.type === 'expense').length} salidas registradas</p>
+              </div>
+            </div>
+
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
+                <ArrowUpRight className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Total Ingresos (Entradas)</p>
+                <p className="text-base font-black text-emerald-600 mt-0.5">
+                  +{formatMoney(filteredDetailedMovements.filter(m => m.type === 'income').reduce((acc, m) => acc + (m.amount * (currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1)), 0))}
+                </p>
+                <p className="text-[7px] font-bold text-emerald-500 uppercase">{filteredDetailedMovements.filter(m => m.type === 'income').length} entradas registradas</p>
+              </div>
+            </div>
+
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                <ArrowLeftRight className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Flujo Neto en Caja</p>
+                {(() => {
+                  const inc = filteredDetailedMovements.filter(m => m.type === 'income').reduce((acc, m) => acc + (m.amount * (currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1)), 0);
+                  const exp = filteredDetailedMovements.filter(m => m.type === 'expense').reduce((acc, m) => acc + (m.amount * (currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1)), 0);
+                  const net = inc - exp;
+                  return (
+                    <p className={cn("text-base font-black mt-0.5", net >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                      {net >= 0 ? '+' : ''}{formatMoney(net)}
+                    </p>
+                  );
+                })()}
+                <p className="text-[7px] font-bold text-muted uppercase">Ingresos menos Egresos</p>
+              </div>
+            </div>
+
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 shrink-0">
+                <History className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Operaciones Totales</p>
+                <p className="text-base font-black text-primary mt-0.5">{filteredDetailedMovements.length}</p>
+                <p className="text-[7px] font-bold text-muted uppercase">Comprobantes de caja</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Subfilters bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-secondary rounded-2xl border border-base">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[9px] font-black uppercase text-muted tracking-wider mr-1">Filtrar por tipo:</span>
+              {[
+                { id: 'all', label: `Todos (${allDetailedMovements.length})` },
+                { id: 'expense', label: '🔻 Solo Egresos (Gastos)' },
+                { id: 'income', label: '🔺 Solo Ingresos (Entradas)' }
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setMovementTypeFilter(f.id as any)}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer",
+                    movementTypeFilter === f.id
+                      ? "bg-indigo-600 text-white shadow-xs"
+                      : "bg-subtle text-secondary hover:text-primary"
+                  )}
+                >
+                  {f.label}
+                </button>
+              ))}
+
+              <div className="w-px h-4 bg-base mx-1 hidden sm:block" />
+
+              <select
+                value={movementCurrencyFilter}
+                onChange={(e) => setMovementCurrencyFilter(e.target.value)}
+                className="px-2.5 py-1 bg-subtle border border-base rounded-lg text-[8px] font-black uppercase text-primary outline-none cursor-pointer"
+              >
+                <option value="all">Todas las Monedas</option>
+                {currencies.map(c => (
+                  <option key={c.code} value={c.code}>{c.code}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="text-[9px] font-bold text-muted">
+              Mostrando {filteredDetailedMovements.length} movimientos
+            </div>
+          </div>
+
+          {/* Movements Table */}
+          <div className="bg-secondary rounded-2xl shadow-xs border border-base overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-subtle border-b border-base text-[8px] font-black text-muted uppercase tracking-[0.15em]">
+                    <th className="px-3 py-2.5">Fecha y Hora</th>
+                    <th className="px-3 py-2.5">Turno</th>
+                    <th className="px-3 py-2.5">Cajero / Sucursal</th>
+                    <th className="px-3 py-2.5 text-center">Tipo de Movimiento</th>
+                    <th className="px-3 py-2.5">Concepto / Descripción</th>
+                    <th className="px-3 py-2.5 text-right">Importe Moneda</th>
+                    <th className="px-3 py-2.5 text-right">Equivalente CUP</th>
+                    <th className="px-3 py-2.5 text-center">Detalle / Vale</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-base text-sm">
+                  {filteredDetailedMovements.map((m) => {
+                    const dateObj = new Date(m.date);
+                    const curr = currencies.find(c => c.code === m.currencyCode);
+                    const rate = curr?.rateToBase || 1;
+                    const cupAmount = m.amount * rate;
+
+                    return (
+                      <tr key={m.id} className="hover:bg-subtle/50 transition-colors">
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <div className="text-[10px] font-bold text-primary">
+                            {dateObj.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                          </div>
+                          <div className="text-[8px] font-mono text-muted">
+                            {dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/50 tracking-wider">
+                            {m.turnLabel}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] font-black text-primary uppercase">
+                              {m.workerName}
+                            </span>
+                            <span className="text-[8px] font-bold text-muted uppercase bg-subtle px-1.5 py-0.5 rounded border border-base">
+                              {m.branchName}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          <span
+                            className={cn(
+                              "inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider border",
+                              m.type === 'income'
+                                ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border-emerald-200"
+                                : "bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-400 border-rose-200"
+                            )}
+                          >
+                            {m.type === 'income' ? <ArrowUpRight className="w-2.5 h-2.5" /> : <ArrowDownRight className="w-2.5 h-2.5" />}
+                            {m.type === 'income' ? 'Ingreso (Entrada)' : 'Egreso (Gasto)'}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2.5">
+                          <span className="text-[11px] font-bold text-primary block max-w-sm break-words">
+                            {m.description}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                          <span
+                            className={cn(
+                              "text-xs font-black font-mono",
+                              m.type === 'income' ? "text-emerald-600" : "text-rose-600"
+                            )}
+                          >
+                            {m.type === 'income' ? '+' : '-'}{formatMoney(m.amount, m.currencyCode)}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2.5 text-right whitespace-nowrap font-bold text-[10px] text-muted">
+                          {formatMoney(cupAmount, baseCurrency.code)}
+                        </td>
+
+                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => setSelectedMovementDetail(m)}
+                              title="Ver Detalle del Movimiento"
+                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-[8px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-900/50 transition-all flex items-center gap-1 active:scale-95 shadow-2xs cursor-pointer"
+                            >
+                              <Eye className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                              <span>Detalle</span>
+                            </button>
+                            <button
+                              onClick={() => handlePrintCashMovementTicket(m)}
+                              title="Imprimir Vale de Movimiento (58mm)"
+                              className="p-1 bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary rounded-lg transition-all border border-base active:scale-95 cursor-pointer shadow-2xs"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {filteredDetailedMovements.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-6 py-12 text-center text-muted text-[10px] font-bold uppercase">
+                        No hay movimientos de caja registrados para el filtro seleccionado.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -2360,8 +3302,8 @@ export default function Reports() {
 
       {/* Modal: Detalle del Turno Cerrado */}
       {expandedSession && cashSessions.find(s => s.id === expandedSession) && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 border border-white/20">
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[90] flex items-center justify-center p-2 sm:p-4 overflow-hidden animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-lg max-h-[94vh] sm:max-h-[90vh] flex flex-col overflow-hidden border border-base">
             {(() => {
               const session = cashSessions.find(s => s.id === expandedSession)!;
               const sessionTx = transactions.filter(t => 
@@ -2373,8 +3315,9 @@ export default function Reports() {
               );
               const sequentialTurn = sessionTurnMap.get(session.id) || session.id;
               const dateToDisplay = new Date(session.closingDate || session.closedAt || session.openedAt);
-              const totalSalesInSession = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
+              const totalSalesInSession = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
               const pItem = payrollList.find(p => p.sessionId === session.id);
+              const discInfo = getSessionDiscrepancyInfo(session);
 
               // Group items by product
               const groupedItems: {[key: string]: {name: string, quantity: number, total: number}} = {};
@@ -2386,38 +3329,69 @@ export default function Reports() {
                     groupedItems[prodName] = { name: prodName, quantity: 0, total: 0 };
                   }
                   groupedItems[prodName].quantity += (item.quantity || 0);
-                  const price = prodObj?.price || 0;
+                  const price = item.price ?? prodObj?.price ?? 0;
                   groupedItems[prodName].total += (price * (item.quantity || 0));
                 });
               });
 
               return (
                 <>
-                  <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-indigo-50/50">
+                  <div className="p-4 sm:p-5 border-b border-base flex items-center justify-between bg-indigo-50/40 dark:bg-indigo-950/30 shrink-0">
                     <div>
-                      <div className="text-sm font-black text-slate-900 uppercase tracking-tight">
+                      <div className="text-sm font-black text-primary uppercase tracking-tight">
                         {dateToDisplay.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                       </div>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] font-black text-indigo-600 uppercase bg-white px-2 py-0.5 rounded border border-indigo-100">
+                        <span className="text-[10px] font-black text-indigo-700 dark:text-indigo-300 uppercase bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-900">
                           {sequentialTurn}
                         </span>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase">
+                        <span className="text-[9px] font-bold text-muted uppercase">
                           {session.workerName || users.find(u => u.id === session.userId)?.name || 'Vendedor'}
                         </span>
                       </div>
                     </div>
                     <button 
                       onClick={() => setExpandedSession(null)}
-                      className="p-1.5 hover:bg-white rounded-full transition-colors text-slate-400"
+                      className="p-1.5 hover:bg-subtle rounded-full transition-colors text-muted hover:text-primary cursor-pointer"
                     >
                       <X className="w-5 h-5" />
                     </button>
                   </div>
 
-                  <div className="p-5 max-h-[50vh] overflow-y-auto space-y-4 custom-scrollbar">
+                  <div className="p-4 sm:p-5 flex-1 overflow-y-auto space-y-4 custom-scrollbar text-primary">
+                    {/* Discrepancy warning banner if applicable */}
+                    {discInfo && (
+                      <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                          <div className="min-w-0">
+                            <span className="text-[8px] font-black uppercase text-amber-800 dark:text-amber-300 block">
+                              {discInfo.isForcedClose ? 'Cierre Forzado' : 'Turno con Descuadre'}
+                            </span>
+                            <span className="text-[9px] font-bold text-amber-950 dark:text-amber-200 truncate block">
+                              {discInfo.totalShortageBase > 0 ? `Faltante: -${formatMoney(discInfo.totalShortageBase)}` : ''}
+                              {discInfo.totalOverageBase > 0 ? `Sobrante: +${formatMoney(discInfo.totalOverageBase)}` : ''}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpandedSession(null);
+                            setSelectedDiscrepancyDetailSession(session);
+                            setEditingAuditSessionId(session.id);
+                            setEditingAuditNotes(session.auditNotes || "");
+                            setEditingAuditStatus(discInfo.auditStatus || 'pending_review');
+                          }}
+                          className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white text-[8px] font-black uppercase rounded-lg transition-all shrink-0 cursor-pointer shadow-2xs"
+                        >
+                          Ver Auditoría
+                        </button>
+                      </div>
+                    )}
+
                     <div>
-                      <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                      <div className="text-[9px] font-black text-muted uppercase tracking-widest mb-2">
                         Ventas por Método de Pago
                       </div>
                       <div className="grid grid-cols-2 gap-2">
@@ -2440,18 +3414,18 @@ export default function Reports() {
                           if (Math.abs(cash) < 0.01 && Math.abs(transfer) < 0.01) return null;
 
                           return (
-                            <div key={c.code} className="p-2 bg-slate-50 rounded-xl border border-slate-100">
-                              <div className="text-[9px] font-black text-slate-900 uppercase border-b border-slate-200/50 pb-1 mb-1">{c.code}</div>
+                            <div key={c.code} className="p-2 bg-subtle rounded-xl border border-base">
+                              <div className="text-[9px] font-black text-primary uppercase border-b border-base/50 pb-1 mb-1">{c.code}</div>
                               {Math.abs(cash) > 0.01 && (
-                                <div className="flex justify-between text-[8px] font-bold text-slate-600">
+                                <div className="flex justify-between text-[8px] font-bold text-muted">
                                   <span>EFECTIVO:</span>
-                                  <span className="text-emerald-600">{formatMoney(cash, c.code)}</span>
+                                  <span className="text-emerald-600 dark:text-emerald-400 font-mono">{formatMoney(cash, c.code)}</span>
                                 </div>
                               )}
                               {Math.abs(transfer) > 0.01 && (
-                                <div className="flex justify-between text-[8px] font-bold text-slate-600">
+                                <div className="flex justify-between text-[8px] font-bold text-muted">
                                   <span>TRANSF:</span>
-                                  <span className="text-blue-600">{formatMoney(transfer, c.code)}</span>
+                                  <span className="text-blue-600 dark:text-blue-400 font-mono">{formatMoney(transfer, c.code)}</span>
                                 </div>
                               )}
                             </div>
@@ -2461,59 +3435,59 @@ export default function Reports() {
                     </div>
 
                     <div>
-                      <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                      <div className="text-[9px] font-black text-muted uppercase tracking-widest mb-2">
                         Productos Vendidos ({Object.keys(groupedItems).length})
                       </div>
-                      <div className="space-y-1.5">
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
                         {Object.values(groupedItems).map((item, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-100">
-                            <div className="flex items-center gap-2">
-                              <div className="w-6 h-6 bg-white rounded-lg flex items-center justify-center text-[9px] font-black text-indigo-600 border border-slate-100">
+                          <div key={idx} className="flex items-center justify-between p-2.5 bg-subtle rounded-xl border border-base">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-6 h-6 bg-secondary rounded-lg flex items-center justify-center text-[9px] font-black text-indigo-600 dark:text-indigo-400 border border-base shrink-0">
                                 {item.quantity}
                               </div>
-                              <span className="text-[9px] font-black text-slate-900 uppercase tracking-tighter">{item.name}</span>
+                              <span className="text-[9px] font-black text-primary uppercase tracking-tight truncate">{item.name}</span>
                             </div>
-                            <span className="text-[10px] font-black text-slate-900">{formatMoney(item.total)}</span>
+                            <span className="text-[10px] font-black text-primary shrink-0 ml-2">{formatMoney(item.total)}</span>
                           </div>
                         ))}
                       </div>
                     </div>
 
                     {Object.keys(groupedItems).length === 0 && (
-                      <p className="text-center py-6 text-xs font-bold text-slate-400 uppercase">No hay productos vendidos en este turno.</p>
+                      <p className="text-center py-6 text-xs font-bold text-muted uppercase">No hay productos vendidos en este turno.</p>
                     )}
 
                     {pItem && (
-                      <div className="mt-4 p-3.5 bg-emerald-50/60 rounded-2xl border border-emerald-100 space-y-1.5">
-                        <div className="text-[9px] font-black text-emerald-800 uppercase tracking-widest flex items-center justify-between">
+                      <div className="mt-4 p-3.5 bg-emerald-50/60 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-900/40 space-y-1.5">
+                        <div className="text-[9px] font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-widest flex items-center justify-between">
                           <span>Liquidación Salarial del Turno</span>
                           <span className={cn(
-                            "px-2 py-0.5 rounded text-[8px]",
-                            pItem.status === 'paid' ? "bg-emerald-200 text-emerald-900" : "bg-amber-100 text-amber-900"
+                            "px-2 py-0.5 rounded text-[8px] font-black",
+                            pItem.status === 'paid' ? "bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-100" : "bg-amber-100 dark:bg-amber-900 text-amber-900 dark:text-amber-100"
                           )}>
                             {pItem.status === 'paid' ? 'Pagado' : 'Pendiente'}
                           </span>
                         </div>
-                        <div className="flex justify-between text-[10px] text-slate-600">
+                        <div className="flex justify-between text-[10px] text-muted">
                           <span>Salario Base:</span>
-                          <span className="font-bold">{formatMoney(pItem.baseSalary)}</span>
+                          <span className="font-bold text-primary">{formatMoney(pItem.baseSalary)}</span>
                         </div>
-                        <div className="flex justify-between text-[10px] text-emerald-700">
+                        <div className="flex justify-between text-[10px] text-emerald-700 dark:text-emerald-400">
                           <span>Comisiones Productos:</span>
                           <span className="font-bold">+{formatMoney(pItem.commissions)}</span>
                         </div>
-                        <div className="flex justify-between text-xs font-black text-slate-900 border-t border-emerald-200/60 pt-1">
+                        <div className="flex justify-between text-xs font-black text-primary border-t border-emerald-200/60 dark:border-emerald-900/60 pt-1">
                           <span>Total Salario:</span>
-                          <span className="text-emerald-700">{formatMoney(pItem.totalSalary)}</span>
+                          <span className="text-emerald-700 dark:text-emerald-400">{formatMoney(pItem.totalSalary)}</span>
                         </div>
                       </div>
                     )}
                   </div>
 
-                  <div className="p-5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+                  <div className="p-4 sm:p-5 bg-subtle border-t border-base shrink-0 flex items-center justify-between">
                     <div>
-                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Total Ventas Turno</span>
-                      <span className="text-base font-black text-indigo-600">{formatMoney(totalSalesInSession)}</span>
+                      <span className="text-[8px] font-black text-muted uppercase tracking-widest block">Total Ventas Turno</span>
+                      <span className="text-base font-black text-indigo-600 dark:text-indigo-400">{formatMoney(totalSalesInSession)}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -2526,19 +3500,492 @@ export default function Reports() {
                             label: `Turno ${sequentialTurn} (${session.workerName || 'Vendedor'})`
                           });
                         }}
-                        className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition-all border border-rose-200 active:scale-95"
+                        className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400 rounded-xl transition-all border border-rose-200 dark:border-rose-900 active:scale-95 cursor-pointer"
                         title="Eliminar este Turno"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handlePrintShiftTicket(session.id)}
-                        className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-sm"
+                        className="px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider hover:bg-indigo-700 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer active:scale-95"
                       >
                         <Printer className="w-4 h-4" />
-                        Imprimir Ticket Térmico
+                        Imprimir Ticket
                       </button>
                     </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Detalle y Auditoría de Descuadre y Cierre Forzado */}
+      {selectedDiscrepancyDetailSession && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[95] flex items-center justify-center p-2 sm:p-4 overflow-hidden animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[94vh] sm:max-h-[90vh] flex flex-col overflow-hidden border border-base">
+            {(() => {
+              const session = selectedDiscrepancyDetailSession;
+              const info = getSessionDiscrepancyInfo(session);
+              const branch = branches.find(b => b.id === session.branchId);
+              const sequentialTurn = sessionTurnMap.get(session.id) || session.id;
+              const workerName = session.workerName || users.find(u => u.id === session.userId)?.name || 'Cajero';
+              const openDate = new Date(session.openedAt);
+              const closeDate = new Date(session.closingDate || session.closedAt || session.openedAt);
+
+              // Turn transactions
+              const sessionTx = transactions.filter(t => 
+                t.sessionId 
+                  ? t.sessionId === session.id
+                  : (t.branchId === session.branchId && 
+                     new Date(t.date).getTime() >= openDate.getTime() && 
+                     (!session.closedAt || new Date(t.date).getTime() <= closeDate.getTime()))
+              );
+              const totalSalesInSession = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
+              const movementsInSession = session.movements || [];
+
+              return (
+                <>
+                  {/* Header */}
+                  <div className="p-4 sm:p-5 border-b border-base flex items-center justify-between bg-indigo-50/40 dark:bg-indigo-950/30 shrink-0">
+                    <div className="flex items-center gap-2.5">
+                      <div className={cn(
+                        "p-2.5 rounded-2xl shrink-0 flex items-center justify-center",
+                        info?.isForcedClose
+                          ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+                          : "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                      )}>
+                        {info?.isForcedClose ? <AlertTriangle className="w-5 h-5" /> : <ShieldAlert className="w-5 h-5" />}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-black text-indigo-700 dark:text-indigo-300 uppercase bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-900">
+                            {sequentialTurn}
+                          </span>
+                          {info?.isForcedClose ? (
+                            <span className="text-[8px] font-black uppercase text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 px-2 py-0.5 rounded border border-rose-200 dark:border-rose-900 flex items-center gap-1">
+                              <AlertTriangle className="w-2.5 h-2.5" /> Cierre Forzado
+                            </span>
+                          ) : (
+                            <span className="text-[8px] font-black uppercase text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-900">
+                              Cuadre con Diferencia
+                            </span>
+                          )}
+                          <span className="text-[8px] font-bold text-muted uppercase">
+                            {branch?.name || 'Sucursal Principal'}
+                          </span>
+                        </div>
+                        <h3 className="text-sm font-black text-primary uppercase tracking-tight mt-0.5">
+                          Auditoría de Descuadre — {workerName}
+                        </h3>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setSelectedDiscrepancyDetailSession(null)}
+                      className="p-1.5 hover:bg-subtle rounded-full transition-colors text-muted hover:text-primary cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Scrollable Body */}
+                  <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 custom-scrollbar text-primary">
+                    {/* Turn Dates & General Meta */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[9px]">
+                      <div className="bg-subtle p-2.5 rounded-xl border border-base">
+                        <span className="text-muted font-black uppercase block text-[7px]">Apertura</span>
+                        <p className="font-bold text-primary mt-0.5">{openDate.toLocaleString('es-CU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+                      </div>
+                      <div className="bg-subtle p-2.5 rounded-xl border border-base">
+                        <span className="text-muted font-black uppercase block text-[7px]">Cierre</span>
+                        <p className="font-bold text-primary mt-0.5">{closeDate.toLocaleString('es-CU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+                      </div>
+                      <div className="bg-subtle p-2.5 rounded-xl border border-base">
+                        <span className="text-muted font-black uppercase block text-[7px]">Fondo Inicial</span>
+                        <p className="font-bold text-primary mt-0.5">{formatMoney(session.openingBalance, baseCurrency.code)}</p>
+                      </div>
+                      <div className="bg-subtle p-2.5 rounded-xl border border-base">
+                        <span className="text-muted font-black uppercase block text-[7px]">Ventas Totales</span>
+                        <p className="font-black text-indigo-600 dark:text-indigo-400 mt-0.5">{formatMoney(totalSalesInSession, baseCurrency.code)}</p>
+                      </div>
+                    </div>
+
+                    {/* Reason if forced close */}
+                    {info?.isForcedClose && (
+                      <div className="p-3 rounded-2xl bg-rose-50/70 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 flex items-start gap-2.5">
+                        <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[8px] font-black uppercase tracking-wider text-rose-800 dark:text-rose-300">
+                            Motivo de Cierre Forzado de Turno:
+                          </p>
+                          <p className="text-xs font-bold text-rose-950 dark:text-rose-200 mt-0.5">
+                            {session.forcedCloseReason || session.discrepancyNote || session.notes || 'Cierre forzado directamente por el operador con diferencias pendientes de conciliar.'}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* KPI summary */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                      <div className="p-3 rounded-xl bg-subtle border border-base">
+                        <span className="text-[8px] font-black uppercase text-muted tracking-wider block">Faltante en Caja</span>
+                        <p className="text-sm sm:text-base font-black text-rose-600 mt-0.5">
+                          {info && info.totalShortageBase > 0 ? `-${formatMoney(info.totalShortageBase)}` : '$0'}
+                        </p>
+                        <span className="text-[7px] font-bold text-muted uppercase">Dinero no justificado</span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-subtle border border-base">
+                        <span className="text-[8px] font-black uppercase text-muted tracking-wider block">Sobrante en Caja</span>
+                        <p className="text-sm sm:text-base font-black text-emerald-600 mt-0.5">
+                          {info && info.totalOverageBase > 0 ? `+${formatMoney(info.totalOverageBase)}` : '$0'}
+                        </p>
+                        <span className="text-[7px] font-bold text-muted uppercase">Dinero en exceso</span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-subtle border border-base col-span-2 sm:col-span-1">
+                        <span className="text-[8px] font-black uppercase text-muted tracking-wider block">Descuento Salarial</span>
+                        <p className="text-sm sm:text-base font-black text-amber-600 mt-0.5">
+                          {info && info.deducted ? `-${formatMoney(info.deductionAmount)}` : 'Sin Deducción'}
+                        </p>
+                        <span className="text-[7px] font-bold text-muted uppercase">
+                          {info?.deducted ? 'Deducido en liquidación nómina' : 'Pendiente o exonerado'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Desglose de diferencias por moneda y método */}
+                    <div>
+                      <div className="text-[9px] font-black text-muted uppercase tracking-widest mb-2 flex items-center justify-between">
+                        <span>Diferencias Detalladas por Moneda y Método</span>
+                        <span className="text-[8px] font-bold text-muted">{info?.details.length || 0} desajustes</span>
+                      </div>
+
+                      <div className="border border-base rounded-2xl overflow-hidden">
+                        <table className="w-full text-left border-collapse text-[10px]">
+                          <thead>
+                            <tr className="bg-subtle border-b border-base text-[8px] font-black text-muted uppercase tracking-wider">
+                              <th className="px-3 py-2">Moneda / Método</th>
+                              <th className="px-3 py-2 text-right">Saldo Esperado</th>
+                              <th className="px-3 py-2 text-right">Saldo Declarado</th>
+                              <th className="px-3 py-2 text-right">Diferencia</th>
+                              <th className="px-3 py-2 text-right">Equivalente CUP</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-base">
+                            {(info?.details || []).map((d, i) => {
+                              const rate = currencies.find(c => c.code === d.currencyCode)?.rateToBase || 1;
+                              const cupDiff = d.difference * rate;
+                              return (
+                                <tr key={i} className="hover:bg-subtle/40 transition-colors">
+                                  <td className="px-3 py-2">
+                                    <span className="font-black text-primary">{d.currencyCode}</span>
+                                    <span className="ml-1.5 text-[8px] uppercase font-bold text-muted bg-subtle px-1.5 py-0.5 rounded border border-base">
+                                      {d.method === 'cash' ? 'Efectivo' : 'Transferencia'}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2 text-right font-mono text-muted">
+                                    {formatMoney(d.expected, d.currencyCode)}
+                                  </td>
+                                  <td className="px-3 py-2 text-right font-mono font-bold text-primary">
+                                    {formatMoney(d.actual, d.currencyCode)}
+                                  </td>
+                                  <td className={cn("px-3 py-2 text-right font-mono font-black", d.difference > 0 ? "text-emerald-600" : "text-rose-600")}>
+                                    {d.difference > 0 ? '+' : ''}{formatMoney(d.difference, d.currencyCode)}
+                                  </td>
+                                  <td className={cn("px-3 py-2 text-right font-mono font-black", cupDiff > 0 ? "text-emerald-600" : "text-rose-600")}>
+                                    {cupDiff > 0 ? '+' : ''}{formatMoney(cupDiff, baseCurrency.code)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {(!info || info.details.length === 0) && (
+                              <tr>
+                                <td colSpan={5} className="px-4 py-4 text-center text-muted text-[9px] font-bold uppercase">
+                                  No se registraron diferencias aritméticas en las monedas.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Posible producto coincidente */}
+                    {info && info.matchingProducts && info.matchingProducts.length > 0 && (
+                      <div className="p-3 rounded-2xl bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 space-y-1.5">
+                        <div className="text-[8px] font-black text-amber-800 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <Brain className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Detección de Coincidencia de Catálogo:</span>
+                        </div>
+                        <p className="text-[9px] text-muted font-medium">
+                          El monto del descuadre coincide con el precio de los siguientes productos:
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {info.matchingProducts.map((m, idx) => (
+                            <div key={idx} className="flex flex-wrap gap-1">
+                              {m.matchedProducts.map((p: any) => (
+                                <span key={p.id} className="text-[8px] font-black bg-white dark:bg-slate-800 text-primary px-2 py-0.5 rounded-lg border border-amber-300 dark:border-amber-800 shadow-2xs">
+                                  {p.name} (${p.price} {m.currencyCode})
+                                </span>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Panel de Auditoría y Resolución Editable */}
+                    <div className="p-3.5 rounded-2xl bg-subtle border border-base space-y-3">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <ListChecks className="w-4 h-4 text-indigo-600" />
+                          <span className="text-[9px] font-black uppercase text-primary tracking-wider">
+                            Dictamen y Notas de Auditoría
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[8px] font-bold text-muted uppercase">Estado:</span>
+                          <select
+                            value={editingAuditStatus}
+                            onChange={(e) => setEditingAuditStatus(e.target.value as any)}
+                            className="px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-secondary border border-base outline-none cursor-pointer text-primary"
+                          >
+                            <option value="pending_review">⚠️ Pendiente de Revisión</option>
+                            <option value="reviewed">✓ Auditado / Aclarado</option>
+                            <option value="resolved">★ Resuelto y Cuadrado</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <textarea
+                          value={editingAuditNotes}
+                          onChange={(e) => setEditingAuditNotes(e.target.value)}
+                          placeholder="Escriba las conclusiones de la auditoría, justificación del descuadre o acuerdos tomados con el cajero..."
+                          rows={3}
+                          className="w-full bg-secondary border border-base rounded-xl p-2.5 text-xs text-primary placeholder:text-muted focus:border-indigo-500 outline-none resize-none transition-colors"
+                        />
+                      </div>
+
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateCashSession(session.id, {
+                              auditStatus: editingAuditStatus,
+                              auditNotes: editingAuditNotes
+                            });
+                            setSelectedDiscrepancyDetailSession({
+                              ...session,
+                              auditStatus: editingAuditStatus,
+                              auditNotes: editingAuditNotes
+                            });
+                            if (addNotification) addNotification("Notas y estado de auditoría guardados", "success");
+                          }}
+                          className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>Guardar Auditoría</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Tickets y Movimientos en este Turno */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[9px]">
+                      {/* Tickets del Turno */}
+                      <div className="p-3 bg-secondary rounded-2xl border border-base space-y-2">
+                        <div className="flex items-center justify-between text-muted font-black uppercase text-[8px] tracking-wider">
+                          <span>Ventas del Turno ({sessionTx.length})</span>
+                          <span className="text-primary font-black">{formatMoney(totalSalesInSession)}</span>
+                        </div>
+                        <div className="max-h-36 overflow-y-auto space-y-1 custom-scrollbar">
+                          {sessionTx.map(t => (
+                            <div key={t.id} className="p-1.5 bg-subtle rounded-lg border border-base flex items-center justify-between text-[8px]">
+                              <div>
+                                <span className="font-bold text-primary">#{t.id}</span>
+                                <span className="text-muted ml-1 font-mono">{new Date(t.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              </div>
+                              <span className="font-black text-indigo-600 dark:text-indigo-400">{formatMoney(t.total)}</span>
+                            </div>
+                          ))}
+                          {sessionTx.length === 0 && (
+                            <p className="text-center py-4 text-muted text-[8px]">Sin ventas en este turno.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Movimientos del Turno */}
+                      <div className="p-3 bg-secondary rounded-2xl border border-base space-y-2">
+                        <div className="flex items-center justify-between text-muted font-black uppercase text-[8px] tracking-wider">
+                          <span>Movimientos de Caja ({movementsInSession.length})</span>
+                          <span className="text-muted text-[7px]">Egresos / Ingresos</span>
+                        </div>
+                        <div className="max-h-36 overflow-y-auto space-y-1 custom-scrollbar">
+                          {movementsInSession.map(m => (
+                            <div key={m.id} className="p-1.5 bg-subtle rounded-lg border border-base flex items-center justify-between text-[8px]">
+                              <div className="truncate mr-2">
+                                <span className={cn("font-black mr-1", m.type === 'income' ? "text-emerald-600" : "text-rose-600")}>
+                                  {m.type === 'income' ? '+IN' : '-OUT'}
+                                </span>
+                                <span className="text-primary font-medium">{m.description}</span>
+                              </div>
+                              <span className={cn("font-black shrink-0 font-mono", m.type === 'income' ? "text-emerald-600" : "text-rose-600")}>
+                                {formatMoney(m.amount, m.currencyCode)}
+                              </span>
+                            </div>
+                          ))}
+                          {movementsInSession.length === 0 && (
+                            <p className="text-center py-4 text-muted text-[8px]">Sin movimientos de caja registrados.</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div className="p-3 sm:p-4 bg-subtle border-t border-base shrink-0 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handlePrintDiscrepancyTicket(session)}
+                        className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 rounded-xl text-[9px] font-black uppercase tracking-wider border border-indigo-200 dark:border-indigo-800 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>Imprimir Comprobante Descuadre</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handlePrintShiftTicket(session.id)}
+                        className="px-3 py-1.5 bg-secondary hover:bg-subtle text-primary rounded-xl text-[9px] font-black uppercase tracking-wider border border-base transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>Ticket Completo Turno</span>
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDiscrepancyDetailSession(null)}
+                      className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-sm active:scale-95"
+                    >
+                      Cerrar
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Detalle de Movimiento de Caja (Egreso / Ingreso) */}
+      {selectedMovementDetail && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[95] flex items-center justify-center p-2 sm:p-4 overflow-hidden animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-md max-h-[94vh] sm:max-h-[90vh] flex flex-col overflow-hidden border border-base">
+            {(() => {
+              const m = selectedMovementDetail;
+              const dateObj = new Date(m.date);
+              const curr = currencies.find(c => c.code === m.currencyCode);
+              const rate = curr?.rateToBase || 1;
+              const cupAmount = m.amount * rate;
+
+              return (
+                <>
+                  <div className={cn(
+                    "p-4 sm:p-5 border-b border-base flex items-center justify-between shrink-0",
+                    m.type === 'income' ? "bg-emerald-50/50 dark:bg-emerald-950/30" : "bg-rose-50/50 dark:bg-rose-950/30"
+                  )}>
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "p-2.5 rounded-2xl",
+                        m.type === 'income' ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+                      )}>
+                        {m.type === 'income' ? <ArrowUpRight className="w-5 h-5" /> : <ArrowDownRight className="w-5 h-5" />}
+                      </div>
+                      <div>
+                        <span className={cn(
+                          "text-[8px] font-black uppercase tracking-wider block",
+                          m.type === 'income' ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"
+                        )}>
+                          {m.type === 'income' ? 'Ingreso de Caja (Entrada)' : 'Egreso de Caja (Gasto Operativo)'}
+                        </span>
+                        <h3 className="text-sm font-black text-primary uppercase tracking-tight">
+                          Vale #{m.id.slice(0, 12)}
+                        </h3>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setSelectedMovementDetail(null)}
+                      className="p-1.5 hover:bg-subtle rounded-full transition-colors text-muted hover:text-primary cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 custom-scrollbar text-primary">
+                    <div className="p-4 rounded-2xl bg-subtle border border-base text-center">
+                      <span className="text-[8px] font-black uppercase text-muted tracking-widest block mb-1">
+                        Importe del Movimiento
+                      </span>
+                      <p className={cn("text-2xl font-black font-mono", m.type === 'income' ? "text-emerald-600" : "text-rose-600")}>
+                        {m.type === 'income' ? '+' : '-'}{formatMoney(m.amount, m.currencyCode)}
+                      </p>
+                      {m.currencyCode !== baseCurrency.code && (
+                        <p className="text-[10px] font-bold text-muted mt-1">
+                          Equivalente en moneda base: {formatMoney(cupAmount, baseCurrency.code)}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-[9px]">
+                      <div className="bg-subtle p-2.5 rounded-xl border border-base">
+                        <span className="text-muted font-black uppercase block text-[7px]">Turno</span>
+                        <p className="font-black text-indigo-600 dark:text-indigo-400 mt-0.5">{m.turnLabel}</p>
+                      </div>
+                      <div className="bg-subtle p-2.5 rounded-xl border border-base">
+                        <span className="text-muted font-black uppercase block text-[7px]">Sucursal</span>
+                        <p className="font-bold text-primary mt-0.5">{m.branchName}</p>
+                      </div>
+                      <div className="bg-subtle p-2.5 rounded-xl border border-base">
+                        <span className="text-muted font-black uppercase block text-[7px]">Responsable</span>
+                        <p className="font-bold text-primary mt-0.5">{m.workerName}</p>
+                      </div>
+                      <div className="bg-subtle p-2.5 rounded-xl border border-base">
+                        <span className="text-muted font-black uppercase block text-[7px]">Fecha y Hora</span>
+                        <p className="font-bold text-primary mt-0.5">{dateObj.toLocaleString('es-CU')}</p>
+                      </div>
+                    </div>
+
+                    <div className="bg-subtle p-3 rounded-2xl border border-base">
+                      <span className="text-[8px] font-black uppercase text-muted tracking-wider block mb-1">
+                        Concepto / Justificación:
+                      </span>
+                      <p className="text-xs font-bold text-primary leading-relaxed">
+                        {m.description || 'Sin descripción especificada'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-3 sm:p-4 bg-subtle border-t border-base shrink-0 flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handlePrintCashMovementTicket(m)}
+                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>Imprimir Vale Térmico (58mm)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMovementDetail(null)}
+                      className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-sm active:scale-95"
+                    >
+                      Cerrar
+                    </button>
                   </div>
                 </>
               );
