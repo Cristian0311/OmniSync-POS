@@ -235,6 +235,7 @@ export interface SalarySettlement {
   baseSalary: number;
   salesGoal?: number;
   commissions: number;
+  discrepancyDeduction?: number;
   total: number;
   date: string;
   status: 'pending' | 'paid' | 'cancelled' | 'waiting';

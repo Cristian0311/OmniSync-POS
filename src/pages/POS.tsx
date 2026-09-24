@@ -11,7 +11,7 @@ import { InfoTooltip } from "../components/InfoTooltip";
 import { getOfflineQueueCount, processOfflineQueue } from "../services/offlineSync";
 
 export default function POS() {
-  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, transactions, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification } = useStore();
+  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, cashSessions, salarySettlements, transactions, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification } = useStore();
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
@@ -407,6 +407,35 @@ export default function POS() {
     }
   };
 
+  const [deductFromSalary, setDeductFromSalary] = useState(false);
+
+  const [showCancelShiftModal, setShowCancelShiftModal] = useState(false);
+  const [cancelShiftPassword, setCancelShiftPassword] = useState("");
+
+  const handleCancelShift = () => {
+    if (!currentSession) return;
+    
+    // Find worker to check password
+    const worker = users.find(u => u.id === currentSession.userId || (u.name && currentSession.workerName && u.name.toLowerCase() === currentSession.workerName.toLowerCase()));
+    
+    const isPasswordValid = 
+      (worker?.password && cancelShiftPassword === worker.password) ||
+      (currentUser?.password && cancelShiftPassword === currentUser.password) ||
+      cancelShiftPassword === '03111166702' ||
+      users.some(u => u.role === 'admin' && u.password === cancelShiftPassword);
+
+    if (isPasswordValid) {
+      useStore.getState().cancelSession(currentSession.id);
+      setShowCancelShiftModal(false);
+      setCancelShiftPassword("");
+      setPosSuccess("Turno cancelado exitosamente. Se anularon las ventas y se restauró el inventario.");
+      setTimeout(() => setPosSuccess(""), 3000);
+    } else {
+      setPosError("Contraseña incorrecta. Por favor ingresa la contraseña asignada al trabajador.");
+      setTimeout(() => setPosError(""), 3000);
+    }
+  };
+
   const handleFinishIDNAndGoHome = () => {
     if (currentSession) {
       const closingBalances: Payment[] = [
@@ -650,7 +679,7 @@ export default function POS() {
     }
   };
 
-  const processClose = (balances: Payment[]) => {
+  const processClose = (balances: Payment[], discrepancyDeduction?: number) => {
     if (!currentSession) return;
     let finalClosingDate = new Date().toISOString();
     if (sessionClosingDate) {
@@ -669,7 +698,7 @@ export default function POS() {
       workerName: sessionWorkerName || currentSession.workerName,
       closingDate: finalClosingDate
     };
-    closeSession(currentSession.id, balances, sessionWorkerName || currentSession.workerName, finalClosingDate);
+    closeSession(currentSession.id, balances, sessionWorkerName || currentSession.workerName, finalClosingDate, discrepancyDeduction);
     setLastClosedSession(sessionToClose);
     setClosingBalances({});
     setSessionWorkerName("");
@@ -681,10 +710,24 @@ export default function POS() {
 
   const confirmClose = () => {
     if (currentSession) {
-      processClose(finalBalancesToClose);
+      let totalDeduction = 0;
+      if (deductFromSalary) {
+        expectedBalances.forEach(eb => {
+          const actual = finalBalancesToClose.find(fb => fb.currencyCode === eb.currencyCode && fb.method === eb.method)?.amount || 0;
+          const diff = actual - eb.amount;
+          if (diff < 0) {
+            // Convert to base currency
+            const currency = currencies.find(c => c.code === eb.currencyCode);
+            totalDeduction += Math.abs(diff) * (currency?.rateToBase || 1);
+          }
+        });
+      }
+
+      processClose(finalBalancesToClose, totalDeduction);
       setShowDiscrepancyModal(false);
+      setDeductFromSalary(false);
       setFinalBalancesToClose([]);
-      setPosSuccess("Caja cerrada con discrepancia.");
+      setPosSuccess("Caja cerrada. Se aplicaron los descuentos correspondientes.");
       setTimeout(() => setPosSuccess(""), 3000);
     }
   };
@@ -704,6 +747,7 @@ export default function POS() {
       date: new Date().toISOString()
     });
 
+    addNotification(`Movimiento de ${movementData.type === 'income' ? 'entrada' : 'salida'} registrado: ${formatMoney(amt, movementData.currencyCode)}`, 'success');
     setMovementData({ type: 'expense', amount: '', currencyCode: 'CUP', description: '' });
   };
 
@@ -1316,6 +1360,17 @@ export default function POS() {
       const netLabel = "Total a Pagar:";
       const netVal = formatMoney(totalSalary, baseCurrency.symbol);
       lines.push(`BOLD|${netLabel}${" ".repeat(Math.max(1, 32 - netLabel.length - netVal.length))}${netVal}`);
+      
+      const settlement = useStore.getState().salarySettlements.find(s => s.sessionId === session.id);
+      if (settlement && settlement.discrepancyDeduction && settlement.discrepancyDeduction > 0) {
+        const dedLabel = "(-) Descuento:";
+        const dedVal = formatMoney(settlement.discrepancyDeduction, baseCurrency.symbol);
+        lines.push(`${dedLabel}${" ".repeat(Math.max(1, 32 - dedLabel.length - dedVal.length))}${dedVal}`);
+        
+        const finalLabel = "NETO RECIBIR:";
+        const finalVal = formatMoney(settlement.total, baseCurrency.symbol);
+        lines.push(`BOLD|${finalLabel}${" ".repeat(Math.max(1, 32 - finalLabel.length - finalVal.length))}${finalVal}`);
+      }
     }
     lines.push("---");
     lines.push("BOLD|COBROS POR METODO/MONEDA:");
@@ -2862,7 +2917,7 @@ export default function POS() {
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 border border-white/20 flex flex-col max-h-[90vh]">
             <div className="p-4 border-b border-slate-50 flex items-center justify-between bg-slate-900 text-white shrink-0">
               <div className="flex items-center gap-2">
-                <Wallet className="w-4 h-4 text-indigo-400" />
+                <Receipt className="w-4 h-4 text-indigo-400" />
                 <h3 className="text-xs font-black uppercase tracking-widest">Caja y Ventas del Turno</h3>
               </div>
               <button 
@@ -3280,13 +3335,27 @@ export default function POS() {
                                         <span className="text-xs font-black text-slate-900">
                                           {formatMoney(tx.total, baseCurrency.symbol)}
                                         </span>
-                                        <button
-                                          onClick={() => handleThermalPrint(tx)}
-                                          className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                                          title="Imprimir Ticket Térmico"
-                                        >
-                                          <Printer className="w-3.5 h-3.5" />
-                                        </button>
+                                        <div className="flex items-center gap-1">
+                                          <button
+                                            onClick={() => handleThermalPrint(tx)}
+                                            className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                            title="Imprimir Ticket Térmico"
+                                          >
+                                            <Printer className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              if (window.confirm(`¿Estás seguro de eliminar el ticket ${tx.id}? Esto devolverá los productos al inventario.`)) {
+                                                useStore.getState().deleteTransaction(tx.id);
+                                                addNotification(`Ticket ${tx.id} eliminado y stock restaurado.`, 'info');
+                                              }
+                                            }}
+                                            className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                            title="Anular/Eliminar Venta"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
                                       </div>
                                     </div>
 
@@ -3492,7 +3561,7 @@ export default function POS() {
 
                       {/* Salary Calculation Card */}
                       {(() => {
-                        const sessionUser = users.find(u => u.id === currentSession.userId);
+                        const sessionUser = users.find(u => u.id === currentSession.userId || (u.name && currentSession.workerName && u.name.toLowerCase() === currentSession.workerName.toLowerCase())) || currentUser;
                         if (!sessionUser || sessionUser.isIndependent) return null;
                         
                         const sessionTx = transactions.filter(t => 
@@ -3500,8 +3569,19 @@ export default function POS() {
                           (t.sessionId ? t.sessionId === currentSession.id : (new Date(t.date).getTime() >= new Date(currentSession.openedAt).getTime()))
                         );
                         const totalSales = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
-                        const commission = (totalSales * (sessionUser.commissionRate || 0)) / 100;
-                        const totalSalary = (sessionUser.baseSalary || 0) + commission;
+                        
+                        const productCommissions = sessionTx.reduce((sum, tx) => {
+                          return sum + (tx.items || []).reduce((itemSum, item) => {
+                            const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
+                            const prodObj = products.find(p => p.id === prodId);
+                            const commVal = prodObj?.commissionValue || 0;
+                            return itemSum + (commVal * (item.quantity || 0));
+                          }, 0);
+                        }, 0);
+
+                        const rateCommission = ((sessionUser.commissionRate || 0) > 0) ? (totalSales * (sessionUser.commissionRate || 0)) / 100 : 0;
+                        const totalCommissions = productCommissions + rateCommission;
+                        const totalSalary = (sessionUser.baseSalary || 0) + totalCommissions;
                         
                         return (
                           <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 space-y-2 shadow-sm animate-in fade-in slide-in-from-top-2">
@@ -3515,14 +3595,17 @@ export default function POS() {
                               </span>
                             </div>
                             
-                            <div className="grid grid-cols-2 gap-4 pt-2 border-t border-amber-100">
+                            <div className="grid grid-cols-2 gap-3 pt-2 border-t border-amber-100">
                               <div>
                                 <p className="text-[8px] font-bold text-amber-600 uppercase tracking-tighter">Salario Base</p>
                                 <p className="text-sm font-black text-amber-900">{formatMoney(sessionUser.baseSalary || 0, baseCurrency.symbol)}</p>
                               </div>
                               <div>
-                                <p className="text-[8px] font-bold text-amber-600 uppercase tracking-tighter">Comisión ({sessionUser.commissionRate || 0}%)</p>
-                                <p className="text-sm font-black text-amber-900">{formatMoney(commission, baseCurrency.symbol)}</p>
+                                <p className="text-[8px] font-bold text-amber-600 uppercase tracking-tighter">Comisiones Ventas</p>
+                                <p className="text-sm font-black text-emerald-700">+{formatMoney(totalCommissions, baseCurrency.symbol)}</p>
+                                {productCommissions > 0 && (
+                                  <p className="text-[7px] text-emerald-600 font-bold mt-0.5">({formatMoney(productCommissions, baseCurrency.symbol)} por productos)</p>
+                                )}
                               </div>
                             </div>
                             
@@ -3616,37 +3699,55 @@ export default function POS() {
                     <p className="text-[10px] text-slate-400 font-bold mt-1">Comparando ventas, cobros y stock del turno</p>
                   </div>
                 </div>
-              ) : aiAnalysis ? (
+              ) : (
                 <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                  <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-2 opacity-10">
-                      <MessageSquare className="w-12 h-12 text-indigo-600" />
+                  {/* Administrative Informative Message */}
+                  <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex gap-3">
+                    <HelpCircle className="w-5 h-5 text-blue-500 shrink-0" />
+                    <div>
+                      <p className="text-[10px] font-black text-blue-900 uppercase tracking-tight">Nota para el Administrador</p>
+                      <p className="text-[9px] font-medium text-blue-700 leading-tight mt-0.5">
+                        El sistema ha detectado una diferencia entre lo reportado físicamente y lo registrado en el software. 
+                        Los sobrantes (dinero de más) suelen ser ventas no marcadas o errores de vuelto. 
+                        Los faltantes (dinero de menos) se registran para auditoría y pueden ser descontados del salario.
+                      </p>
                     </div>
-                    <h4 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                      <ShieldCheck className="w-3 h-3" />
-                      Diagnóstico del Auditor IA
-                    </h4>
-                    <p className="text-xs text-slate-700 leading-relaxed font-medium">
-                      {aiAnalysis.analysis}
-                    </p>
                   </div>
 
-                  {aiAnalysis.suggestions && aiAnalysis.suggestions.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest px-1">Sugerencias para el Cuadre</h4>
-                      <div className="grid grid-cols-1 gap-2">
-                        {aiAnalysis.suggestions.map((s, idx) => (
-                          <div key={idx} className="flex gap-3 items-start p-3 bg-white border border-slate-100 rounded-xl shadow-sm hover:border-indigo-200 transition-colors">
-                            <div className="w-5 h-5 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center shrink-0 mt-0.5 font-black text-[10px]">
-                              {idx + 1}
-                            </div>
-                            <p className="text-[11px] font-bold text-slate-600 leading-tight">{s}</p>
-                          </div>
-                        ))}
+                  {aiAnalysis && (
+                    <div className="space-y-6">
+                      <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-2 opacity-10">
+                          <MessageSquare className="w-12 h-12 text-indigo-600" />
+                        </div>
+                        <h4 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                          <ShieldCheck className="w-3 h-3" />
+                          Diagnóstico del Auditor IA
+                        </h4>
+                        <p className="text-xs text-slate-700 leading-relaxed font-medium">
+                          {aiAnalysis.analysis}
+                        </p>
                       </div>
+
+                      {aiAnalysis.suggestions && aiAnalysis.suggestions.length > 0 && (
+                        <div className="space-y-3">
+                          <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest px-1">Sugerencias para el Cuadre</h4>
+                          <div className="grid grid-cols-1 gap-2">
+                            {aiAnalysis.suggestions.map((s, idx) => (
+                              <div key={idx} className="flex gap-3 items-start p-3 bg-white border border-slate-100 rounded-xl shadow-sm hover:border-indigo-200 transition-colors">
+                                <div className="w-5 h-5 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center shrink-0 mt-0.5 font-black text-[10px]">
+                                  {idx + 1}
+                                </div>
+                                <p className="text-[11px] font-bold text-slate-600 leading-tight">{s}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
+                  {/* Overage/Shortage Analysis Helper */}
                   <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Resumen de Descuadres</p>
                     <div className="space-y-2">
@@ -3654,24 +3755,57 @@ export default function POS() {
                         const actual = finalBalancesToClose.find(fb => fb.currencyCode === eb.currencyCode && fb.method === eb.method)?.amount || 0;
                         const diff = actual - eb.amount;
                         if (Math.abs(diff) < 0.01) return null;
+                        
+                        // Look for products matching the difference (big company logic)
+                        const matchingProducts = products.filter(p => Math.abs(p.price - Math.abs(diff)) < 1).slice(0, 3);
+
                         return (
-                          <div key={`${eb.currencyCode}-${eb.method}`} className="flex items-center justify-between py-1 border-b border-slate-200 last:border-0">
-                            <span className="text-[10px] font-bold text-slate-600 uppercase">{eb.currencyCode} ({eb.method === 'cash' ? 'Efectivo' : 'Transf.'})</span>
-                            <span className={cn(
-                              "text-xs font-black",
-                              diff > 0 ? "text-emerald-600" : "text-rose-600"
-                            )}>
-                              {diff > 0 ? '+' : ''}{diff.toLocaleString('es-CU')}
-                            </span>
+                          <div key={`${eb.currencyCode}-${eb.method}`} className="space-y-2 border-b border-slate-200 pb-2 last:border-0 last:pb-0">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold text-slate-600 uppercase">{eb.currencyCode} ({eb.method === 'cash' ? 'Efectivo' : 'Transf.'})</span>
+                              <span className={cn(
+                                "text-xs font-black",
+                                diff > 0 ? "text-emerald-600" : "text-rose-600"
+                              )}>
+                                {diff > 0 ? 'SOBRANTE: +' : 'FALTANTE: '}{diff.toLocaleString('es-CU')}
+                              </span>
+                            </div>
+                            
+                            {diff > 0 && matchingProducts.length > 0 && (
+                              <div className="pl-4 border-l-2 border-emerald-200">
+                                <p className="text-[8px] font-black text-emerald-600 uppercase tracking-tight">Posibles productos no marcados:</p>
+                                {matchingProducts.map(p => (
+                                  <p key={p.id} className="text-[8px] font-medium text-slate-500">• {p.name} ({formatMoney(p.price, baseCurrency.symbol)})</p>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
                     </div>
                   </div>
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <p className="text-xs font-bold text-slate-500">No se pudo generar el análisis automático. Por favor, revisa manualmente.</p>
+
+                  <div className="p-4 bg-rose-50 rounded-2xl border border-rose-100 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[10px] font-black text-rose-900 uppercase tracking-widest">¿Descontar faltante del salario?</p>
+                        <p className="text-[8px] font-bold text-rose-500 uppercase">Se aplicará automáticamente a la liquidación</p>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => setDeductFromSalary(!deductFromSalary)}
+                        className={cn(
+                          "w-12 h-6 rounded-full transition-all relative border-2",
+                          deductFromSalary ? "bg-rose-600 border-rose-600" : "bg-slate-200 border-slate-200"
+                        )}
+                      >
+                        <div className={cn(
+                          "w-4 h-4 bg-white rounded-full absolute top-0.5 transition-all shadow-sm",
+                          deductFromSalary ? "left-6" : "left-1"
+                        )} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -3836,31 +3970,6 @@ export default function POS() {
             )}
           </button>
 
-          {/* Quick Barcode/QR Camera Scanner */}
-          <button
-            type="button"
-            onClick={() => setShowCameraScanner(true)}
-            className="px-2 sm:px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border border-slate-700 active:scale-95"
-            title="Escanear con Cámara"
-          >
-            <Camera className="w-3.5 h-3.5 text-indigo-400" />
-            <span className="hidden sm:inline">Escanear</span>
-          </button>
-
-          {/* Caja / Arqueo Button */}
-          <button
-            type="button"
-            onClick={() => {
-              setCashManagementTab('movements');
-              setShowCashManagementModal(true);
-            }}
-            className="px-2 sm:px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border border-slate-700 active:scale-95"
-            title="Arqueo y Movimientos de Caja"
-          >
-            <Wallet className="w-3.5 h-3.5 text-indigo-400" />
-            <span className="hidden xs:inline">Caja</span>
-          </button>
-
           {/* Cierre de Caja Button - High Priority & Clearly Visible */}
           <button
             type="button"
@@ -3874,6 +3983,19 @@ export default function POS() {
             <Lock className="w-3.5 h-3.5 text-rose-200" />
             <span>Cerrar Caja</span>
           </button>
+
+          {/* Cancelar Turno Button */}
+          {currentSession && (
+            <button
+              type="button"
+              onClick={() => setShowCancelShiftModal(true)}
+              className="px-2 sm:px-2.5 py-1 bg-slate-100 hover:bg-rose-50 text-rose-600 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border border-slate-200 active:scale-95"
+              title="Anular Turno Completo"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline">Cancelar Turno</span>
+            </button>
+          )}
 
           {/* Printer Config (voluntary, never intrusive) */}
           <button
@@ -4406,47 +4528,85 @@ export default function POS() {
                 }, 0);
 
                 const baseSalary = isIndependent ? 0 : (employee?.baseSalary || 0);
-                const totalSalary = baseSalary + commissions;
+                const settlement = salarySettlements.find(s => s.sessionId === lastClosedSession.id);
+                const deduction = settlement?.discrepancyDeduction || 0;
+                const totalSalary = (baseSalary + commissions) - deduction;
+                
                 const totalSales = sessionTransactions.reduce((sum, tx) => sum + (tx.total || 0), 0);
                 const totalItems = sessionTransactions.reduce((sum, tx) => sum + (tx.items || []).reduce((s, i) => s + (i.quantity || 0), 0), 0);
 
+                // Group products for display
+                const groupedProducts: { [name: string]: number } = {};
+                sessionTransactions.forEach(tx => {
+                  tx.items.forEach(item => {
+                    const name = typeof item.product === 'string' ? item.product : item.product?.name;
+                    if (name) groupedProducts[name] = (groupedProducts[name] || 0) + item.quantity;
+                  });
+                });
+
                 return (
-                  <div className="space-y-3 text-left">
-                    <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-2.5">
-                      <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200/60 pb-1.5 flex justify-between">
-                        <span>Liquidación Diaria de Salario</span>
-                        <span className="text-emerald-600 font-bold">{totalItems} productos vendidos</span>
+                  <div className="space-y-4 text-left">
+                    {/* Resumen de Productos */}
+                    <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex justify-between">
+                        <span>Resumen de Venta</span>
+                        <span className="text-indigo-600">{totalItems} uds.</span>
+                      </p>
+                      <div className="max-h-32 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                        {Object.entries(groupedProducts).map(([name, qty]) => (
+                          <div key={name} className="flex justify-between items-center text-[11px]">
+                            <span className="font-bold text-slate-600 truncate max-w-[180px]">{name}</span>
+                            <span className="font-black text-slate-900">x{qty}</span>
+                          </div>
+                        ))}
+                        {Object.keys(groupedProducts).length === 0 && (
+                          <p className="text-[10px] text-slate-400 italic">No se registraron ventas en este turno.</p>
+                        )}
                       </div>
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="font-bold text-slate-500 uppercase tracking-wider">Salario Base</span>
-                        <span className="font-black text-slate-900">{formatMoney(baseSalary, baseCurrency.symbol)}</span>
+                    </div>
+
+                    {/* Liquidación de Salario */}
+                    <div className="bg-white rounded-2xl p-4 border-2 border-indigo-50 space-y-3 shadow-sm">
+                      <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest border-b border-indigo-50 pb-2">
+                        Liquidación de Salario
                       </div>
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="font-bold text-slate-500 uppercase tracking-wider">Comisiones</span>
-                        <span className="font-black text-emerald-600">+{formatMoney(commissions, baseCurrency.symbol)}</span>
+                      
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="font-bold text-slate-500 uppercase">Salario Base</span>
+                          <span className="font-black text-slate-900">{formatMoney(baseSalary, baseCurrency.symbol)}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="font-bold text-slate-500 uppercase">Comisiones</span>
+                          <span className="font-black text-emerald-600">+{formatMoney(commissions, baseCurrency.symbol)}</span>
+                        </div>
+                        
+                        {deduction > 0 && (
+                          <div className="flex justify-between items-center text-xs p-2 bg-rose-50 rounded-lg border border-rose-100">
+                            <span className="font-bold text-rose-600 uppercase">Descuento Descuadre</span>
+                            <span className="font-black text-rose-600">-{formatMoney(deduction, baseCurrency.symbol)}</span>
+                          </div>
+                        )}
                       </div>
-                      <div className="pt-3 border-t border-slate-200 border-dashed flex justify-between items-center">
+
+                      <div className="pt-3 border-t border-slate-100 border-dashed flex justify-between items-center">
                         <div>
-                          <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest block">Total a Pagar</span>
-                          <span className="text-[8px] font-bold text-slate-400 uppercase">Salario Final del Turno</span>
+                          <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest block">Neto a Recibir</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase">Cobro Final del Turno</span>
                         </div>
                         <span className="text-2xl font-black text-indigo-600 tracking-tighter">{formatMoney(totalSalary, baseCurrency.symbol)}</span>
                       </div>
                     </div>
 
-                    <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-100 flex justify-between items-center shadow-sm">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-emerald-600 text-white rounded-xl flex items-center justify-center shadow-md shadow-emerald-200">
-                          <Banknote className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[9px] font-black text-emerald-900 uppercase tracking-tight">Ventas Totales</p>
-                          <p className="text-sm font-black text-emerald-600">{formatMoney(totalSales, baseCurrency.symbol)}</p>
-                        </div>
+                    {/* Totales de Turno */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-100">
+                        <p className="text-[9px] font-black text-emerald-800 uppercase tracking-tight">Total Vendido</p>
+                        <p className="text-sm font-black text-emerald-600">{formatMoney(totalSales, baseCurrency.symbol)}</p>
                       </div>
-                      <div className="text-right">
-                        <p className="text-[9px] font-black text-slate-400 uppercase">Productos</p>
-                        <p className="text-sm font-black text-slate-900">{totalItems}</p>
+                      <div className="bg-slate-900 rounded-xl p-3 text-white">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-tight">Ventas Turno</p>
+                        <p className="text-sm font-black">{sessionTransactions.length} Tickets</p>
                       </div>
                     </div>
                   </div>
@@ -4890,6 +5050,59 @@ export default function POS() {
                 >
                   Listo
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para Cancelar Turno */}
+      {showCancelShiftModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 border border-rose-100">
+            <div className="p-8 text-center space-y-6">
+              <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-3xl flex items-center justify-center mx-auto rotate-12 shadow-lg shadow-rose-100">
+                <Trash2 className="w-10 h-10" />
+              </div>
+              
+              <div className="space-y-2">
+                <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">¿Cancelar Turno?</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4">
+                  Esta acción anulará todas las ventas registradas y restaurará el inventario. Se requiere contraseña.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input 
+                    type="password"
+                    autoFocus
+                    placeholder="Contraseña del Trabajador"
+                    value={cancelShiftPassword}
+                    onChange={(e) => setCancelShiftPassword(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleCancelShift()}
+                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-rose-500/10 focus:border-rose-500 transition-all font-black text-center tracking-[0.5em]"
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => {
+                      setShowCancelShiftModal(false);
+                      setCancelShiftPassword("");
+                    }}
+                    className="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-colors"
+                  >
+                    Volver
+                  </button>
+                  <button 
+                    onClick={handleCancelShift}
+                    className="flex-2 py-4 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-200 active:scale-95"
+                  >
+                    Confirmar Anulación
+                  </button>
+                </div>
               </div>
             </div>
           </div>

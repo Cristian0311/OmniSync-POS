@@ -159,7 +159,8 @@ interface AppState {
   // Caja
   cashSessions: CashRegisterSession[];
   openSession: (session: CashRegisterSession) => void;
-  closeSession: (sessionId: string, closingBalances: import('../types').Payment[], workerName?: string, closingDate?: string) => void;
+  closeSession: (sessionId: string, closingBalances: import('../types').Payment[], workerName?: string, closingDate?: string, discrepancyDeduction?: number) => void;
+  cancelSession: (sessionId: string) => void;
   deleteCashSession: (id: string) => void;
   getCurrentSession: (branchId: string, userId: string) => CashRegisterSession | undefined;
 
@@ -1190,6 +1191,27 @@ export const useStore = create<AppState>()(
     });
   },
 
+  cancelSession: (sessionId: string) => {
+    const session = get().cashSessions.find(s => s.id === sessionId);
+    if (!session) return;
+
+    // 1. Find all transactions from this session
+    const sessionTxs = get().transactions.filter(t => 
+      t.sessionId === session.id || 
+      (t.branchId === session.branchId && 
+       new Date(t.date).getTime() >= new Date(session.openedAt).getTime() &&
+       (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
+    );
+
+    // 2. Void each transaction (restores stock)
+    sessionTxs.forEach(tx => {
+      get().deleteTransaction(tx.id);
+    });
+
+    // 3. Delete the session
+    get().deleteCashSession(sessionId);
+  },
+
   deleteCashSession: (id: string) => {
     set((state) => {
       const sessionToDelete = state.cashSessions.find(s => s.id === id);
@@ -1315,7 +1337,7 @@ export const useStore = create<AppState>()(
     }));
     pushCashSessionToSupabase(sessionWithSequentialId).catch(() => {});
   },
-  closeSession: (sessionId, closingBalances, workerName, closingDate) => {
+  closeSession: (sessionId, closingBalances, workerName, closingDate, discrepancyDeduction) => {
     const finalClosingDate = closingDate || new Date().toISOString();
     const session = get().cashSessions.find(s => s.id === sessionId);
     if (!session) return;
@@ -1339,7 +1361,8 @@ export const useStore = create<AppState>()(
     }, 0);
 
     const baseSalary = user?.baseSalary || 0;
-    const totalSalary = baseSalary + commissions;
+    const deduction = discrepancyDeduction || 0;
+    const totalSalary = (baseSalary + commissions) - deduction;
 
     const finalSellerName = workerName || session.workerName || user?.name || 'Vendedor';
 
@@ -1350,6 +1373,7 @@ export const useStore = create<AppState>()(
       sessionId: sessionId,
       baseSalary: baseSalary,
       commissions: commissions,
+      discrepancyDeduction: deduction,
       total: totalSalary,
       date: finalClosingDate,
       status: 'pending'
