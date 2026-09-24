@@ -35,8 +35,21 @@ export default function Transfers() {
     transferProductsBulk,
     transfers, 
     currentBranchId,
-    addNotification
+    addNotification,
+    users
   } = useStore();
+
+  const getBranchDisplayName = (b: { id: string; name: string }) => {
+    const assignedUser = (users || []).find(u => (u.assignedBranchId === b.id || u.branchId === b.id) && u.isIndependent);
+    if (assignedUser) {
+      return `${b.name} (Vendedor IDN: ${assignedUser.name})`;
+    }
+    const standardWorker = (users || []).find(u => (u.assignedBranchId === b.id || u.branchId === b.id));
+    if (standardWorker) {
+      return `${b.name} (${standardWorker.name})`;
+    }
+    return b.name;
+  };
 
   const [activeTab, setActiveTab] = useState<'history' | 'new'>('history');
   const [bulkTransferItems, setBulkTransferItems] = useState<{ productId: string, quantity: number, variant?: string }[]>([]);
@@ -437,7 +450,7 @@ export default function Transfers() {
                     className="w-full bg-white dark:bg-slate-800 border border-slate-200 rounded-xl pl-10 pr-3 py-3 text-xs font-black uppercase outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm appearance-none"
                   >
                     {branches.map(b => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
+                      <option key={b.id} value={b.id}>{getBranchDisplayName(b)}</option>
                     ))}
                   </select>
                 </div>
@@ -453,7 +466,7 @@ export default function Transfers() {
                   >
                     <option value="">Seleccionar destino...</option>
                     {branches.filter(b => b.id !== bulkTransferSourceId).map(b => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
+                      <option key={b.id} value={b.id}>{getBranchDisplayName(b)}</option>
                     ))}
                   </select>
                 </div>
@@ -677,7 +690,7 @@ export default function Transfers() {
                       >
                         {branches.map(b => (
                           <option key={b.id} value={b.id}>
-                            {b.name}
+                            {getBranchDisplayName(b)}
                           </option>
                         ))}
                       </select>
@@ -702,7 +715,7 @@ export default function Transfers() {
                         <option value="">Seleccionar destino...</option>
                         {branches.filter(b => b.id !== effectiveFromBranchId).map(b => (
                           <option key={b.id} value={b.id}>
-                            {b.name}
+                            {getBranchDisplayName(b)}
                           </option>
                         ))}
                       </select>

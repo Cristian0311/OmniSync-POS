@@ -289,7 +289,7 @@ export default function POS() {
         )?.settlementPrice || product.costPrice || 0;
 
         const physicalCount = idnPhysicalCounts[product.id] ?? invItem.quantity;
-        const soldQty = invItem.quantity - physicalCount;
+        const soldQty = Math.max(0, invItem.quantity - physicalCount);
 
         if (soldQty > 0) {
           const subtotal = soldQty * settlementPrice;
@@ -303,10 +303,10 @@ export default function POS() {
             price: settlementPrice,
             subtotal
           });
+        } else if (physicalCount > invItem.quantity) {
+          // If physical count was manually increased above system stock without sales, update stock directly
+          setInventoryQuantity(product.id, branchId, physicalCount);
         }
-
-        // Adjust system inventory to match verified physical count
-        setInventoryQuantity(product.id, branchId, physicalCount);
       }
 
       // Permitir liquidación con 0 ventas o 0 CUP de acuerdo a la solicitud del usuario
@@ -360,6 +360,7 @@ export default function POS() {
       };
 
       setShowIDNReceiptModal(receiptData);
+      setIdnPhysicalCounts({});
       setPosSuccess(`Liquidación de ${targetWorker.name} procesada correctamente.`);
       setTimeout(() => setPosSuccess(""), 3500);
       setShowConfirmIDNModal(false);
@@ -1671,10 +1672,12 @@ export default function POS() {
 
     const activeSellerId = currentSession?.userId || currentUser?.id || 'u1';
     const activeSellerName = currentSession?.workerName || currentUser?.name || 'Vendedor';
+    const sellerUser = (users || []).find(u => u.id === activeSellerId) || currentUser;
+    const effectiveBranchId = sellerUser?.assignedBranchId || currentSession?.branchId || currentBranchId || (branches[0]?.id || 'b1');
 
     const tx: import('../types').Transaction = {
       id: txId,
-      branchId: currentBranchId,
+      branchId: effectiveBranchId,
       userId: activeSellerId,
       sellerEmployeeIds: currentSession?.workingEmployeeIds?.length ? currentSession.workingEmployeeIds : [activeSellerId],
       cashierName: activeSellerName,

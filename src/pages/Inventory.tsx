@@ -20,6 +20,18 @@ export default function Inventory() {
   const currentBranchId = currentUser?.branchId || branches[0]?.id || '';
   const baseCurrency = getBaseCurrency();
 
+  const getBranchDisplayName = (b: { id: string; name: string }) => {
+    const assignedUser = (users || []).find(u => (u.assignedBranchId === b.id || u.branchId === b.id) && u.isIndependent);
+    if (assignedUser) {
+      return `${b.name} (Vendedor IDN: ${assignedUser.name})`;
+    }
+    const standardWorker = (users || []).find(u => (u.assignedBranchId === b.id || u.branchId === b.id));
+    if (standardWorker) {
+      return `${b.name} (${standardWorker.name})`;
+    }
+    return b.name;
+  };
+
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
 
@@ -521,7 +533,7 @@ export default function Inventory() {
                 >
                   <option value="all">Sucs: Todas</option>
                   {branches.map(b => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
+                    <option key={b.id} value={b.id}>{getBranchDisplayName(b)}</option>
                   ))}
                 </select>
                 <InfoTooltip text="Filtra por una sucursal específica para ver su stock local." position="bottom" />
@@ -1436,7 +1448,7 @@ export default function Inventory() {
                       <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-slate-200 dark:border-slate-700/60">
                         <div className="flex items-center gap-1.5 min-w-0">
                           <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                          <p className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight truncate">{branch.name}</p>
+                          <p className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight truncate">{getBranchDisplayName(branch)}</p>
                         </div>
                         <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 shrink-0 border border-indigo-200/50 dark:border-indigo-800/50">
                           {totalInBranch} uds
