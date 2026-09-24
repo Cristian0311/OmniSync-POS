@@ -3448,6 +3448,50 @@ export default function POS() {
                           {currentSession?.workerName || sessionWorkerName || currentUser?.name || 'Vendedor'}
                         </span>
                       </div>
+
+                      {/* Salary Calculation Card */}
+                      {(() => {
+                        const sessionUser = users.find(u => u.id === currentSession.userId);
+                        if (!sessionUser || sessionUser.isIndependent) return null;
+                        
+                        const sessionTx = transactions.filter(t => 
+                          t.branchId === currentBranchId && 
+                          (t.sessionId ? t.sessionId === currentSession.id : (new Date(t.date).getTime() >= new Date(currentSession.openedAt).getTime()))
+                        );
+                        const totalSales = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
+                        const commission = (totalSales * (sessionUser.commissionRate || 0)) / 100;
+                        const totalSalary = (sessionUser.baseSalary || 0) + commission;
+                        
+                        return (
+                          <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 space-y-2 shadow-sm animate-in fade-in slide-in-from-top-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <DollarSign className="w-4 h-4 text-amber-600" />
+                                <span className="text-[10px] font-black text-amber-900 uppercase tracking-widest">Liquidación del Turno</span>
+                              </div>
+                              <span className="text-xs font-black text-amber-900 uppercase">
+                                {sessionUser.name}
+                              </span>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-4 pt-2 border-t border-amber-100">
+                              <div>
+                                <p className="text-[8px] font-bold text-amber-600 uppercase tracking-tighter">Salario Base</p>
+                                <p className="text-sm font-black text-amber-900">{formatMoney(sessionUser.baseSalary || 0, baseCurrency.symbol)}</p>
+                              </div>
+                              <div>
+                                <p className="text-[8px] font-bold text-amber-600 uppercase tracking-tighter">Comisión ({sessionUser.commissionRate || 0}%)</p>
+                                <p className="text-sm font-black text-amber-900">{formatMoney(commission, baseCurrency.symbol)}</p>
+                              </div>
+                            </div>
+                            
+                            <div className="pt-2 border-t border-amber-100 flex justify-between items-center">
+                              <span className="text-[9px] font-black text-amber-900 uppercase">Total a Entregar</span>
+                              <span className="text-lg font-black text-amber-600">{formatMoney(totalSalary, baseCurrency.symbol)}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     <div className="space-y-3">
@@ -3737,14 +3781,14 @@ export default function POS() {
           {/* Header Sub-bar: Search & Categories */}
           <div className="p-2 sm:p-2.5 border-b border-slate-200/80 bg-white sticky top-0 z-30 space-y-1.5">
             <div className="flex flex-col sm:flex-row items-center gap-2">
-              <div className="relative flex-1 w-full">
+              <div className="relative flex-1 w-full order-2 sm:order-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
                 <input 
                   type="text" 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Buscar productos, SKUs o código..." 
-                  className="w-full pl-8 pr-8 py-1.5 sm:py-2 bg-subtle border border-base rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-xs font-medium text-primary placeholder:text-muted"
+                  className="w-full pl-8 pr-8 py-2 bg-subtle border border-base rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-xs font-black text-primary placeholder:text-muted shadow-sm"
                 />
                 {searchQuery && (
                   <button
@@ -3758,32 +3802,16 @@ export default function POS() {
                 )}
               </div>
               
-              <div className="flex items-center gap-1 w-full sm:w-auto overflow-x-auto scrollbar-hide pb-0.5 sm:pb-0">
-                <button 
-                  onClick={() => setActiveCategoryId("Todos")}
-                  className={cn(
-                    "px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap border",
-                    activeCategoryId === "Todos" 
-                      ? "bg-indigo-600 border-indigo-600 text-white shadow-xs scale-102" 
-                      : "bg-secondary border-base text-secondary hover:border-border hover:bg-subtle"
-                  )}
+              <div className="w-full sm:w-auto order-1 sm:order-2">
+                <select 
+                  value={activeCategoryId}
+                  onChange={(e) => setActiveCategoryId(e.target.value)}
+                  className="w-full sm:w-56 px-3 py-2 bg-white dark:bg-slate-800 border border-base rounded-xl text-[10px] font-black uppercase tracking-tight outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm appearance-none cursor-pointer"
+                  style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 24 24\' stroke=\'%2364748b\'%3E%3Cpath stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'2\' d=\'M19 9l-7 7-7-7\'%3E%3C/path%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.75rem center', backgroundSize: '1rem' }}
                 >
-                  Todos
-                </button>
-                {categories.map(category => (
-                  <button 
-                    key={category.id}
-                    onClick={() => setActiveCategoryId(category.id)}
-                    className={cn(
-                      "px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap border",
-                      activeCategoryId === category.id 
-                        ? "bg-indigo-600 border-indigo-600 text-white shadow-xs scale-102" 
-                        : "bg-secondary border-base text-secondary hover:border-border hover:bg-subtle"
-                    )}
-                  >
-                    {category.name}
-                  </button>
-                ))}
+                  <option value="Todos">Todas las Categorías</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
               </div>
             </div>
           </div>
@@ -3799,15 +3827,17 @@ export default function POS() {
                     onClick={() => handleProductClick(product)}
                     className="flex flex-col p-2 rounded-xl border border-base hover:border-indigo-500 hover:shadow-md transition-all active:scale-[0.98] bg-secondary relative overflow-hidden group shadow-2xs text-left"
                   >
-                    {/* Stock Indicator */}
-                    <div className="absolute top-1.5 left-1.5 z-20">
-                      <span className={cn(
-                        "text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-tight shadow-2xs border",
-                        stock > 5 ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800" : stock > 0 ? "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800" : "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800"
-                      )}>
-                        {stock} u.
-                      </span>
-                    </div>
+                    {/* Stock Indicator - Hidden for workers */}
+                    {currentUser?.role === 'admin' && (
+                      <div className="absolute top-1.5 left-1.5 z-20">
+                        <span className={cn(
+                          "text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-tight shadow-2xs border",
+                          stock > 5 ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800" : stock > 0 ? "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800" : "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800"
+                        )}>
+                          {stock} u.
+                        </span>
+                      </div>
+                    )}
 
                     {(product.warrantyDays ?? 0) > 0 && (
                       <div className="absolute top-1.5 right-1.5 bg-indigo-600 text-white text-[7px] font-black px-1.5 py-0.5 rounded-md shadow-2xs z-20 uppercase tracking-tight">
@@ -4269,15 +4299,29 @@ export default function POS() {
                         <span className="font-bold text-slate-500 uppercase tracking-wider">Comisiones</span>
                         <span className="font-black text-emerald-600">+{formatMoney(commissions, baseCurrency.symbol)}</span>
                       </div>
-                      <div className="pt-2.5 border-t border-slate-200 flex justify-between items-center">
-                        <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Total Salario a Pagar</span>
-                        <span className="text-xl font-black text-indigo-600">{formatMoney(totalSalary, baseCurrency.symbol)}</span>
+                      <div className="pt-3 border-t border-slate-200 border-dashed flex justify-between items-center">
+                        <div>
+                          <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest block">Total a Pagar</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase">Salario Final del Turno</span>
+                        </div>
+                        <span className="text-2xl font-black text-indigo-600 tracking-tighter">{formatMoney(totalSalary, baseCurrency.symbol)}</span>
                       </div>
                     </div>
 
-                    <div className="bg-indigo-50/50 rounded-xl p-3 border border-indigo-100 flex justify-between items-center text-[10px] font-black uppercase text-indigo-900">
-                      <span>Ventas Totales del Turno:</span>
-                      <span className="text-sm font-black">{formatMoney(totalSales, baseCurrency.symbol)}</span>
+                    <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-100 flex justify-between items-center shadow-sm">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-emerald-600 text-white rounded-xl flex items-center justify-center shadow-md shadow-emerald-200">
+                          <Banknote className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-black text-emerald-900 uppercase tracking-tight">Ventas Totales</p>
+                          <p className="text-sm font-black text-emerald-600">{formatMoney(totalSales, baseCurrency.symbol)}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[9px] font-black text-slate-400 uppercase">Productos</p>
+                        <p className="text-sm font-black text-slate-900">{totalItems}</p>
+                      </div>
                     </div>
                   </div>
                 );

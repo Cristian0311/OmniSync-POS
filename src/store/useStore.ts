@@ -1096,10 +1096,54 @@ export const useStore = create<AppState>()(
   },
 
   deleteTransaction: (id: string) => {
-    set((state) => ({
-      transactions: (state.transactions || []).filter(t => t.id !== id)
-    }));
-    deleteTransactionFromSupabase(id).catch(() => {});
+    set((state) => {
+      const transactionToDelete = (state.transactions || []).find(t => t.id === id);
+      if (!transactionToDelete) return state;
+
+      const updatedInventory = [...state.inventory];
+      
+      transactionToDelete.items.forEach(item => {
+        if (item.product.isKit && item.product.kitComponents) {
+          item.product.kitComponents.forEach(comp => {
+            const compIdx = updatedInventory.findIndex(i => 
+              i.productId === comp.productId && 
+              i.branchId === transactionToDelete.branchId
+            );
+            if (compIdx !== -1) {
+              updatedInventory[compIdx] = {
+                ...updatedInventory[compIdx],
+                quantity: updatedInventory[compIdx].quantity + (comp.quantity * item.quantity)
+              };
+              // Sync updated component inventory to Supabase
+              pushInventoryToSupabase(updatedInventory[compIdx]).catch(() => {});
+            }
+          });
+        } else {
+          const idx = updatedInventory.findIndex(i => 
+            i.productId === item.product.id && 
+            i.branchId === transactionToDelete.branchId &&
+            (i.variantLabel || '') === (item.variantLabel || '')
+          );
+          if (idx !== -1) {
+            updatedInventory[idx] = { 
+              ...updatedInventory[idx], 
+              quantity: updatedInventory[idx].quantity + item.quantity 
+            };
+            // Sync updated inventory to Supabase
+            pushInventoryToSupabase(updatedInventory[idx]).catch(() => {});
+          }
+        }
+      });
+
+      // Delete the transaction from Supabase
+      deleteTransactionFromSupabase(id).catch(() => {});
+
+      return {
+        transactions: state.transactions.filter(t => t.id !== id),
+        inventory: updatedInventory,
+        warranties: state.warranties.filter(w => w.transactionId !== id)
+      };
+    });
   },
 
   createReturn: (returnItem) => {

@@ -10,6 +10,7 @@ import {
   PieChart, Pie, Cell 
 } from "recharts";
 import { useStore } from "../store/useStore";
+import { Transaction, Product } from "../types";
 import { cn } from "../lib/utils";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { 
@@ -194,6 +195,11 @@ export default function Reports() {
   const [printSessionId, setPrintSessionId] = useState<string | null>(null);
   const [selectedIDNTxModal, setSelectedIDNTxModal] = useState<import('../types').Transaction | null>(null);
   const [selectedIDNWorkerModal, setSelectedIDNWorkerModal] = useState<{ userId: string; workerName: string; branchName: string } | null>(null);
+  const [selectedProductStatsDetail, setSelectedProductStatsDetail] = useState<{
+    productId: string;
+    productName: string;
+    transactions: Transaction[];
+  } | null>(null);
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<{
     type: 'transaction' | 'session';
     id: string;
@@ -367,8 +373,13 @@ export default function Reports() {
       settlementMap.set(st.sessionId, st);
     });
 
-    return closedSessions.map(session => {
-      const turnLabel = sessionTurnMap.get(session.id) || session.id;
+    return closedSessions
+      .filter(session => {
+        const emp = users.find(u => u.id === session.userId || u.name === session.workerName);
+        return !emp?.isIndependent;
+      })
+      .map(session => {
+        const turnLabel = sessionTurnMap.get(session.id) || session.id;
       const sessionTx = transactions.filter(t => 
         t.sessionId 
           ? t.sessionId === session.id
@@ -1773,6 +1784,26 @@ export default function Reports() {
                           <td className="px-3 py-2 text-[8px] font-black text-slate-500 uppercase tracking-widest whitespace-nowrap">{categories.find(c => c.id === stat.product.categoryId)?.name || 'Sin Categoría'}</td>
                           <td className="px-3 py-2 text-[11px] font-black text-slate-900 text-center whitespace-nowrap">{stat.quantity} uds</td>
                           <td className="px-3 py-2 text-[10px] font-black text-indigo-600 text-right tracking-tight whitespace-nowrap">{formatMoney(stat.total)}</td>
+                          <td className="px-3 py-2 text-center whitespace-nowrap">
+                            <button
+                              onClick={() => {
+                                const prodId = stat.product.id;
+                                const relatedTxs = transactions.filter(t => 
+                                  t.items.some(i => (typeof i.product === 'string' ? i.product : i.product.id) === prodId) &&
+                                  (selectedBranchFilter === 'all' || t.branchId === selectedBranchFilter)
+                                );
+                                setSelectedProductStatsDetail({
+                                  productId: prodId,
+                                  productName: stat.product.name,
+                                  transactions: relatedTxs
+                                });
+                              }}
+                              className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg transition-all active:scale-95 border border-indigo-100"
+                              title="Ver Detalles de Ventas"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
                         </tr>
                       ))}
                       {productStats.length === 0 && (
@@ -2202,7 +2233,7 @@ export default function Reports() {
                 const workerTx = idnTransactions.filter(t => t.userId === selectedIDNWorkerModal.userId || t.cashierName === selectedIDNWorkerModal.workerName);
                 
                 // Group all products sold across all liquidations for this worker
-                const productSummary: { [pId: string]: { name: string; sku: string; totalQty: number; totalSettled: number } } = {};
+                const productSummary: { [pId: string]: { productId: string; name: string; sku: string; totalQty: number; totalSettled: number } } = {};
 
                 workerTx.forEach(tx => {
                   (tx.items || []).forEach(item => {
@@ -2213,6 +2244,7 @@ export default function Reports() {
 
                     if (!productSummary[prodId]) {
                       productSummary[prodId] = {
+                        productId: prodId,
                         name: prodName,
                         sku: prodSku,
                         totalQty: 0,
@@ -2268,13 +2300,32 @@ export default function Reports() {
                                 </p>
                               )}
                             </div>
-                            <div className="text-right">
-                              <span className="text-xs font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 mr-2">
-                                {prodItem.totalQty} u.
-                              </span>
-                              <span className="text-xs font-black text-amber-900">
-                                {formatMoney(prodItem.totalSettled)}
-                              </span>
+                            <div className="text-right flex items-center gap-2">
+                              <div className="text-right">
+                                <span className="text-xs font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 mr-2">
+                                  {prodItem.totalQty} u.
+                                </span>
+                                <span className="text-xs font-black text-amber-900">
+                                  {formatMoney(prodItem.totalSettled)}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const relatedTxs = idnTransactions.filter(t => 
+                                    (t.userId === selectedIDNWorkerModal.userId || t.cashierName === selectedIDNWorkerModal.workerName) &&
+                                    t.items.some(i => (typeof i.product === 'string' ? i.product : i.product.id) === prodItem.productId)
+                                  );
+                                  setSelectedProductStatsDetail({
+                                    productId: prodItem.productId,
+                                    productName: prodItem.name,
+                                    transactions: relatedTxs
+                                  });
+                                }}
+                                className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md transition-all active:scale-95 border border-slate-200"
+                                title="Ver Transacciones"
+                              >
+                                <Eye className="w-3 h-3" />
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -2815,6 +2866,87 @@ export default function Reports() {
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
                   <span>Descargar Excel (.xlsx)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Detalle de Ventas por Producto */}
+      {selectedProductStatsDetail && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 border border-white/20">
+            <div className="bg-slate-900 p-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/10 rounded-2xl backdrop-blur-md">
+                  <Package className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">
+                    Historial de Ventas
+                  </span>
+                  <h3 className="text-base font-black text-white uppercase tracking-tight">
+                    {selectedProductStatsDetail.productName}
+                  </h3>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedProductStatsDetail(null)}
+                className="p-2 hover:bg-white/10 rounded-xl transition-all text-white/80 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
+              <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden">
+                {selectedProductStatsDetail.transactions.map((tx, idx) => {
+                  const item = tx.items.find(i => (typeof i.product === 'string' ? i.product : i.product.id) === selectedProductStatsDetail.productId);
+                  if (!item) return null;
+
+                  return (
+                    <div key={idx} className="p-3 hover:bg-slate-50 transition-colors flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                            {tx.id}
+                          </span>
+                          <span className="text-[9px] font-bold text-slate-500 uppercase">
+                            {new Date(tx.date).toLocaleString('es-CU')}
+                          </span>
+                        </div>
+                        <p className="text-[11px] font-black text-slate-900 uppercase mt-1">
+                          Vendido por: {tx.cashierName || 'Vendedor'}
+                        </p>
+                        <p className="text-[9px] font-bold text-slate-400 uppercase">
+                          Sucursal: {branches.find(b => b.id === tx.branchId)?.name || 'Almacén'}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-black text-slate-900">
+                          {item.quantity} {item.variantLabel ? `(${item.variantLabel})` : 'uds'}
+                        </p>
+                        <p className="text-[10px] font-black text-emerald-600">
+                          {formatMoney(item.total)}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+                {selectedProductStatsDetail.transactions.length === 0 && (
+                  <div className="p-10 text-center text-slate-400 text-xs font-bold uppercase">
+                    No se encontraron transacciones individuales.
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={() => setSelectedProductStatsDetail(null)}
+                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-md"
+                >
+                  Entendido
                 </button>
               </div>
             </div>
