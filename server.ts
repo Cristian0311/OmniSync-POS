@@ -96,17 +96,17 @@ Genera un informe ejecutivo de auditoría contable y operativa con recomendacion
   ]
 }`;
 
-          const response = await ai.models.generateContent({
-            model: 'gemini-3.6-flash',
-            contents: prompt,
-            config: {
-              responseMimeType: 'application/json',
-              systemInstruction: 'Eres un consultor financiero y auditor contable senior especializado en retail, control de cajas POS y optimización de flujos de efectivo multimoneda.'
-            }
+          const interaction = await ai.interactions.create({
+            model: 'gemini-3.8-flash',
+            input: prompt,
+            system_instruction: 'Eres un consultor financiero y auditor contable senior especializado en retail, control de cajas POS y optimización de flujos de efectivo multimoneda.'
           });
 
-          if (response.text) {
-            aiResult = JSON.parse(response.text);
+          const resultText = interaction.output_text;
+          if (resultText) {
+            const jsonMatch = resultText.match(/```json\s*([\s\S]*?)\s*```/) || resultText.match(/({[\s\S]*})/);
+            const cleanJson = jsonMatch ? jsonMatch[1].trim() : resultText.trim();
+            aiResult = JSON.parse(cleanJson);
           }
         } catch (geminiError) {
           console.warn('[AI Report] Gemini API call failed or timed out, falling back to smart heuristic audit:', geminiError);
@@ -215,6 +215,7 @@ Genera un informe ejecutivo de auditoría contable y operativa con recomendacion
         expectedBalances = [],
         actualBalances = [],
         transactions = [],
+        products = [],
         baseCurrency = { code: 'CUP', symbol: '$' }
       } = req.body;
 
@@ -235,7 +236,7 @@ Genera un informe ejecutivo de auditoría contable y operativa con recomendacion
         id: t.id,
         total: t.total,
         paymentMethod: t.paymentMethod,
-        items: t.items.map((i: any) => `${i.quantity}x ${i.product.name}`).join(', ')
+        items: (t.items || []).map((i: any) => `${i.quantity}x ${i.product?.name || 'Producto'}`).join(', ')
       }));
 
       const discrepancies = expectedBalances.map((eb: any) => {
@@ -250,40 +251,55 @@ Genera un informe ejecutivo de auditoría contable y operativa con recomendacion
         };
       }).filter((d: any) => Math.abs(d.difference) > 0.01);
 
-      const prompt = `Actúa como un auditor contable experto. Se ha detectado una discrepancia en el cierre de caja de una tienda POS.
+      const productCatalogSummary = products.slice(0, 50).map((p: any) => ({
+        name: p.name,
+        price: p.price,
+        sku: p.sku
+      }));
+
+      const prompt = `Actúa como un auditor contable experto en sistemas POS. Se ha detectado una discrepancia en el cierre de caja.
       
-CONTEXTO:
+CONTEXTO DEL NEGOCIO:
 - Moneda Base: ${baseCurrency.code} (${baseCurrency.symbol})
 - Discrepancias detectadas (Diferencia = Real - Esperado):
-${discrepancias.map((d: any) => `- ${d.currency} (${d.method}): Diferencia de ${d.difference.toLocaleString()} (Esperado: ${d.expected}, Real: ${d.actual})`).join('\n')}
+${discrepancies.map((d: any) => `- ${d.currency} (${d.method}): Diferencia de ${d.difference.toLocaleString()} (Esperado: ${d.expected}, Real: ${d.actual})`).join('\n')}
 
-TRANSACCIONES DEL TURNO (Últimas 50):
-${JSON.stringify(sessionSummary.slice(-50), null, 2)}
+CATÁLOGO DE PRODUCTOS (Muestra):
+${JSON.stringify(productCatalogSummary, null, 2)}
+
+ÚLTIMAS TRANSACCIONES DEL TURNO:
+${JSON.stringify(sessionSummary.slice(-30), null, 2)}
 
 TAREA:
-1. Analiza las discrepancias comparándolas con los montos de las transacciones y sus productos.
-2. Identifica posibles causas: productos vendidos pero no anotados (busca coincidencias de precios), errores en vueltos, transacciones duplicadas o cobros mal registrados (ej: era transferencia pero se marcó efectivo).
-3. Da sugerencias específicas y amigables al cajero para encontrar el descuadre.
+1. Analiza las discrepancias. Si hay una diferencia NEGATIVA (falta dinero), busca productos en el catálogo cuyo precio (o suma de precios) coincida con la falta. 
+2. Si hay una diferencia POSITIVA (sobra dinero), identifica si pudo ser una venta cobrada pero no registrada, o un error en el vuelto.
+3. Compara los métodos de pago. A veces se marca "Efectivo" algo que fue "Transferencia".
+4. Da sugerencias MUY ESPECÍFICAS. Si ves un producto que cuesta exactamente lo que falta, menciónalo explícitamente.
 
-Responde con un objeto JSON:
+Responde ESTRICTAMENTE con un objeto JSON:
 {
-  "analysis": "Explicación detallada de lo que pudo haber pasado basándote en los datos.",
-  "suggestions": ["Sugerencia específica 1", "Sugerencia específica 2", "Posible producto olvidado: Nombre del Producto (Precio)"]
+  "analysis": "Explicación técnica y lógica de la posible causa del descuadre.",
+  "suggestions": [
+    "Sugerencia de revisión 1",
+    "Posible producto no anotado: [Nombre] ([Precio])",
+    "Sugerencia de revisión 2"
+  ]
 }`;
 
-      const response = await ai.models.generateContent({
+      const interaction = await ai.interactions.create({
         model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          systemInstruction: 'Eres un asistente contable de IA para un sistema POS. Tu objetivo es ayudar a encontrar descuadres de caja analizando ventas y discrepancias.'
-        }
+        input: prompt,
+        system_instruction: 'Eres un asistente contable de IA experto en auditoría de cajas POS. Tu objetivo es encontrar la causa raíz de los descuadres comparando montos con el catálogo de productos.'
       });
 
-      if (response.text) {
+      const resultText = interaction.output_text;
+      if (resultText) {
+        // Handle potential markdown backticks in response
+        const jsonMatch = resultText.match(/```json\s*([\s\S]*?)\s*```/) || resultText.match(/({[\s\S]*})/);
+        const cleanJson = jsonMatch ? jsonMatch[1].trim() : resultText.trim();
         res.json({
           success: true,
-          data: JSON.parse(response.text)
+          data: JSON.parse(cleanJson)
         });
       } else {
         throw new Error("No response from AI");

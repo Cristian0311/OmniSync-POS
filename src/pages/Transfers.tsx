@@ -245,10 +245,9 @@ export default function Transfers() {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50/80 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
-                      <th className="px-6 py-4">Fecha</th>
-                      <th className="px-6 py-4">Productos</th>
-                      <th className="px-6 py-4">Ruta de Transferencia</th>
-                      <th className="px-6 py-4 text-right">Cantidad Total</th>
+                      <th className="px-6 py-4">Fecha / Hora</th>
+                      <th className="px-6 py-4">Ruta y Cantidad Total</th>
+                      <th className="px-6 py-4">Detalle de Productos</th>
                       <th className="px-6 py-4 text-center">Estado</th>
                     </tr>
                   </thead>
@@ -279,90 +278,66 @@ export default function Transfers() {
                               "hover:bg-slate-50/60 transition-colors group border-l-4",
                               isBatch ? "border-l-indigo-500" : "border-l-transparent"
                             )}>
-                              <td className="px-6 py-4 align-top">
-                                <div className="text-xs font-bold text-slate-900">{new Date(first.date).toLocaleDateString()}</div>
-                                <div className="text-[10px] font-mono text-slate-400">{new Date(first.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="text-[11px] font-bold text-slate-900">{new Date(first.date).toLocaleDateString()}</div>
+                                <div className="text-[9px] font-mono text-slate-400">{new Date(first.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                                 {isBatch && (
                                   <div className="mt-1">
                                     <span className="text-[8px] font-black uppercase text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
-                                      Lote: {group.length} prod.
+                                      Lote de {group.length}
                                     </span>
                                   </div>
                                 )}
                               </td>
-                              <td className="px-6 py-4 align-top">
-                                <div className="space-y-2">
-                                  {visibleItems.map((t, idx) => (
-                                    <div key={t.id} className={cn(
-                                      "flex flex-col",
-                                      idx > 0 && "pt-2 border-t border-slate-50"
-                                    )}>
-                                      <div className="text-xs font-black text-slate-900 uppercase tracking-tight">{t.productName}</div>
-                                      <div className="flex items-center gap-2 mt-0.5">
-                                        {t.variantLabel && (
-                                          <div className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md inline-block">
-                                            {t.variantLabel}
-                                          </div>
-                                        )}
-                                        {isBatch && (
-                                          <span className="text-[9px] font-black text-slate-400">
-                                            {t.quantity} uds
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  ))}
-                                  
-                                  {hasMore && !isExpanded && (
-                                    <button 
-                                      onClick={() => setExpandedBatches(prev => [...prev, first.batchId || first.id])}
-                                      className="text-[10px] font-black text-indigo-600 hover:text-indigo-700 flex items-center gap-1 mt-1 uppercase tracking-wider"
-                                    >
-                                      <Plus className="w-3 h-3" />
-                                      Ver {group.length - 2} más
-                                    </button>
-                                  )}
-                                  {isExpanded && isBatch && (
-                                    <button 
-                                      onClick={() => setExpandedBatches(prev => prev.filter(id => id !== (first.batchId || first.id)))}
-                                      className="text-[10px] font-black text-slate-400 hover:text-slate-600 flex items-center gap-1 mt-1 uppercase tracking-wider"
-                                    >
-                                      <X className="w-3 h-3" />
-                                      Mostrar menos
-                                    </button>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="px-6 py-4 align-top">
-                                <div className="flex items-center gap-2 mt-1">
-                                  <div className="flex flex-col gap-1 items-center">
-                                    <span className="text-[10px] font-black text-slate-700 uppercase bg-white px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-sm">
+                              <td className="px-6 py-4">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[10px] font-black text-slate-700 uppercase bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">
                                       {first.fromBranchName}
                                     </span>
-                                    <ArrowRight className="w-3.5 h-3.5 text-indigo-400 shrink-0 rotate-90 sm:rotate-0" />
-                                    <span className="text-[10px] font-black text-indigo-700 uppercase bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100 shadow-sm">
+                                    <ArrowRight className="w-3 h-3 text-indigo-400 shrink-0" />
+                                    <span className="text-[10px] font-black text-indigo-700 uppercase bg-indigo-50 px-2 py-1 rounded border border-indigo-100 shadow-sm">
                                       {first.toBranchName}
                                     </span>
                                   </div>
-                                </div>
-                              </td>
-                              <td className="px-6 py-4 text-right align-top">
-                                <div className="mt-1">
-                                  <span className={cn(
-                                    "text-xs font-black px-2.5 py-1.5 rounded-xl border inline-block",
-                                    isBatch ? "bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-100" : "bg-slate-100 text-slate-900 border-slate-200"
-                                  )}>
-                                    {totalQty} uds
+                                  <span className="ml-2 text-[10px] font-black bg-slate-900 text-white px-2 py-1 rounded-lg">
+                                    {totalQty} UDS
                                   </span>
                                 </div>
                               </td>
-                              <td className="px-6 py-4 text-center align-top">
-                                <div className="mt-1">
-                                  <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200">
-                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                                    Completado
-                                  </span>
+                              <td className="px-6 py-4">
+                                <div className="flex flex-wrap gap-2 max-w-md">
+                                  {visibleItems.map((t) => (
+                                    <div key={t.id} className="flex items-center gap-1.5 bg-slate-50 border border-slate-100 px-2 py-1 rounded-md">
+                                      <span className="text-[10px] font-bold text-slate-800 truncate max-w-[120px]">{t.productName}</span>
+                                      {t.variantLabel && (
+                                        <span className="text-[8px] font-black text-indigo-500 uppercase">{t.variantLabel}</span>
+                                      )}
+                                      <span className="text-[9px] font-black text-slate-400">({t.quantity})</span>
+                                    </div>
+                                  ))}
+                                  
+                                  {hasMore && (
+                                    <button 
+                                      onClick={() => {
+                                        if (isExpanded) {
+                                          setExpandedBatches(prev => prev.filter(id => id !== (first.batchId || first.id)));
+                                        } else {
+                                          setExpandedBatches(prev => [...prev, first.batchId || first.id]);
+                                        }
+                                      }}
+                                      className="text-[9px] font-black text-indigo-600 hover:text-indigo-700 bg-white border border-indigo-100 px-2 py-1 rounded-md transition-all active:scale-95"
+                                    >
+                                      {isExpanded ? "MOSTRAR MENOS" : `VER ${group.length - 2} MÁS`}
+                                    </button>
+                                  )}
                                 </div>
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <span className="inline-flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                                  <CheckCircle className="w-3 h-3 text-emerald-600" />
+                                  OK
+                                </span>
                               </td>
                             </tr>
                           </React.Fragment>

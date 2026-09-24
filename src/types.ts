@@ -255,7 +255,7 @@ export interface InventoryTransfer {
   userId: string;
   transactionId?: string;
   batchId?: string; // For grouping multiple products in a single operation
-  status: 'completed' | 'cancelled';
+  status: 'completed' | 'cancelled' | 'pending';
 }
 
 export interface Supplier {
