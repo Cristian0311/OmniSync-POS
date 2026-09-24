@@ -158,6 +158,7 @@ export default function Transfers() {
     setIsSubmitting(false);
 
     if (result.success) {
+      addNotification("Traslado individual completado exitosamente.", 'success');
       setShowAddModal(false);
       setFormData({ ...formData, productId: '' });
       setVariantQuantities({});
