@@ -174,24 +174,31 @@ html, body, #root {
     scrollbar-width: none;
   }
 
-  /* Improve touch sensitivity for low-end devices and simplify interactions */
+  /* Improve touch sensitivity and instant tap registration for tablets and mobile */
   * {
     -webkit-tap-highlight-color: transparent;
-    -webkit-touch-callout: none;
-    cursor: pointer !important;
   }
 
-  /* Force buttons to have a minimum touch target and clean feedback */
   button, 
   [role="button"],
+  a,
   select,
+  input[type="submit"],
+  input[type="button"],
   input[type="checkbox"],
-  input[type="radio"] {
-    min-height: 36px;
-    min-width: 36px;
+  input[type="radio"],
+  label[for] {
+    cursor: pointer;
     touch-action: manipulation;
-    user-select: none;
+  }
+
+  /* Optimize touch responsiveness and prevent stuck taps */
+  button, 
+  [role="button"],
+  select {
+    touch-action: manipulation;
     -webkit-user-select: none;
+    user-select: none;
   }
 
   /* Hardware accelerated scrolling helper */

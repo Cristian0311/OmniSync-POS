@@ -1332,6 +1332,16 @@ export async function pushBankTransactionToSupabase(tx: BankTransaction) {
   }
 }
 
+export async function deleteBankTransactionFromSupabase(id: string) {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  try {
+    await supabase.from('bank_transactions').delete().eq('id', id);
+  } catch (e) {
+    console.warn("Supabase delete bank tx failed:", e);
+  }
+}
+
 export async function pushBankCardToSupabase(card: BankCard) {
   const supabase = getSupabase();
   if (!supabase) return;

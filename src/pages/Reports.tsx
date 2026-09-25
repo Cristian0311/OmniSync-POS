@@ -1242,7 +1242,7 @@ export default function Reports() {
   const printBranch = printSession ? branches.find(b => b.id === printSession.branchId) : null;
 
   return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-[1400px] mx-auto pb-12">
+    <div className="space-y-4 animate-in fade-in duration-300 max-w-[1400px] mx-auto pb-12">
       {/* Header */}
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-secondary p-3 rounded-2xl shadow-sm border border-base">
         <div className="px-2">

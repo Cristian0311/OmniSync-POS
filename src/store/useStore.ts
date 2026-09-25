@@ -9,7 +9,8 @@ import {
   pushBranchToSupabase, deleteBranchFromSupabase, pushCategoryToSupabase, deleteCategoryFromSupabase, deleteProductFromSupabase,
   pushCurrencyToSupabase, clearSupabaseData, pushBankCardToSupabase, deleteBankCardFromSupabase, pushBankTransactionToSupabase, pushAllToSupabase,
   pushSupplierToSupabase, deleteSupplierFromSupabase, pushSupplierOrderToSupabase, pushCustomerToSupabase,
-  pushReceiptConfigToSupabase, pushStoreConfigToSupabase, deleteTransactionFromSupabase, deleteCashSessionFromSupabase
+  pushReceiptConfigToSupabase, pushStoreConfigToSupabase, deleteTransactionFromSupabase, deleteCashSessionFromSupabase,
+  deleteBankTransactionFromSupabase
 } from '../services/supabaseSync';
 import { getSupabaseCredentials } from '../lib/supabase';
 import { getOfflineQueue, enqueueOfflineItem } from '../services/offlineSync';
@@ -1176,6 +1177,41 @@ export const useStore = create<AppState>()(
       // Delete the transaction from Supabase
       deleteTransactionFromSupabase(id).catch(() => {});
 
+      // Revert associated bank transactions and bank card balances
+      const relatedBankTxs = (state.bankTransactions || []).filter(bt => 
+        bt.transactionId === id || 
+        bt.reference === id || 
+        (bt.description && bt.description.includes(id))
+      );
+
+      let updatedBankCards = [...state.bankCards];
+
+      relatedBankTxs.forEach(bt => {
+        // Delete from Supabase
+        deleteBankTransactionFromSupabase(bt.id).catch(() => {});
+        
+        // Revert card balance
+        const cardIdx = updatedBankCards.findIndex(c => c.id === bt.cardId);
+        if (cardIdx !== -1) {
+          const card = updatedBankCards[cardIdx];
+          let revertedBalance = card.balance;
+          if (bt.type === 'deposit' || bt.type === 'payment_received') {
+            revertedBalance = Math.max(0, revertedBalance - bt.amount);
+          } else if (bt.type === 'withdrawal' || bt.type === 'supplier_payment') {
+            revertedBalance = revertedBalance + bt.amount;
+          }
+          const updatedCard = { ...card, balance: revertedBalance };
+          updatedBankCards[cardIdx] = updatedCard;
+          pushBankCardToSupabase(updatedCard).catch(() => {});
+        }
+      });
+
+      const updatedBankTransactions = (state.bankTransactions || []).filter(bt => 
+        bt.transactionId !== id && 
+        bt.reference !== id && 
+        !(bt.description && bt.description.includes(id))
+      );
+
       // Delete associated transfers if any
       const updatedTransfers = (state.transfers || []).filter(tr => 
         tr.transactionId !== id &&
@@ -1187,7 +1223,9 @@ export const useStore = create<AppState>()(
         transactions: state.transactions.filter(t => t.id !== id),
         inventory: updatedInventory,
         warranties: state.warranties.filter(w => w.transactionId !== id),
-        transfers: updatedTransfers
+        transfers: updatedTransfers,
+        bankCards: updatedBankCards,
+        bankTransactions: updatedBankTransactions
       };
     });
   },

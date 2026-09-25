@@ -3119,12 +3119,11 @@ export default function POS() {
                 <div className="space-y-4">
                   {(() => {
                     const sessionTx = transactions.filter(t => 
-                      t.branchId === currentBranchId && 
+                      t.sessionId === currentSession.id || 
                       (
-                        t.sessionId 
-                          ? t.sessionId === currentSession.id
-                          : (new Date(t.date).getTime() >= new Date(currentSession.openedAt).getTime() &&
-                             (!currentSession.closedAt || new Date(t.date).getTime() <= new Date(currentSession.closedAt).getTime()))
+                        (!t.sessionId && (t.branchId === currentSession.branchId || t.branchId === currentBranchId)) &&
+                        new Date(t.date).getTime() >= new Date(currentSession.openedAt).getTime() &&
+                        (!currentSession.closedAt || new Date(t.date).getTime() <= new Date(currentSession.closedAt).getTime())
                       )
                     );
 
