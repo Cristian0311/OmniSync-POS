@@ -12,13 +12,20 @@ let realtimeChannel: any = null;
 let pollIntervalId: any = null;
 let debounceTimeout: any = null;
 let isSyncInProgress = false;
+let lastSyncTimestamp = 0;
 
-// Sincronización suave en segundo plano sin bloquear la interfaz
-export async function triggerBackgroundSync(): Promise<void> {
+// Sincronización suave en segundo plano sin bloquear la interfaz con estrangulamiento (throttle)
+export async function triggerBackgroundSync(force = false): Promise<void> {
+  const now = Date.now();
+  // Evitar ráfagas repetidas: al menos 3 segundos de descanso entre pulls completos (salvo force)
+  if (!force && now - lastSyncTimestamp < 3000) {
+    return;
+  }
   if (isSyncInProgress) return;
-  if (!navigator.onLine) return;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
   isSyncInProgress = true;
+  lastSyncTimestamp = now;
   try {
     // Si hay cola offline pendiente, procesarla primero para subirla
     if (getOfflineQueueCount() > 0) {
@@ -34,7 +41,7 @@ export async function triggerBackgroundSync(): Promise<void> {
 }
 
 // Sincronización con debounce para cambios rápidos en ráfaga (ej: ventas continuas)
-export function scheduleDebouncedSync(delayMs = 800): void {
+export function scheduleDebouncedSync(delayMs = 2500): void {
   if (debounceTimeout) clearTimeout(debounceTimeout);
   debounceTimeout = setTimeout(() => {
     triggerBackgroundSync().catch(() => {});
@@ -51,7 +58,7 @@ export function initMultiDeviceRealtimeSync(): () => void {
   console.info('[RealtimeSync] Inicializando monitor multi-dispositivo...');
 
   // 1. Sincronización inicial inmediata
-  triggerBackgroundSync().catch(() => {});
+  triggerBackgroundSync(true).catch(() => {});
 
   // 2. Suscribirse a Supabase Realtime para cambios instantáneos entre dispositivos
   const supabase = getSupabase();
@@ -61,7 +68,8 @@ export function initMultiDeviceRealtimeSync(): () => void {
         .channel('pos-multi-device-channel')
         .on('postgres_changes', { event: '*', schema: 'public' }, (payload) => {
           console.debug('[RealtimeSync] Cambio detectado en base de datos:', payload.table);
-          scheduleDebouncedSync(400);
+          // Debounce suave de 2.5s para no ahogar con ráfagas
+          scheduleDebouncedSync(2500);
         })
         .subscribe((status) => {
           console.info('[RealtimeSync] Estado de canal Realtime:', status);
@@ -71,10 +79,9 @@ export function initMultiDeviceRealtimeSync(): () => void {
     }
   }
 
-  // 3. Sincronizar inmediatamente al volver a la pestaña o app (Wake-up / Focus)
+  // 3. Sincronizar al volver a la pestaña o app (Wake-up / Focus)
   const handleVisibilityChange = () => {
     if (document.visibilityState === 'visible' && navigator.onLine) {
-      console.debug('[RealtimeSync] Pestaña visible, sincronizando estado multi-dispositivo...');
       triggerBackgroundSync().catch(() => {});
     }
   };
@@ -85,34 +92,26 @@ export function initMultiDeviceRealtimeSync(): () => void {
     }
   };
 
-  const handlePageShow = () => {
-    if (navigator.onLine) {
-      triggerBackgroundSync().catch(() => {});
-    }
-  };
-
   const handleOnline = () => {
     console.info('[RealtimeSync] Conexión restablecida, sincronizando...');
-    triggerBackgroundSync().catch(() => {});
+    triggerBackgroundSync(true).catch(() => {});
   };
 
   document.addEventListener('visibilitychange', handleVisibilityChange);
   window.addEventListener('focus', handleWindowFocus);
-  window.addEventListener('pageshow', handlePageShow);
   window.addEventListener('online', handleOnline);
 
-  // 4. Sondeo periódico de seguridad cada 12 segundos
+  // 4. Sondeo periódico de seguridad relajado (cada 45 segundos)
   pollIntervalId = setInterval(() => {
-    if (document.visibilityState === 'visible' && navigator.onLine) {
+    if (document.visibilityState === 'visible' && navigator.onLine && !isSyncInProgress) {
       triggerBackgroundSync().catch(() => {});
     }
-  }, 12000);
+  }, 45000);
 
   // Función de limpieza al desmontar
   return () => {
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.removeEventListener('focus', handleWindowFocus);
-    window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('online', handleOnline);
 
     if (pollIntervalId) clearInterval(pollIntervalId);

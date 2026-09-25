@@ -131,6 +131,9 @@ export interface Transaction {
   sessionId?: string; // ID of the cash session/turno in which the transaction was created
   notes?: string;
   paymentMethod?: string;
+  deletedAt?: string;
+  deletedBy?: string;
+  deleteReason?: string;
 }
 
 export interface ReturnItem {
@@ -194,6 +197,9 @@ export interface CashRegisterSession {
   }[];
   auditStatus?: 'pending_review' | 'reviewed' | 'resolved';
   auditNotes?: string;
+  deletedAt?: string;
+  deletedBy?: string;
+  deleteReason?: string;
 }
 
 export interface CashMovement {

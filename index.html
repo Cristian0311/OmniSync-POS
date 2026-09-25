@@ -11,7 +11,7 @@
     <meta property="og:title" content="MARÉ POS" />
     <meta property="og:description" content="Gestión de inventario y ventas" />
     <script>
-      // Ultimate Console Sanitizer for MARÉ POS
+      // Console Sanitizer for Clean Environment
       (function() {
         const originalLog = window.console.log;
         const originalError = window.console.error;
@@ -23,13 +23,26 @@
           '[vite]', 'WebSocket', 'GenerateAccessToken', 'firebase', 
           'favicon.ico', 'manifest.json', 'Failed to load resource',
           'Extension', 'Chrome', 'Mojo', 'DevTools', 'Heartbeat',
-          'connection reset', 'HMR', 'hot update', 'sockjs-node'
+          'connection reset', 'HMR', 'hot update', 'sockjs-node',
+          '_aistudio-iframe', 'gapi', 'googleapis', 'cb=gapi',
+          'aistudio', 'ResizeObserver', 'chrome-extension'
         ];
 
         const shouldSuppress = (args) => {
-          if (!args[0]) return false;
-          const msg = String(args[0]);
-          return noiseKeywords.some(keyword => msg.includes(keyword));
+          if (!args || args.length === 0) return false;
+          try {
+            const str = args.map(a => {
+              if (typeof a === 'string') return a;
+              if (a instanceof Error) return `${a.message} ${a.stack || ''}`;
+              if (typeof a === 'object' && a !== null) {
+                try { return JSON.stringify(a); } catch(_) { return String(a); }
+              }
+              return String(a);
+            }).join(' ');
+            return noiseKeywords.some(keyword => str.toLowerCase().includes(keyword.toLowerCase()));
+          } catch (_) {
+            return false;
+          }
         };
 
         window.console.log = function(...args) {
@@ -57,23 +70,19 @@
           originalDebug.apply(console, args);
         };
 
-        // Silence unhandled rejections from environment
+        // Silence unhandled rejections from environment & OAuth/gapi tokens
         window.addEventListener('unhandledrejection', function(e) {
-          if (e.reason && e.reason.message && noiseKeywords.some(k => e.reason.message.includes(k))) {
+          const reasonStr = String(e.reason?.message || e.reason?.stack || e.reason || '');
+          if (noiseKeywords.some(k => reasonStr.toLowerCase().includes(k.toLowerCase()))) {
             e.stopImmediatePropagation();
             e.preventDefault();
           }
         }, true);
 
-        // Silence resource errors (404s for icons/manifests)
+        // Silence resource and script errors from environment
         window.addEventListener('error', function(e) {
-          if (e.target && (e.target.tagName === 'IMG' || e.target.tagName === 'LINK')) {
-            if (e.target.src && noiseKeywords.some(k => e.target.src.includes(k))) {
-              e.stopImmediatePropagation();
-              e.preventDefault();
-            }
-          }
-          if (e.message && noiseKeywords.some(k => e.message.includes(k))) {
+          const msg = String(e.message || e.filename || e.target?.src || e.target?.href || '');
+          if (noiseKeywords.some(k => msg.toLowerCase().includes(k.toLowerCase()))) {
             e.stopImmediatePropagation();
             e.preventDefault();
           }

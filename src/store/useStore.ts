@@ -10,10 +10,11 @@ import {
   pushCurrencyToSupabase, clearSupabaseData, pushBankCardToSupabase, deleteBankCardFromSupabase, pushBankTransactionToSupabase, pushAllToSupabase,
   pushSupplierToSupabase, deleteSupplierFromSupabase, pushSupplierOrderToSupabase, pushCustomerToSupabase,
   pushReceiptConfigToSupabase, pushStoreConfigToSupabase, deleteTransactionFromSupabase, deleteCashSessionFromSupabase,
-  deleteBankTransactionFromSupabase
+  deleteBankTransactionFromSupabase, callOpenSessionRPC, callProcessTransactionRPC, callCloseSessionRPC
 } from '../services/supabaseSync';
 import { getSupabaseCredentials } from '../lib/supabase';
 import { getOfflineQueue, enqueueOfflineItem } from '../services/offlineSync';
+import { normalizeSemanticText, areSemanticallyEqual } from '../utils/textUtils';
 
 // --- Datos Iniciales y Catálogo Pre-cargado ---
 const INITIAL_USERS: User[] = [
@@ -28,6 +29,19 @@ const INITIAL_USERS: User[] = [
     branchId: '',
     allowedBranches: [],
     permissions: ['pos_access', 'reports_access', 'inventory_access', 'admin_access', 'cash_audit'],
+    isActive: true
+  },
+  {
+    id: 'employee-1',
+    name: 'Trabajador',
+    email: 'trabajador@gmail.com',
+    role: 'employee',
+    password: '03111166702',
+    baseSalary: 0,
+    salesGoal: 0,
+    branchId: '',
+    allowedBranches: [],
+    permissions: ['pos_access'],
     isActive: true
   }
 ];
@@ -146,7 +160,8 @@ interface AppState {
   updateQuote: (id: string, updates: Partial<import("../types").Quote>) => void;
   returns: ReturnItem[];
   processTransaction: (transaction: Transaction) => void;
-  deleteTransaction: (id: string) => void;
+  updateTransaction: (id: string, updates: Partial<Transaction>) => void;
+  deleteTransaction: (id: string, reason?: string) => void;
   createReturn: (returnItem: ReturnItem) => void;
   updateReturn: (id: string, returnItem: Partial<ReturnItem>) => void;
   processReturn: (id: string, action: 'complete' | 'reject') => void;
@@ -164,7 +179,20 @@ interface AppState {
   updateCashSession: (id: string, updates: Partial<CashRegisterSession>) => void;
   cancelSession: (sessionId: string) => void;
   deleteCashSession: (id: string) => void;
+  updateCashSessionDateCascade: (sessionId: string, newDateYMD: string) => Promise<boolean>;
+  joinOpenSession: (sessionId: string, userId: string, workerName?: string) => void;
   getCurrentSession: (branchId: string, userId: string) => CashRegisterSession | undefined;
+  addInformationalSoldProductToSession: (sessionId: string, itemData: {
+    productId: string;
+    productName: string;
+    quantity: number;
+    price: number;
+    userId?: string;
+    workerName?: string;
+    paymentMethod?: 'cash' | 'transfer';
+    currencyCode?: string;
+  }) => Promise<{ success: boolean; transactionId?: string }>;
+  forceCloseSessionFromReports: (sessionId: string, closingBalances?: import('../types').Payment[], closingDate?: string, notes?: string) => Promise<{ success: boolean }>;
 
   // Garantías
   warranties: import('../types').Warranty[];
@@ -254,28 +282,34 @@ export const useStore = create<AppState>()(
       currentUser: null,
   login: async (email, pass) => {
     const cleanIdentifier = (email || '').trim().toLowerCase();
+    
+    // 1. Intentar buscar en los usuarios locales (que vienen de Supabase sincronizados o INITIAL_USERS)
     let user = get().users.find(u => 
       ((u.email || '').trim().toLowerCase() === cleanIdentifier || (u.name || '').trim().toLowerCase() === cleanIdentifier) && 
       u.password === pass
     );
     
-    // Hardcoded accounts requested by the user
+    // 2. Fallback de emergencia para cuentas administrativas críticas (siempre funcionan offline)
     if (!user) {
-      if (cleanIdentifier === 'cristianmarco2003@gmail.com' && pass === '03111166702') {
-        user = {
+      if ((cleanIdentifier === 'cristianmarco2003@gmail.com' || cleanIdentifier === 'admin') && pass === '03111166702') {
+        user = get().users.find(u => u.id === 'admin-1') || {
           id: 'admin-1',
-          name: 'Administrador',
+          name: 'Administrador Cristian',
           email: 'cristianmarco2003@gmail.com',
           role: 'admin',
-          baseSalary: 0
+          baseSalary: 0,
+          permissions: ['pos_access', 'reports_access', 'inventory_access', 'admin_access', 'cash_audit'],
+          isActive: true
         };
-      } else if (cleanIdentifier === 'trabajador@gmail.com' && pass === '03111166702') {
-        user = {
+      } else if ((cleanIdentifier === 'trabajador@gmail.com' || cleanIdentifier === 'trabajador') && pass === '03111166702') {
+        user = get().users.find(u => u.id === 'employee-1') || {
           id: 'employee-1',
           name: 'Trabajador',
           email: 'trabajador@gmail.com',
           role: 'employee',
-          baseSalary: 0
+          baseSalary: 0,
+          permissions: ['pos_access'],
+          isActive: true
         };
       }
     }
@@ -283,20 +317,20 @@ export const useStore = create<AppState>()(
     if (user) {
       set({ currentUser: user });
       
-      // If the hardcoded user logs in and we have branches, auto-assign the first one if they don't have one
+      // Auto-asignación de sucursal
       if (user.isIndependent && user.assignedBranchId) {
         set({ currentBranchId: user.assignedBranchId });
-      } else if (!user.branchId && (get().branches || []).length > 0) {
-        set({ currentBranchId: (get().branches || [])[0].id });
       } else if (user.branchId) {
         set({ currentBranchId: user.branchId });
+      } else if (!get().currentBranchId && (get().branches || []).length > 0) {
+        set({ currentBranchId: (get().branches || [])[0].id });
       }
       
       return true;
     }
     return false;
   },
-  logout: () => set({ currentUser: null }),
+  logout: () => set({ currentUser: null, cart: [] }), // LIMPIAR CARRITO AL SALIR
   clearAllData: async () => {
     // 1. Clear Supabase (with timeout/error handling to prevent blocking)
     try {
@@ -568,20 +602,60 @@ export const useStore = create<AppState>()(
   currentBranchId: '',
   setCurrentBranch: (id) => set({ currentBranchId: id, cart: [] }),
   addBranch: (branch) => {
-    set((state) => ({ 
-      branches: [...state.branches, branch],
-      currentBranchId: state.currentBranchId || branch.id
-    }));
-    pushBranchToSupabase(branch);
+    let shouldPush = false;
+    set((state) => {
+      // Deduplicación estricta insensible a mayúsculas, acentos y espaciado
+      const normName = normalizeSemanticText(branch.name);
+      const isDuplicate = state.branches.some(b => 
+        b.id === branch.id || 
+        normalizeSemanticText(b.name) === normName
+      );
+      if (isDuplicate) {
+        console.warn(`[MARÉ] Intento de agregar sucursal duplicada bloqueado: "${branch.name}"`);
+        return state;
+      }
+      
+      shouldPush = true;
+      return { 
+        branches: [...state.branches, branch],
+        currentBranchId: state.currentBranchId || branch.id
+      };
+    });
+    if (shouldPush) {
+      pushBranchToSupabase(branch);
+    }
   },
   updateBranch: (id, branch) => {
-    set((state) => ({
-      branches: state.branches.map(b => b.id === id ? { ...b, ...branch } : b)
-    }));
-    const updated = get().branches.find(b => b.id === id);
-    if (updated) pushBranchToSupabase(updated);
+    let shouldPush = false;
+    set((state) => {
+      if (branch.name) {
+        const normName = normalizeSemanticText(branch.name);
+        const nameCollision = state.branches.some(b => b.id !== id && normalizeSemanticText(b.name) === normName);
+        if (nameCollision) {
+          console.warn(`[MARÉ] No se puede renombrar: ya existe otra sucursal con el nombre "${branch.name}"`);
+          return state;
+        }
+      }
+      shouldPush = true;
+      return {
+        branches: state.branches.map(b => b.id === id ? { ...b, ...branch } : b)
+      };
+    });
+    if (shouldPush) {
+      const updated = get().branches.find(b => b.id === id);
+      if (updated) pushBranchToSupabase(updated);
+    }
   },
   deleteBranch: (id) => {
+    // Validar integridad referencial antes de permitir eliminación
+    const hasInventory = (get().inventory || []).some(l => l.branchId === id && l.quantity > 0);
+    const hasTx = (get().transactions || []).some(t => t.branchId === id && !t.deletedAt);
+    const hasSessions = (get().cashSessions || []).some(s => s.branchId === id && !s.deletedAt);
+    if (hasInventory || hasTx || hasSessions) {
+      console.warn(`[MARÉ] Bloqueada eliminación de sucursal ${id} porque tiene relaciones activas (inventario, ventas o turnos).`);
+      return;
+    }
+
     set((state) => {
       const newBranches = state.branches.filter(b => b.id !== id);
       return {
@@ -594,8 +668,21 @@ export const useStore = create<AppState>()(
   
   categories: INITIAL_CATEGORIES,
   addCategory: (category) => {
-    set((state) => ({ categories: [...state.categories, category] }));
-    pushCategoryToSupabase(category);
+    let shouldPush = false;
+    set((state) => {
+      // Deduplicación estricta por ID o Nombre normalizado
+      const normName = normalizeSemanticText(category.name);
+      const isDuplicate = state.categories.some(c => 
+        c.id === category.id || 
+        normalizeSemanticText(c.name) === normName
+      );
+      if (isDuplicate) return state;
+      shouldPush = true;
+      return { categories: [...state.categories, category] };
+    });
+    if (shouldPush) {
+      pushCategoryToSupabase(category);
+    }
   },
   updateCategory: (id, category) => {
     set((state) => ({
@@ -625,10 +712,19 @@ export const useStore = create<AppState>()(
       newInventoryEntries.push({ id: crypto.randomUUID(), productId: product.id, branchId: targetBranch, quantity: initialQuantity, minQuantity: 5, variantLabel });
     }
 
-    set((state) => ({
-      products: [product, ...state.products],
-      inventory: [...state.inventory, ...newInventoryEntries]
-    }));
+    set((state) => {
+      // Deduplicación por ID, SKU o Nombre (ignoring case)
+      const isDuplicate = state.products.some(p => 
+        p.id === product.id || 
+        (p.sku && product.sku && p.sku.toLowerCase().trim() === product.sku.toLowerCase().trim()) ||
+        (p.name.toLowerCase().trim() === product.name.toLowerCase().trim())
+      );
+      if (isDuplicate) return state;
+      return {
+        products: [product, ...state.products],
+        inventory: [...state.inventory, ...newInventoryEntries]
+      };
+    });
 
     // Async push to Supabase
     pushProductToSupabase(product).catch(() => {});
@@ -1048,7 +1144,8 @@ export const useStore = create<AppState>()(
       }).catch(() => {});
     }
   },
-  processTransaction: (transaction) => {
+  processTransaction: async (transaction) => {
+    // 1. Optimistic Update (Local State)
     set((state) => {
       let newWarranties: any[] = [];
       const updatedInventory = [...state.inventory];
@@ -1113,19 +1210,6 @@ export const useStore = create<AppState>()(
 
       const newTransaction = { ...transaction, items: finalItems };
 
-      // Push transaction to Supabase asynchronously
-      pushTransactionToSupabase(newTransaction).catch(() => {});
-
-      // Push updated inventory items to Supabase
-      transaction.items.forEach(item => {
-        const inv = updatedInventory.find(i => 
-          i.productId === (item.product?.id || item.product) && 
-          i.branchId === transaction.branchId &&
-          (i.variantLabel || '') === (item.variantLabel || '')
-        );
-        if (inv) pushInventoryToSupabase(inv).catch(() => {});
-      });
-
       return {
         transactions: [newTransaction, ...state.transactions],
         inventory: updatedInventory,
@@ -1134,15 +1218,25 @@ export const useStore = create<AppState>()(
         currentCustomerId: undefined
       };
     });
+
+    // 2. RPC Atómico si hay conexión
+    if (navigator.onLine) {
+      const res = await callProcessTransactionRPC(transaction);
+      if (res.success) return;
+    }
+
+    // 3. Fallback a cola offline (si falló RPC o no hay red)
+    pushTransactionToSupabase(transaction).catch(() => {});
   },
 
-  deleteTransaction: (id: string) => {
+  deleteTransaction: (id: string, reason?: string) => {
     set((state) => {
       const transactionToDelete = (state.transactions || []).find(t => t.id === id);
-      if (!transactionToDelete) return state;
+      if (!transactionToDelete || transactionToDelete.deletedAt) return state;
 
       const updatedInventory = [...state.inventory];
       
+      // SOLO restauramos stock si no estaba ya eliminado
       transactionToDelete.items.forEach(item => {
         if (item.product.isKit && item.product.kitComponents) {
           item.product.kitComponents.forEach(comp => {
@@ -1155,7 +1249,6 @@ export const useStore = create<AppState>()(
                 ...updatedInventory[compIdx],
                 quantity: updatedInventory[compIdx].quantity + (comp.quantity * item.quantity)
               };
-              // Sync updated component inventory to Supabase
               pushInventoryToSupabase(updatedInventory[compIdx]).catch(() => {});
             }
           });
@@ -1170,14 +1263,23 @@ export const useStore = create<AppState>()(
               ...updatedInventory[idx], 
               quantity: updatedInventory[idx].quantity + item.quantity 
             };
-            // Sync updated inventory to Supabase
             pushInventoryToSupabase(updatedInventory[idx]).catch(() => {});
           }
         }
       });
 
-      // Delete the transaction from Supabase
-      deleteTransactionFromSupabase(id).catch(() => {});
+      const deletedAt = new Date().toISOString();
+      const deletedBy = state.currentUser?.id || 'system';
+
+      const updatedTransaction: Transaction = {
+        ...transactionToDelete,
+        deletedAt,
+        deletedBy,
+        deleteReason: reason || 'Anulación de venta'
+      };
+
+      // En lugar de borrar físicamente, actualizamos el registro en Supabase
+      pushTransactionToSupabase(updatedTransaction).catch(() => {});
 
       // Revert associated bank transactions and bank card balances
       const relatedBankTxs = (state.bankTransactions || []).filter(bt => 
@@ -1189,10 +1291,9 @@ export const useStore = create<AppState>()(
       let updatedBankCards = [...state.bankCards];
 
       relatedBankTxs.forEach(bt => {
-        // Delete from Supabase
-        deleteBankTransactionFromSupabase(bt.id).catch(() => {});
+        // Soft delete bank transaction too? For now we'll just keep them but they might need marking.
+        // Actually it's better to just delete them from the visible list if they were generated by this sale
         
-        // Revert card balance
         const cardIdx = updatedBankCards.findIndex(c => c.id === bt.cardId);
         if (cardIdx !== -1) {
           const card = updatedBankCards[cardIdx];
@@ -1208,28 +1309,37 @@ export const useStore = create<AppState>()(
         }
       });
 
-      const updatedBankTransactions = (state.bankTransactions || []).filter(bt => 
-        bt.transactionId !== id && 
-        bt.reference !== id && 
-        !(bt.description && bt.description.includes(id))
+      // Update warranties status
+      const updatedWarranties = state.warranties.map(w => 
+        w.transactionId === id ? { ...w, status: 'refunded' as const } : w
       );
-
-      // Delete associated transfers if any
-      const updatedTransfers = (state.transfers || []).filter(tr => 
-        tr.transactionId !== id &&
-        !tr.id.includes(id) && 
-        !(tr.productName.includes(id)) 
-      );
+      updatedWarranties.forEach(w => {
+        if (w.transactionId === id) {
+          import('../services/supabaseSync').then(({ pushWarrantyToSupabase }) => {
+            pushWarrantyToSupabase(w).catch(() => {});
+          });
+        }
+      });
 
       return {
-        transactions: state.transactions.filter(t => t.id !== id),
+        transactions: state.transactions.map(t => t.id === id ? updatedTransaction : t),
         inventory: updatedInventory,
-        warranties: state.warranties.filter(w => w.transactionId !== id),
-        transfers: updatedTransfers,
+        warranties: updatedWarranties,
         bankCards: updatedBankCards,
-        bankTransactions: updatedBankTransactions
+        // We filter out deleted bank transactions for now to not clutter bank history
+        bankTransactions: state.bankTransactions.filter(bt => bt.transactionId !== id)
       };
     });
+  },
+
+  updateTransaction: (id: string, updates: Partial<Transaction>) => {
+    set((state) => ({
+      transactions: (state.transactions || []).map(t => t.id === id ? { ...t, ...updates } : t)
+    }));
+    const updated = get().transactions.find(t => t.id === id);
+    if (updated) {
+      pushTransactionToSupabase(updated).catch(() => {});
+    }
   },
 
   cancelSession: (sessionId: string) => {
@@ -1253,17 +1363,26 @@ export const useStore = create<AppState>()(
     get().deleteCashSession(sessionId);
   },
 
-  deleteCashSession: (id: string) => {
+  deleteCashSession: (id: string, reason?: string) => {
     set((state) => {
       const sessionToDelete = state.cashSessions.find(s => s.id === id);
-      if (!sessionToDelete) return state;
+      if (!sessionToDelete || sessionToDelete.deletedAt) return state;
 
-      // Delete session from Supabase
-      deleteCashSessionFromSupabase(id).catch(() => {});
+      const deletedAt = new Date().toISOString();
+      const deletedBy = state.currentUser?.id || 'system';
+
+      const updatedSession: CashRegisterSession = {
+        ...sessionToDelete,
+        deletedAt,
+        deletedBy,
+        deleteReason: reason || 'Cancelación de turno'
+      };
+
+      // En lugar de borrar físicamente, actualizamos el registro en Supabase
+      pushCashSessionToSupabase(updatedSession).catch(() => {});
 
       return {
-        cashSessions: state.cashSessions.filter(s => s.id !== id),
-        salarySettlements: state.salarySettlements.filter(st => st.sessionId !== id)
+        cashSessions: state.cashSessions.map(s => s.id === id ? updatedSession : s)
       };
     });
   },
@@ -1336,7 +1455,16 @@ export const useStore = create<AppState>()(
 
   customers: [],
   addCustomer: (customer) => {
-    set((state) => ({ customers: [...state.customers, customer] }));
+    set((state) => {
+      // Deduplicación por ID, Teléfono o Correo
+      const isDuplicate = (state.customers || []).some(c => 
+        c.id === customer.id || 
+        (c.phone && customer.phone && c.phone === customer.phone) ||
+        (c.email && customer.email && c.email.toLowerCase().trim() === customer.email.toLowerCase().trim())
+      );
+      if (isDuplicate) return state;
+      return { customers: [...(state.customers || []), customer] };
+    });
     pushCustomerToSupabase(customer).catch(() => {});
   },
   updateCustomer: (id, customer) => {
@@ -1354,7 +1482,7 @@ export const useStore = create<AppState>()(
   },
 
   cashSessions: [],
-  openSession: (session) => {
+  openSession: async (session) => {
     const existingSessions = get().cashSessions || [];
     let maxTurn = 0;
     existingSessions.forEach(s => {
@@ -1364,6 +1492,27 @@ export const useStore = create<AppState>()(
         if (!isNaN(num) && num > maxTurn) maxTurn = num;
       }
     });
+    
+    // Si hay red, usar RPC para garantizar integridad y turno único
+    if (navigator.onLine) {
+      const res = await callOpenSessionRPC(session);
+      if (res.success && res.data) {
+        const officialSession = {
+          ...res.data,
+          openingBalance: Number(res.data.opening_balance || res.data.opening_amount) || 0,
+          openingAmount: Number(res.data.opening_amount || res.data.opening_balance) || 0,
+          workingEmployeeIds: res.data.working_employee_ids || [],
+          movements: res.data.movements || []
+        };
+        set((state) => ({
+          cashSessions: [...(state.cashSessions || []), officialSession],
+          lastTurnNumber: Math.max(state.lastTurnNumber, parseInt(officialSession.id.split('-')[1]) || 0),
+          cart: []
+        }));
+        return;
+      }
+    }
+
     const nextTurn = Math.max(maxTurn, get().lastTurnNumber || 0, existingSessions.length) + 1;
     const sessionWithSequentialId = {
       ...session,
@@ -1374,11 +1523,12 @@ export const useStore = create<AppState>()(
     };
     set((state) => ({ 
       cashSessions: [...(state.cashSessions || []), sessionWithSequentialId],
-      lastTurnNumber: nextTurn
+      lastTurnNumber: nextTurn,
+      cart: [] // ASEGURAR QUE EL CARRITO ESTÉ VACÍO AL ABRIR NUEVO TURNO
     }));
     pushCashSessionToSupabase(sessionWithSequentialId).catch(() => {});
   },
-  closeSession: (sessionId, closingBalances, workerName, closingDate, discrepancyDeduction, sessionMeta) => {
+  closeSession: async (sessionId, closingBalances, workerName, closingDate, discrepancyDeduction, sessionMeta) => {
     const finalClosingDate = closingDate || new Date().toISOString();
     const session = get().cashSessions.find(s => s.id === sessionId);
     if (!session) return;
@@ -1430,14 +1580,32 @@ export const useStore = create<AppState>()(
       ...(sessionMeta || {})
     };
 
+    // Intentar RPC atómico
+    if (navigator.onLine) {
+      const res = await callCloseSessionRPC(sessionId, closingBalances, finalClosingDate, session.notes || '', settlement);
+      if (res.success) {
+        // Actualizar localmente
+        set((state) => ({
+          cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s),
+          salarySettlements: [...(state.salarySettlements || []), { ...settlement, id: res.data?.settlement_id || settlement.id }],
+          cart: []
+        }));
+        return;
+      }
+    }
+
     set((state) => ({
       cashSessions: (state.cashSessions || []).map(s => 
         s.id === sessionId ? updatedSession : s
       ),
-      salarySettlements: [...(state.salarySettlements || []), settlement]
+      salarySettlements: [...(state.salarySettlements || []), settlement],
+      cart: [] // ASEGURAR QUE EL CARRITO ESTÉ VACÍO AL CERRAR TURNO
     }));
 
     pushCashSessionToSupabase(updatedSession).catch(() => {});
+    import('../services/supabaseSync').then(({ pushSalarySettlementToSupabase }) => {
+      pushSalarySettlementToSupabase(settlement).catch(() => {});
+    });
   },
   updateCashSession: (id, updates) => {
     set((state) => ({
@@ -1450,20 +1618,337 @@ export const useStore = create<AppState>()(
       pushCashSessionToSupabase(updated).catch(() => {});
     }
   },
+  updateCashSessionDateCascade: async (sessionId, newDateYMD) => {
+    const state = get();
+    const session = (state.cashSessions || []).find(s => s.id === sessionId);
+    if (!session || !newDateYMD) return false;
+
+    // Helper to shift ISO string to target YYYY-MM-DD date
+    const shiftDate = (isoStr: string | null | undefined): string => {
+      if (!isoStr) return '';
+      try {
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return `${newDateYMD}T12:00:00.000Z`;
+        const [year, month, day] = newDateYMD.split('-').map(Number);
+        const updated = new Date(d);
+        updated.setFullYear(year, month - 1, day);
+        return updated.toISOString();
+      } catch {
+        return `${newDateYMD}T12:00:00.000Z`;
+      }
+    };
+
+    const newOpenedAt = shiftDate(session.openedAt);
+    const newClosedAt = session.closedAt ? shiftDate(session.closedAt) : undefined;
+    const newClosingDate = session.closingDate ? shiftDate(session.closingDate) : undefined;
+
+    // Shift movements date
+    const updatedMovements = (session.movements || []).map(m => ({
+      ...m,
+      date: shiftDate(m.date)
+    }));
+
+    const updatedSession: CashRegisterSession = {
+      ...session,
+      openedAt: newOpenedAt,
+      closedAt: newClosedAt,
+      closingDate: newClosingDate,
+      movements: updatedMovements
+    };
+
+    // Find affected transactions
+    const oldOpenTime = new Date(session.openedAt).getTime();
+    const oldCloseTime = session.closedAt ? new Date(session.closedAt).getTime() : Infinity;
+
+    const affectedTxIds = new Set<string>();
+    const updatedTransactions = (state.transactions || []).map(tx => {
+      const isLinked = tx.sessionId === session.id || (
+        tx.branchId === session.branchId &&
+        new Date(tx.date).getTime() >= oldOpenTime &&
+        new Date(tx.date).getTime() <= oldCloseTime
+      );
+      if (isLinked) {
+        affectedTxIds.add(tx.id);
+        return {
+          ...tx,
+          sessionId: session.id, // Enforce sessionId linkage
+          date: shiftDate(tx.date)
+        };
+      }
+      return tx;
+    });
+
+    // Update bank transactions linked to these transactions
+    const updatedBankTransactions = (state.bankTransactions || []).map(bt => {
+      if (bt.transactionId && affectedTxIds.has(bt.transactionId)) {
+        return {
+          ...bt,
+          date: shiftDate(bt.date)
+        };
+      }
+      return bt;
+    });
+
+    // Update salary settlements linked to this session
+    const updatedSalarySettlements = (state.salarySettlements || []).map(st => {
+      if (st.sessionId === session.id) {
+        return {
+          ...st,
+          date: newClosingDate || newOpenedAt
+        };
+      }
+      return st;
+    });
+
+    // Update warranties linked to these transactions
+    const updatedWarranties = (state.warranties || []).map(w => {
+      if (affectedTxIds.has(w.transactionId)) {
+        return {
+          ...w,
+          purchaseDate: shiftDate(w.purchaseDate)
+        };
+      }
+      return w;
+    });
+
+    // Update returns linked to these transactions
+    const updatedReturns = (state.returns || []).map(ret => {
+      if (affectedTxIds.has(ret.transactionId)) {
+        return {
+          ...ret,
+          date: shiftDate(ret.date)
+        };
+      }
+      return ret;
+    });
+
+    // Update local state atomically
+    set({
+      cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s),
+      transactions: updatedTransactions,
+      bankTransactions: updatedBankTransactions,
+      salarySettlements: updatedSalarySettlements,
+      warranties: updatedWarranties,
+      returns: updatedReturns
+    });
+
+    // Sync updates to Supabase in background
+    try {
+      await pushCashSessionToSupabase(updatedSession);
+      for (const tx of updatedTransactions) {
+        if (affectedTxIds.has(tx.id)) {
+          await pushTransactionToSupabase(tx);
+        }
+      }
+      for (const bt of updatedBankTransactions) {
+        if (bt.transactionId && affectedTxIds.has(bt.transactionId)) {
+          await pushBankTransactionToSupabase(bt);
+        }
+      }
+    } catch (e) {
+      console.warn("Cascaded date update Supabase sync error:", e);
+    }
+
+    return true;
+  },
+  joinOpenSession: (sessionId, userId, workerName) => {
+    set((state) => {
+      const session = (state.cashSessions || []).find(s => s.id === sessionId);
+      if (!session) return state;
+
+      const employeeIds = [...(session.workingEmployeeIds || [])];
+      if (userId && !employeeIds.includes(userId)) {
+        employeeIds.push(userId);
+      }
+
+      const updatedSession: CashRegisterSession = {
+        ...session,
+        workingEmployeeIds: employeeIds,
+        workerName: workerName || session.workerName
+      };
+
+      // Push updated session to Supabase
+      pushCashSessionToSupabase(updatedSession).catch(() => {});
+
+      return {
+        cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s)
+      };
+    });
+  },
   getCurrentSession: (branchId, userId) => {
     const sessions = get().cashSessions || [];
-    // 1. Check exact match by branch and user or workingEmployeeIds
-    if (branchId && userId) {
-      const match = sessions.find(s => s.branchId === branchId && (s.userId === userId || s.workingEmployeeIds?.includes(userId)) && s.status === 'open');
-      if (match) return match;
+    if (!userId) return undefined;
+    
+    // Strict match: must be open AND not deleted AND the specific user must be the opener or in working employees
+    // Strictly isolate by branchId so cross-tablet/cross-branch sessions never collide
+    return sessions.find(s => 
+      s.status === 'open' && 
+      !s.deletedAt &&
+      (s.userId === userId || s.workingEmployeeIds?.includes(userId)) &&
+      (branchId ? s.branchId === branchId : true)
+    );
+  },
+
+  addInformationalSoldProductToSession: async (sessionId, itemData) => {
+    const session = get().cashSessions.find(s => s.id === sessionId);
+    if (!session) {
+      return { success: false };
     }
-    // 2. Check open session in current branch
-    if (branchId) {
-      const branchSession = sessions.find(s => s.branchId === branchId && s.status === 'open');
-      if (branchSession) return branchSession;
+
+    const txs = get().transactions || [];
+    const maxNum = txs.reduce((max, t) => {
+      const match = t.id?.match(/INF-(\d+)/i) || t.id?.match(/ADJ-(\d+)/i);
+      return match ? Math.max(max, parseInt(match[1], 10)) : max;
+    }, 0);
+    const nextNum = Math.max(txs.length, maxNum) + 1;
+    const txId = `INF-${nextNum.toString().padStart(3, '0')}`;
+
+    const totalAmount = itemData.quantity * itemData.price;
+    const txDate = session.closingDate || session.closedAt || session.openedAt || new Date().toISOString();
+    const currencyCode = itemData.currencyCode || get().getBaseCurrency().code;
+    const curr = get().currencies.find(c => c.code === currencyCode);
+    const rate = curr?.rateToBase || 1;
+
+    const informationalTx: Transaction = {
+      id: txId,
+      branchId: session.branchId,
+      userId: itemData.userId || session.userId,
+      cashierName: itemData.workerName || session.workerName,
+      date: txDate,
+      subtotal: totalAmount,
+      tax: 0,
+      total: totalAmount,
+      items: [
+        {
+          id: crypto.randomUUID(),
+          product: {
+            id: itemData.productId,
+            name: itemData.productName,
+            price: itemData.price,
+            costPrice: 0,
+            sku: 'INF'
+          } as any,
+          quantity: itemData.quantity,
+          price: itemData.price,
+          total: totalAmount
+        }
+      ],
+      payments: [
+        {
+          method: itemData.paymentMethod || 'cash',
+          amount: totalAmount,
+          currencyCode: currencyCode as any,
+          exchangeRate: rate
+        }
+      ],
+      status: 'completed',
+      sessionId: session.id,
+      notes: 'AJUSTE_MANUAL_INFORME (Sin afectar stock físico)'
+    };
+
+    // Agregar a transacciones locales SIN descontar inventario físico
+    set(state => ({
+      transactions: [informationalTx, ...state.transactions]
+    }));
+
+    // Sincronizar transacción con Supabase
+    pushTransactionToSupabase(informationalTx).catch(() => {});
+
+    // Si el turno está cerrado, recalcular nómina si aplica
+    if (session.status === 'closed') {
+      const existingSettlement = (get().salarySettlements || []).find(st => st.sessionId === session.id);
+      if (existingSettlement) {
+        const productObj = get().products.find(p => p.id === itemData.productId);
+        const commValue = productObj?.commissionValue || 0;
+        const extraCommissions = commValue * itemData.quantity;
+        const updatedSettlement = {
+          ...existingSettlement,
+          commissions: (existingSettlement.commissions || 0) + extraCommissions,
+          total: (existingSettlement.total || 0) + extraCommissions
+        };
+        set(state => ({
+          salarySettlements: state.salarySettlements.map(st => st.id === existingSettlement.id ? updatedSettlement : st)
+        }));
+        import('../services/supabaseSync').then(({ pushSalarySettlementToSupabase }) => {
+          pushSalarySettlementToSupabase(updatedSettlement).catch(() => {});
+        });
+      }
     }
-    // 3. Fallback to any open session across branches
-    return sessions.find(s => s.status === 'open');
+
+    return { success: true, transactionId: txId };
+  },
+
+  forceCloseSessionFromReports: async (sessionId, closingBalances, closingDate, notes) => {
+    const session = get().cashSessions.find(s => s.id === sessionId);
+    if (!session) return { success: false };
+
+    const finalClosingDate = closingDate || new Date().toISOString();
+    const finalBalances = closingBalances && closingBalances.length > 0
+      ? closingBalances
+      : session.closingBalances && session.closingBalances.length > 0
+        ? session.closingBalances
+        : [{ currencyCode: get().getBaseCurrency().code, amount: session.openingBalance || 0, method: 'cash' as const, exchangeRate: 1 }];
+
+    const updatedSession: CashRegisterSession = {
+      ...session,
+      status: 'closed',
+      closedAt: finalClosingDate,
+      closingDate: finalClosingDate,
+      closingBalances: finalBalances,
+      notes: notes ? (session.notes ? `${session.notes} | ${notes}` : notes) : session.notes
+    };
+
+    // Actualizar localmente de inmediato
+    set(state => ({
+      cashSessions: state.cashSessions.map(s => s.id === sessionId ? updatedSession : s)
+    }));
+
+    // Si no tiene liquidación de salario generada, crearla
+    const sessionTxs = (get().transactions || []).filter(t => 
+      t.sessionId === session.id || (
+        t.branchId === session.branchId &&
+        new Date(t.date).getTime() >= new Date(session.openedAt).getTime() &&
+        new Date(t.date).getTime() <= new Date(finalClosingDate).getTime()
+      )
+    );
+
+    const user = get().users.find(u => u.id === session.userId || u.name?.toLowerCase() === session.workerName?.toLowerCase());
+    const commissions = sessionTxs.reduce((sum, tx) => {
+      return sum + (tx.items || []).reduce((itemSum, item) => {
+        const prodObj = typeof item.product === 'object' ? item.product : get().products.find(p => p.id === (item.product as unknown as string));
+        const commVal = prodObj?.commissionValue || 0;
+        return itemSum + (commVal * (item.quantity || 0));
+      }, 0);
+    }, 0);
+
+    const baseSalary = user?.baseSalary || 0;
+    const totalSalary = baseSalary + commissions;
+
+    const settlement: SalarySettlement = {
+      id: crypto.randomUUID(),
+      userId: session.userId,
+      userName: session.workerName || user?.name || 'Vendedor',
+      sessionId: session.id,
+      baseSalary: baseSalary,
+      commissions: commissions,
+      discrepancyDeduction: 0,
+      total: totalSalary,
+      date: finalClosingDate,
+      status: 'pending'
+    };
+
+    set(state => {
+      const filtered = (state.salarySettlements || []).filter(st => st.sessionId !== session.id);
+      return { salarySettlements: [...filtered, settlement] };
+    });
+
+    // Subir a Supabase
+    pushCashSessionToSupabase(updatedSession).catch(() => {});
+    import('../services/supabaseSync').then(({ pushSalarySettlementToSupabase }) => {
+      pushSalarySettlementToSupabase(settlement).catch(() => {});
+    });
+
+    return { success: true };
   },
 
   pendingOrders: [],
@@ -1627,7 +2112,16 @@ export const useStore = create<AppState>()(
 
   bankCards: INITIAL_BANK_CARDS,
   addBankCard: (card) => {
-    set(state => ({ bankCards: [...state.bankCards, card] }));
+    set(state => {
+      // Deduplicación por ID, Número de Cuenta o Nombre+Banco
+      const isDuplicate = state.bankCards.some(c => 
+        c.id === card.id || 
+        (c.accountNumber && card.accountNumber && c.accountNumber === card.accountNumber) ||
+        (c.name.toLowerCase().trim() === card.name.toLowerCase().trim() && c.bankName?.toLowerCase().trim() === card.bankName?.toLowerCase().trim())
+      );
+      if (isDuplicate) return state;
+      return { bankCards: [...state.bankCards, card] };
+    });
     pushBankCardToSupabase(card).catch(() => {});
   },
   updateBankCard: (id, card) => {
@@ -1716,13 +2210,6 @@ export const useStore = create<AppState>()(
   },
 
   reconcileBankBalances: async () => {
-    // 1. Sync latest data from Supabase
-    try {
-      await get().syncWithSupabase();
-    } catch (e) {
-      console.warn("Supabase sync before reconciliation failed:", e);
-    }
-
     const state = get();
     const seenIds = new Set<string>();
     const seenTxIds = new Set<string>();
@@ -1732,23 +2219,20 @@ export const useStore = create<AppState>()(
 
     // Filter duplicates preserving the most recent unique record
     for (const bt of state.bankTransactions || []) {
-      if (seenIds.has(bt.id)) {
+      const isDuplicate = seenIds.has(bt.id) || 
+                          (bt.transactionId && seenTxIds.has(bt.transactionId)) ||
+                          (bt.reference && seenRefs.has(`${bt.cardId}::${bt.reference}`));
+
+      if (isDuplicate) {
         removedDuplicates++;
-        continue;
-      }
-      if (bt.transactionId && seenTxIds.has(bt.transactionId)) {
-        removedDuplicates++;
-        continue;
-      }
-      const refKey = bt.reference ? `${bt.cardId}::${bt.reference}` : null;
-      if (refKey && seenRefs.has(refKey)) {
-        removedDuplicates++;
+        // Si detectamos duplicado, intentar eliminar de Supabase para limpiar la nube también
+        deleteBankTransactionFromSupabase(bt.id).catch(() => {});
         continue;
       }
 
       seenIds.add(bt.id);
       if (bt.transactionId) seenTxIds.add(bt.transactionId);
-      if (refKey) seenRefs.add(refKey);
+      if (bt.reference) seenRefs.add(`${bt.cardId}::${bt.reference}`);
       uniqueTxs.push(bt);
     }
 
@@ -1773,124 +2257,227 @@ export const useStore = create<AppState>()(
       const { data, result } = await pullAllFromSupabase();
       if (result.success && data) {
         set((state) => {
-          // 1. Sucursales: autoridad de Supabase + cola offline real
-          const offlineQueuedBranchIds = new Set(
-            getOfflineQueue()
-              .filter(i => i.type === 'branch')
-              .map(i => i.data.id)
-          );
-          const localPendingBranches = (state.branches || []).filter(b => offlineQueuedBranchIds.has(b.id));
-          const mergedBranches = [...(data.branches !== undefined ? data.branches : state.branches || [])];
-          localPendingBranches.forEach(lb => {
-            if (!mergedBranches.some(mb => mb.id === lb.id)) {
-              mergedBranches.push(lb);
-            }
-          });
+          // Helper para deduplicar arrays por ID o clave personalizada
+          // AHORA ES ADITIVO: No descarta datos locales que no están en Supabase, 
+          // simplemente prioriza Supabase para los conflictos de ID.
+          const mergeUnique = <T extends Record<string, any>>(supabaseData: T[] | undefined, localData: T[], options?: { offlineIds?: Set<string | number>, semanticDedupe?: boolean, idKey?: string, semanticKeys?: string[] }): T[] => {
+            const idKey = options?.idKey || 'id';
+            const semanticKeys = options?.semanticKeys || (options?.semanticDedupe ? ['name'] : []);
+            const map = new Map<string | number, T>();
+            const semanticMap = new Map<string, string | number>(); 
+            
+            const getSemanticKey = (item: T): string | null => {
+              if (semanticKeys.length === 0) return null;
+              const values = semanticKeys.map(k => normalizeSemanticText(String(item[k] || ''))).filter(Boolean);
+              return values.length > 0 ? values.join('::') : null;
+            };
 
-          const validBranchIds = new Set(mergedBranches.map(b => b.id));
+            // 1. Cargar TODOS los datos locales primero
+            localData.forEach(item => {
+              const sKey = getSemanticKey(item);
+              if (sKey) {
+                semanticMap.set(sKey, item[idKey]);
+              }
+              map.set(item[idKey], item);
+            });
+            
+            // 2. Sobrescribir con datos de Supabase (la fuente de verdad principal)
+            if (supabaseData) {
+              supabaseData.forEach(item => {
+                const sKey = getSemanticKey(item);
+                if (sKey) {
+                  const existingId = semanticMap.get(sKey);
+                  if (existingId && existingId !== item[idKey]) {
+                    map.delete(existingId);
+                  }
+                  semanticMap.set(sKey, item[idKey]);
+                }
+                
+                // Si es una sesión de caja y localmente ya fue cerrada pero en la nube está abierta, preservar el estado cerrado
+                if (item.status === 'open') {
+                  const localItem = map.get(item[idKey]);
+                  if (localItem && localItem.status === 'closed') {
+                    map.set(item[idKey], {
+                      ...item,
+                      status: 'closed',
+                      closedAt: localItem.closedAt || item.closed_at || new Date().toISOString(),
+                      closingDate: localItem.closingDate || localItem.closedAt,
+                      closingBalances: localItem.closingBalances || []
+                    });
+                    return;
+                  }
+                }
+
+                map.set(item[idKey], item);
+              });
+            }
+            
+            return Array.from(map.values());
+          };
+
+          // --- 1. Sucursales ---
+          const offlineQueuedBranchItems = getOfflineQueue().filter(i => i.type === 'branch');
+          const offlineQueuedBranchIds = new Set(offlineQueuedBranchItems.map(i => i.data.id));
+          
+          const mergedBranches = mergeUnique(data.branches, state.branches || [], { 
+            offlineIds: offlineQueuedBranchIds, 
+            semanticDedupe: true,
+            semanticKeys: ['name']
+          });
+          
+          // Purge: Si recibimos datos de Supabase, eliminar locales que no estén en Supabase Y no estén en la cola offline
+          const finalBranches = data.branches 
+            ? mergedBranches.filter(b => 
+                data.branches.some((sb: any) => sb.id === b.id) || 
+                offlineQueuedBranchIds.has(b.id)
+              )
+            : mergedBranches;
+
+          const validBranchIds = new Set(finalBranches.map(b => b.id));
 
           let nextBranchId = state.currentBranchId;
           if (!nextBranchId || !validBranchIds.has(nextBranchId)) {
-            nextBranchId = mergedBranches[0]?.id || '';
+            nextBranchId = finalBranches[0]?.id || '';
           }
 
-          // 2. Transacciones: autoridad de Supabase + cola offline real
+          // --- 2. Transacciones ---
           const offlineQueuedTxIds = new Set(
-            getOfflineQueue()
-              .filter(i => i.type === 'transaction')
-              .map(i => i.data.id)
+            getOfflineQueue().filter(i => i.type === 'transaction').map(i => i.data.id)
           );
-          const localPendingTxs = (state.transactions || []).filter(t => offlineQueuedTxIds.has(t.id));
-          const mergedTransactions = [...(data.transactions !== undefined ? data.transactions : state.transactions || [])];
-          localPendingTxs.forEach(ptx => {
-            if (!mergedTransactions.some(mt => mt.id === ptx.id)) {
-              mergedTransactions.push(ptx);
-            }
-          });
+          const mergedTransactions = mergeUnique(data.transactions, state.transactions || [], { offlineIds: offlineQueuedTxIds });
 
-          // 3. Sesiones de caja: autoridad de Supabase + cola offline real
+          // --- 3. Sesiones ---
           const offlineQueuedSessionIds = new Set(
-            getOfflineQueue()
-              .filter(i => i.type === 'cash_session')
-              .map(i => i.data.id)
+            getOfflineQueue().filter(i => i.type === 'cash_session').map(i => i.data.id)
           );
-          const localPendingSessions = (state.cashSessions || []).filter(s => offlineQueuedSessionIds.has(s.id));
-          const mergedCashSessions = [...(data.cashSessions !== undefined ? data.cashSessions : state.cashSessions || [])];
-          localPendingSessions.forEach(ps => {
-            if (!mergedCashSessions.some(ms => ms.id === ps.id)) {
-              mergedCashSessions.push(ps);
-            }
-          });
+          const mergedCashSessions = mergeUnique(data.cashSessions, state.cashSessions || [], { offlineIds: offlineQueuedSessionIds });
 
-          // 4. Clientes: autoridad de Supabase + cola offline real
+          // --- 4. Clientes ---
           const offlineQueuedCustomerIds = new Set(
-            getOfflineQueue()
-              .filter(i => i.type === 'customer')
-              .map(i => i.data.id)
+            getOfflineQueue().filter(i => i.type === 'customer').map(i => i.data.id)
           );
-          const localPendingCustomers = (state.customers || []).filter(c => offlineQueuedCustomerIds.has(c.id));
-          const mergedCustomers = [...(data.customers !== undefined ? data.customers : state.customers || [])];
-          localPendingCustomers.forEach(pc => {
-            if (!mergedCustomers.some(mc => mc.id === pc.id)) {
-              mergedCustomers.push(pc);
-            }
+          const mergedCustomers = mergeUnique(data.customers, state.customers || [], { 
+            offlineIds: offlineQueuedCustomerIds,
+            semanticDedupe: true,
+            semanticKeys: ['phone', 'email']
           });
 
-          // 5. Devoluciones: autoridad de Supabase + cola offline real
+          // --- 5. Devoluciones ---
           const offlineQueuedReturnIds = new Set(
-            getOfflineQueue()
-              .filter(i => i.type === 'return')
-              .map(i => i.data.id)
+            getOfflineQueue().filter(i => i.type === 'return').map(i => i.data.id)
           );
-          const localPendingReturns = (state.returns || []).filter(r => offlineQueuedReturnIds.has(r.id));
-          const mergedReturns = [...(data.returns !== undefined ? data.returns : state.returns || [])];
-          localPendingReturns.forEach(pr => {
-            if (!mergedReturns.some(mr => mr.id === pr.id)) {
-              mergedReturns.push(pr);
-            }
-          });
+          const mergedReturns = mergeUnique(data.returns, state.returns || [], { offlineIds: offlineQueuedReturnIds });
 
-          // 6. Inventario por almacén/variante: filtrar sucursales inexistentes
+          // --- 6. Inventario (Deduplicación por combinación única) ---
+          const offlineQueuedInventory = getOfflineQueue()
+            .filter(i => i.type === 'inventory')
+            .map(i => i.data as InventoryLevel);
+            
           const baseInv = data.inventory !== undefined ? data.inventory : state.inventory;
-          const mergedInventory = baseInv.filter(inv => !inv.branchId || validBranchIds.has(inv.branchId));
+          const invMap = new Map<string, InventoryLevel>();
+          
+          // 1. Cargar inventario base (Supabase o Local si falló fetch)
+          baseInv.forEach(inv => {
+            const key = `${inv.productId}_${inv.branchId}_${inv.variantLabel || ''}`;
+            invMap.set(key, inv);
+          });
+          
+          // 2. Sobrescribir con cambios pendientes offline
+          offlineQueuedInventory.forEach(inv => {
+            const key = `${inv.productId}_${inv.branchId}_${inv.variantLabel || ''}`;
+            invMap.set(key, inv);
+          });
+          
+          // Purge Inventario: Si recibimos de Supabase, quitar los que no estén en Supabase y no estén en cola offline
+          let mergedInventory = Array.from(invMap.values()).filter(inv => !inv.branchId || validBranchIds.has(inv.branchId));
+          if (data.inventory) {
+            const supabaseInvKeys = new Set(data.inventory.map((si: any) => `${si.product_id || si.productId}_${si.branch_id || si.branchId}_${si.variant_label || si.variantLabel || ''}`));
+            const offlineInvKeys = new Set(offlineQueuedInventory.map(oi => `${oi.productId}_${oi.branchId}_${oi.variantLabel || ''}`));
+            
+            mergedInventory = mergedInventory.filter(inv => {
+              const key = `${inv.productId}_${inv.branchId}_${inv.variantLabel || ''}`;
+              return supabaseInvKeys.has(key) || offlineInvKeys.has(key);
+            });
+          }
 
-          // 7. Transacciones Bancarias (Deduplicación estricta)
-          const baseBts: import('../types').BankTransaction[] = data.bankTransactions !== undefined ? data.bankTransactions : state.bankTransactions || [];
-          const existingBtIds = new Set(baseBts.map(bt => bt.id));
-          const localOnlyBts = (state.bankTransactions || []).filter(bt => !existingBtIds.has(bt.id));
-          const mergedBankTransactions = [...baseBts, ...localOnlyBts];
+          // --- 7. Otros (Deduplicación simple por ID o clave única) ---
+          const mergedProducts = mergeUnique(data.products, state.products || [], {
+            semanticDedupe: true,
+            semanticKeys: ['sku', 'name']
+          });
+          // Purge Productos
+          const finalProducts = data.products 
+            ? mergedProducts.filter(p => data.products.some((sp: any) => sp.id === p.id))
+            : mergedProducts;
 
-          // 8. Actualizar currentUser si está activo con los datos más recientes de Supabase
+          const mergedCategories = mergeUnique(data.categories, state.categories || [], { 
+            semanticDedupe: true,
+            semanticKeys: ['name']
+          });
+          // Purge Categorías
+          const finalCategories = data.categories
+            ? mergedCategories.filter(c => data.categories.some((sc: any) => sc.id === c.id))
+            : mergedCategories;
+
+          const mergedUsers = mergeUnique(data.users, state.users || [], {
+            semanticDedupe: true,
+            semanticKeys: ['email']
+          });
+          // Purge Users (except initial admins)
+          const finalUsers = data.users
+            ? mergedUsers.filter(u => data.users.some((su: any) => su.id === u.id) || u.id.startsWith('admin-') || u.id.startsWith('employee-'))
+            : mergedUsers;
+
+          const mergedBankCards = mergeUnique(data.bankCards, state.bankCards || [], {
+            semanticDedupe: true,
+            semanticKeys: ['accountNumber']
+          });
+          const mergedBankTransactions = mergeUnique(data.bankTransactions, state.bankTransactions || [], {
+            idKey: 'id',
+            semanticDedupe: true,
+            semanticKeys: ['reference']
+          });
+          const mergedSuppliers = mergeUnique(data.suppliers, state.suppliers || []);
+          const mergedSupplierOrders = mergeUnique(data.supplierOrders, state.supplierOrders || []);
+          const mergedCurrencies = mergeUnique(data.currencies, state.currencies || [], { idKey: 'code' });
+          const mergedTransfers = mergeUnique(data.transfers, state.transfers || []);
+          const mergedWarranties = mergeUnique(data.warranties, state.warranties || []);
+          const mergedQuotes = mergeUnique(data.quotes, state.quotes || []);
+          const mergedTimeShifts = mergeUnique(data.timeShifts, state.timeShifts || []);
+          const mergedSalarySettlements = mergeUnique(data.salarySettlements, state.salarySettlements || []);
+          const mergedIdnSettlementPrices = mergeUnique(data.idnSettlementPrices, state.idnSettlementPrices || []);
+
           const updatedCurrentUser = state.currentUser
-            ? ((data.users || []).find((u: any) => u.id === state.currentUser?.id) || state.currentUser)
+            ? (finalUsers.find((u: any) => u.id === state.currentUser?.id) || state.currentUser)
             : null;
 
           return {
-            products: data.products !== undefined ? data.products : state.products,
-            categories: data.categories !== undefined ? data.categories : state.categories,
+            products: finalProducts,
+            categories: finalCategories,
             inventory: mergedInventory,
-            branches: mergedBranches,
+            branches: finalBranches,
             currentBranchId: nextBranchId,
-            users: data.users !== undefined ? data.users : state.users,
+            users: finalUsers,
             currentUser: updatedCurrentUser,
-            bankCards: data.bankCards !== undefined ? data.bankCards : state.bankCards,
+            bankCards: mergedBankCards,
             bankTransactions: mergedBankTransactions,
             customers: mergedCustomers,
-            suppliers: data.suppliers !== undefined ? data.suppliers : state.suppliers,
-            supplierOrders: data.supplierOrders !== undefined ? data.supplierOrders : state.supplierOrders,
-            currencies: data.currencies !== undefined ? data.currencies : state.currencies,
+            suppliers: mergedSuppliers,
+            supplierOrders: mergedSupplierOrders,
+            currencies: mergedCurrencies,
             transactions: mergedTransactions,
             cashSessions: mergedCashSessions,
-            transfers: data.transfers !== undefined ? data.transfers : state.transfers,
-            warranties: data.warranties !== undefined ? data.warranties : state.warranties,
+            transfers: mergedTransfers,
+            warranties: mergedWarranties,
             returns: mergedReturns,
-            quotes: data.quotes !== undefined ? data.quotes : state.quotes,
-            timeShifts: data.timeShifts !== undefined ? data.timeShifts : state.timeShifts,
-            salarySettlements: data.salarySettlements !== undefined ? data.salarySettlements : state.salarySettlements,
-            idnSettlementPrices: data.idnSettlementPrices !== undefined ? data.idnSettlementPrices : state.idnSettlementPrices,
+            quotes: mergedQuotes,
+            timeShifts: mergedTimeShifts,
+            salarySettlements: mergedSalarySettlements,
+            idnSettlementPrices: mergedIdnSettlementPrices,
             receiptConfig: data.receiptConfig ? { ...state.receiptConfig, ...data.receiptConfig } : state.receiptConfig,
             storeConfig: data.storeConfig ? { ...state.storeConfig, ...data.storeConfig } : state.storeConfig,
             catalogConfig: data.catalogConfig ? { ...state.catalogConfig, ...data.catalogConfig } : state.catalogConfig,
+            lastTurnNumber: data.lastTurnNumber !== undefined ? Math.max(state.lastTurnNumber, data.lastTurnNumber) : state.lastTurnNumber,
             lastSyncTime: new Date().toISOString(),
             syncResult: result,
             isSyncing: false
@@ -1898,6 +2485,9 @@ export const useStore = create<AppState>()(
         });
       } else {
         set({ isSyncing: false, syncResult: result });
+      }
+      if (result.success) {
+        get().reconcileBankBalances().catch(() => {});
       }
       return result;
     } catch (e: any) {

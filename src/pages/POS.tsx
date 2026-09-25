@@ -11,7 +11,11 @@ import { InfoTooltip } from "../components/InfoTooltip";
 import { getOfflineQueueCount, processOfflineQueue } from "../services/offlineSync";
 
 export default function POS() {
-  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, cashSessions, salarySettlements, transactions, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification } = useStore();
+  const store = useStore();
+  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, salarySettlements, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification, joinOpenSession } = store;
+  
+  const cashSessions = useMemo(() => (store.cashSessions || []).filter(s => !s.deletedAt), [store.cashSessions]);
+  const transactions = useMemo(() => (store.transactions || []).filter(t => !t.deletedAt), [store.transactions]);
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
@@ -121,7 +125,7 @@ export default function POS() {
   
   
   const navigate = useNavigate();
-  const currentSession = getCurrentSession(currentBranchId || '', currentUser?.id || '');
+  const currentSession = getCurrentSession(currentBranchId || (currentUser?.branchId || currentUser?.assignedBranchId || branches[0]?.id || ''), currentUser?.id || '');
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [showSalarySummary, setShowSalarySummary] = useState(false);
   const [lastClosedSession, setLastClosedSession] = useState<CashRegisterSession | null>(null);
@@ -153,6 +157,9 @@ export default function POS() {
   const [openingAmount, setOpeningAmount] = useState("");
   const [sessionWorkerName, setSessionWorkerName] = useState("");
   const [sessionPassword, setSessionPassword] = useState("");
+
+  const [joiningSessionId, setJoiningSessionId] = useState<string | null>(null);
+  const [joiningSessionPassword, setJoiningSessionPassword] = useState("");
   const [isNewEmployee, setIsNewEmployee] = useState(false);
 
   // Worker detection for shift opening and branch locking
@@ -310,10 +317,19 @@ export default function POS() {
       }
 
       // Permitir liquidación con 0 ventas o 0 CUP de acuerdo a la solicitud del usuario
+      const maxIdnNum = (transactions || []).reduce((max, t) => {
+        const match = t.id?.match(/LIQ-IDN-(\d+)/i);
+        return match ? Math.max(max, parseInt(match[1], 10)) : max;
+      }, 0);
+      let nextIdnNum = Math.max((transactions || []).length, maxIdnNum) + 1;
+      let idnTxId = `LIQ-IDN-${nextIdnNum.toString().padStart(2, '0')}`;
+      if ((transactions || []).some(t => t.id === idnTxId)) {
+        const wSuffix = targetWorker.name?.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase() || 'W';
+        idnTxId = `LIQ-IDN-${nextIdnNum.toString().padStart(2, '0')}-${wSuffix}`;
+      }
 
-      const txNum = ((transactions || []).length + 1).toString().padStart(2, '0');
       const transaction: Transaction = {
-        id: `LIQ-IDN-${txNum}`,
+        id: idnTxId,
         items: settlementDetails.map(d => ({
           id: crypto.randomUUID(),
           product: (products || []).find(p => p.id === d.productId) || {
@@ -461,6 +477,27 @@ export default function POS() {
     setTimeout(() => setPosSuccess(""), 3000);
   };
 
+  const handleCancelAndReturnToEmployeeSelector = () => {
+    setIdnPhysicalCounts({});
+    clearCart();
+    setIdnFilter("");
+    setDebouncedIdnFilter("");
+    setIdnSelectedProductFilter("all");
+    setShowConfirmIDNModal(false);
+    setShowIDNReceiptModal(null);
+    setShowCheckoutModal(false);
+    setShowMobileCart(false);
+    setPosViewMode('standard');
+    setSessionWorkerName("");
+    setSessionPassword("");
+    setSelectedAdminIDNUserId("");
+    setJoiningSessionId(null);
+    setJoiningSessionPassword("");
+    setPosError("");
+    setPosSuccess("Punto de venta cancelado. No se contó ni descontó inventario. Regresando al selector de empleado.");
+    setTimeout(() => setPosSuccess(""), 3000);
+  };
+
   const handleSaveIDNSettlementPrice = (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeIDNWorker?.id || !idnPriceFormProduct) {
@@ -505,12 +542,7 @@ export default function POS() {
     // Add all transaction payments from this session
     const sessionTxs = transactions.filter(t => 
       t.branchId === currentBranchId && 
-      (
-        t.sessionId 
-          ? t.sessionId === currentSession.id
-          : (new Date(t.date).getTime() >= new Date(currentSession.openedAt).getTime() &&
-             (!currentSession.closedAt || new Date(t.date).getTime() <= new Date(currentSession.closedAt).getTime()))
-      )
+      t.sessionId === currentSession.id
     );
 
     sessionTxs.forEach(tx => {
@@ -607,12 +639,7 @@ export default function POS() {
       const sessionTxs = transactions.filter(t => 
         t.branchId === currentBranchId && 
         currentSession && 
-        (
-          t.sessionId 
-            ? t.sessionId === currentSession.id
-            : (new Date(t.date).getTime() >= new Date(currentSession.openedAt).getTime() &&
-               (!currentSession.closedAt || new Date(t.date).getTime() <= new Date(currentSession.closedAt).getTime()))
-        )
+        t.sessionId === currentSession.id
       );
 
       const response = await fetch('/api/ai-analyze-discrepancy', {
@@ -817,6 +844,23 @@ export default function POS() {
 
   // Barcode scanner moved lower
 
+  // 1. Mapa de stock optimizado O(I)
+  const currentBranchStockMap = useMemo(() => {
+    const map = new Map<string, number>();
+    (inventory || []).forEach(i => {
+      if (i.branchId === currentBranchId) {
+        const key = i.variantLabel ? `${i.productId}::${i.variantLabel}` : i.productId;
+        // Also keep track of the total stock per product (sum of all variants)
+        map.set(i.productId, (map.get(i.productId) || 0) + i.quantity);
+        // And specific variant stock
+        if (i.variantLabel) {
+          map.set(key, i.quantity);
+        }
+      }
+    });
+    return map;
+  }, [inventory, currentBranchId]);
+
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
       // Filtrar por búsqueda usando el query con debounce
@@ -832,15 +876,13 @@ export default function POS() {
       const matchesCategory = activeCategoryId === "Todos" || p.categoryId === activeCategoryId;
       if (!matchesCategory) return false;
 
-      // Filtrar por existencia en la sucursal actual
-      const branchStockTotal = inventory
-        .filter(i => i.productId === p.id && i.branchId === currentBranchId)
-        .reduce((sum, curr) => sum + curr.quantity, 0);
+      // Filtrar por existencia usando el mapa optimizado
+      const branchStockTotal = currentBranchStockMap.get(p.id) || 0;
       return branchStockTotal > 0;
     })
     .sort((a, b) => a.name.localeCompare(b.name))
     .slice(0, 100); // Limit to 100 products for performance
-  }, [products, debouncedSearchQuery, activeCategoryId, inventory, currentBranchId]);
+  }, [products, debouncedSearchQuery, activeCategoryId, currentBranchStockMap]);
 
   const subtotalBase = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
   const taxBase = 0; // Configurable tax if needed
@@ -867,13 +909,10 @@ export default function POS() {
 
   const getProductStock = (productId: string, variantLabel?: string) => {
     if (variantLabel) {
-      const variantStock = inventory.find(i => i.productId === productId && i.branchId === currentBranchId && (i.variantLabel || '') === (variantLabel || ''));
-      return variantStock ? variantStock.quantity : 0;
+      const key = `${productId}::${variantLabel}`;
+      return currentBranchStockMap.get(key) || 0;
     }
-    // Si no hay variante, sumamos todo el stock del producto en la sucursal
-    return inventory
-      .filter(i => i.productId === productId && i.branchId === currentBranchId)
-      .reduce((sum, i) => sum + i.quantity, 0);
+    return currentBranchStockMap.get(productId) || 0;
   };
 
   const getCartQuantity = (productId: string, variantLabel?: string) => {
@@ -1198,6 +1237,11 @@ export default function POS() {
   };
 
   const openCheckout = () => {
+    if (!currentSession) {
+      setPosError("No hay un turno de caja abierto en esta sucursal. Por favor, abre un turno para comenzar a cobrar.");
+      setShowOpenShiftModal(true);
+      return;
+    }
     const newId = crypto.randomUUID();
     const defaultBank = bankCards.find(c => c.currency === baseCurrency.code) || bankCards[0];
     setPaymentLines([
@@ -1327,9 +1371,7 @@ export default function POS() {
   const getClosureReceiptLines = (session: CashRegisterSession): string[] => {
     const receiptConfig = useStore.getState().receiptConfig;
     const sessionTx = transactions.filter(t => 
-      t.branchId === session.branchId && 
-      new Date(t.date) >= new Date(session.openedAt) && 
-      (session.closedAt ? new Date(t.date) <= new Date(session.closedAt) : true)
+      t.sessionId === session.id && !t.deletedAt
     );
 
     const soldMap: { [name: string]: { name: string, qty: number, total: number } } = {};
@@ -1666,20 +1708,36 @@ export default function POS() {
         };
       });
 
-    const txCount = transactions.length;
-    const ticketNum = (txCount + 1).toString().padStart(2, '0');
-    const txId = `TIKECT ID-MARE${ticketNum}`;
+    // Bloqueo estricto: Una venta NO puede crearse sin un turno abierto
+    if (!currentSession) {
+      setPosError("No existe un turno de caja activo para registrar esta venta. Por favor, abre un turno primero.");
+      setShowOpenShiftModal(true);
+      return;
+    }
 
-    const activeSellerId = currentSession?.userId || currentUser?.id || 'u1';
-    const activeSellerName = currentSession?.workerName || currentUser?.name || 'Vendedor';
+    const txCount = transactions.length;
+    const maxTicketNum = transactions.reduce((max, t) => {
+      const match = t.id?.match(/TIKECT ID-MARE(\d+)/i);
+      return match ? Math.max(max, parseInt(match[1], 10)) : max;
+    }, 0);
+    let nextTicketNum = Math.max(txCount, maxTicketNum) + 1;
+    let txId = `TIKECT ID-MARE${nextTicketNum.toString().padStart(2, '0')}`;
+    if (transactions.some(t => t.id === txId)) {
+      const bObj = branches.find(b => b.id === effectiveBranchId);
+      const bCode = bObj?.name?.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase() || 'TG';
+      txId = `TIKECT ID-MARE${nextTicketNum.toString().padStart(2, '0')}-${bCode}`;
+    }
+
+    const activeSellerId = currentSession.userId || currentUser?.id || 'u1';
+    const activeSellerName = currentSession.workerName || currentUser?.name || 'Vendedor';
     const sellerUser = (users || []).find(u => u.id === activeSellerId) || currentUser;
-    const effectiveBranchId = sellerUser?.assignedBranchId || currentSession?.branchId || currentBranchId || (branches[0]?.id || 'b1');
+    const effectiveBranchId = currentSession.branchId || sellerUser?.assignedBranchId || currentBranchId || (branches[0]?.id || 'b1');
 
     const tx: import('../types').Transaction = {
       id: txId,
       branchId: effectiveBranchId,
       userId: activeSellerId,
-      sellerEmployeeIds: currentSession?.workingEmployeeIds?.length ? currentSession.workingEmployeeIds : [activeSellerId],
+      sellerEmployeeIds: currentSession.workingEmployeeIds?.length ? currentSession.workingEmployeeIds : [activeSellerId],
       cashierName: activeSellerName,
       date: new Date().toISOString(),
       subtotal: subtotalBase,
@@ -1691,7 +1749,7 @@ export default function POS() {
       customerId: currentCustomerId,
       changeGiven: changeBase,
       changePayments: [],
-      sessionId: currentSession?.id
+      sessionId: currentSession.id
     };
 
     // Generate NCF if customer is selected or if config requires it
@@ -1795,6 +1853,45 @@ export default function POS() {
     setTimeout(() => setPosSuccess(""), 3000);
   };
 
+  const handleJoinExistingSession = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!joiningSessionId) return;
+
+    const targetSession = (cashSessions || []).find(s => s.id === joiningSessionId);
+    if (!targetSession) {
+      setPosError("No se encontró el turno seleccionado");
+      return;
+    }
+
+    // Identify the user owning the session
+    const targetUser = (users || []).find(u => u.id === targetSession.userId || (u.name || '').toLowerCase() === (targetSession.workerName || '').toLowerCase());
+    if (!targetUser) {
+      setPosError("No se pudo identificar al dueño del turno");
+      return;
+    }
+
+    const requiredPassword = (targetUser.password || '').trim();
+    const enteredPassword = (joiningSessionPassword || '').trim();
+
+    if (!requiredPassword) {
+      setPosError(`El empleado ${targetUser.name} no tiene contraseña asignada. El administrador debe asignarle una.`);
+      return;
+    }
+
+    if (enteredPassword !== requiredPassword) {
+      setPosError("Contraseña incorrecta. Acceso denegado.");
+      return;
+    }
+
+    // Join the session
+    joinOpenSession(targetSession.id, currentUser?.id || 'emp-tmp', targetSession.workerName);
+    setCurrentBranch(targetSession.branchId);
+    setJoiningSessionId(null);
+    setJoiningSessionPassword("");
+    setPosSuccess(`Te has unido al turno de ${targetSession.workerName || 'Vendedor'} correctamente`);
+    setTimeout(() => setPosSuccess(""), 3000);
+  };
+
   const handleAddCustomer = (e: React.FormEvent) => {
     e.preventDefault();
     const id = generateId('CST');
@@ -1837,12 +1934,21 @@ export default function POS() {
       <div className="flex flex-col h-full bg-primary">
         {/* Header IDN */}
         <header className="bg-secondary text-primary p-3 sm:p-4 flex items-center justify-between shadow-lg flex-wrap gap-3 border-b border-base">
-          <div className="flex items-center gap-3">
-            <div className="bg-amber-500 p-2 rounded-xl text-white shadow-md shadow-amber-500/30">
+          <div 
+            onClick={handleCancelAndReturnToEmployeeSelector}
+            className="flex items-center gap-3 cursor-pointer hover:bg-slate-800/80 p-1.5 -m-1.5 rounded-2xl transition-all border border-transparent hover:border-amber-500/30 group select-none"
+            title="Hacer clic para cancelar punto de venta y volver al selector de empleado (sin contar ni descontar nada)"
+          >
+            <div className="bg-amber-500 p-2 rounded-xl text-white shadow-md shadow-amber-500/30 group-hover:bg-rose-600 transition-colors">
               <Package className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-sm font-black uppercase tracking-tight">Liquidación de Inventario IDN</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm font-black uppercase tracking-tight">Liquidación de Inventario IDN</h1>
+                <span className="text-[8px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/30 px-1.5 py-0.5 rounded uppercase group-hover:bg-rose-600 group-hover:text-white transition-all">
+                  ✕ Cancelar
+                </span>
+              </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-bold text-slate-300 uppercase">{activeIDNWorker?.name || 'Vendedor'}</span>
                 <span className="w-1 h-1 bg-slate-600 rounded-full"></span>
@@ -1856,7 +1962,18 @@ export default function POS() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Cancel and return to Employee selector button */}
+            <button
+              type="button"
+              onClick={handleCancelAndReturnToEmployeeSelector}
+              className="px-2.5 sm:px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 rounded-xl text-[9px] sm:text-[10px] font-black uppercase transition-all shadow-sm flex items-center gap-1.5 active:scale-95 cursor-pointer"
+              title="Cancelar punto de venta y volver al selector de empleado"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Cancelar / Salir</span>
+            </button>
+
             {/* Admin worker selector */}
             {currentUser?.role === 'admin' && independentUsers.length > 0 && (
               <div className="flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded-xl border border-slate-700">
@@ -2307,302 +2424,406 @@ export default function POS() {
         </div>
       )}
       {!currentSession && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
-          {lastClosedSession && !showOpenShiftModal ? (
-            /* Pantalla visual de Turno Finalizado / Cierre */
-            <div className="bg-white p-5 sm:p-6 rounded-[2rem] shadow-2xl text-center max-w-md w-full animate-in zoom-in-95 border border-white/20 my-auto">
-              <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-3 border border-emerald-100 shadow-sm">
-                <CheckCircle className="w-6 h-6 text-emerald-600" />
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-4 overflow-y-auto space-y-4">
+          {joiningSessionId ? (
+            /* Modal Formulario de Ingreso a Turno Abierto Existente */
+            <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-[2rem] shadow-2xl text-center max-w-sm w-full animate-in zoom-in-95 border border-white/20">
+              <div className="w-12 h-12 bg-amber-50 dark:bg-amber-950/40 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Lock className="w-6 h-6 text-amber-600" />
               </div>
-              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight leading-none mb-1">Turno Finalizado</h3>
-              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-3">
-                {lastClosedSession.id} • {lastClosedSession.workerName || 'Vendedor'}
+              <h3 className="text-lg font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight leading-none mb-1">
+                Reanudar Turno Abierto
+              </h3>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-4">
+                Turno de {(cashSessions || []).find(s => s.id === joiningSessionId)?.workerName || 'Vendedor'}
               </p>
 
-              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3 text-left space-y-1.5 mb-4">
-                <div className="flex justify-between items-center text-[11px]">
-                  <span className="text-slate-500 font-bold">Sucursal:</span>
-                  <span className="font-black text-slate-900">{branches.find(b => b.id === lastClosedSession.branchId)?.name || 'Central'}</span>
-                </div>
-                <div className="flex justify-between items-center text-[11px]">
-                  <span className="text-slate-500 font-bold">Cierre:</span>
-                  <span className="font-bold text-slate-700">{new Date(lastClosedSession.closingDate || lastClosedSession.closedAt || new Date()).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] pt-1 border-t border-slate-200">
-                  <span className="text-slate-500 font-bold">Fondo Inicial:</span>
-                  <span className="font-mono font-bold text-slate-800">{formatMoney(lastClosedSession.openingBalance || 0, baseCurrency.symbol)}</span>
-                </div>
-                {lastClosedSession.closingBalances && lastClosedSession.closingBalances.length > 0 && (
-                  <div className="pt-1.5 border-t border-slate-200 space-y-1">
-                    <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block">Arqueo Declarado</span>
-                    {lastClosedSession.closingBalances.map((b, bIdx) => (
-                      <div key={bIdx} className="flex justify-between items-center text-[11px]">
-                        <span className="text-slate-600 capitalize">{b.currencyCode} ({b.method === 'transfer' ? 'Transferencia' : 'Efectivo'})::</span>
-                        <span className="font-mono font-black text-emerald-700">{formatMoney(b.amount, currencies.find(c => c.code === b.currencyCode)?.symbol || '')}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Botones de impresión y acciones */}
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => handlePrintClosureThermal(lastClosedSession)}
-                    className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-black text-[8px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95"
-                  >
-                    <Printer className="w-3 h-3 text-slate-500" />
-                    Ticket 58mm
-                  </button>
-                  <button
-                    onClick={() => handlePrintClosureThermal(lastClosedSession, { preferRawBT: true })}
-                    className="py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-black text-[8px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95"
-                  >
-                    <Share2 className="w-3 h-3 text-indigo-500" />
-                    RawBT (Móvil)
-                  </button>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setShowOpenShiftModal(true)}
-                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[9px] uppercase tracking-widest transition-all shadow-lg shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
-                >
-                  <DollarSign className="w-3.5 h-3.5" />
-                  Abrir Nuevo Turno / Caja
-                </button>
-
-                {currentUser?.role === 'admin' ? (
-                  <button 
-                    type="button"
-                    onClick={() => navigate('/')}
-                    className="w-full py-2 bg-slate-100 text-slate-600 rounded-xl font-black text-[8px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
-                  >
-                    Volver al Menú Principal
-                  </button>
-                ) : (
-                  <button 
-                    type="button"
-                    onClick={() => logout()}
-                    className="w-full py-2 bg-slate-100 text-slate-600 rounded-xl font-black text-[8px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
-                  >
-                    Cerrar Sesión del Empleado
-                  </button>
-                )}
-              </div>
-            </div>
-
-          ) : (
-            /* Modal Formulario de Apertura de Caja */
-            <div className="bg-white p-5 rounded-[2rem] shadow-2xl text-center max-w-sm w-full animate-in zoom-in-95 border border-white/20 my-auto">
-              <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                <DollarSign className="w-6 h-6 text-indigo-600" />
-              </div>
-              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight leading-none mb-2">Apertura de Caja</h3>
-              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-3">Fondo Inicial del Turno</p>
-              
-              <div className="flex justify-center mb-4">
-                <span className="flex items-center gap-1 text-[7px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
-                  <ShieldCheck className="w-2.5 h-2.5" />
-                  Sistema Local Protegido
-                </span>
-              </div>
-
-              
-              {/* Inline Modal Alert */}
               {posError && (
-                <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold flex items-center justify-between gap-2 animate-in fade-in zoom-in-95">
-                  <div className="flex items-center gap-2 text-left">
-                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                    <span className="text-[11px] font-bold">{posError}</span>
-                  </div>
-                  <button type="button" onClick={() => setPosError("")} className="p-1 hover:bg-rose-100 rounded-lg text-rose-500 shrink-0">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-              {posSuccess && (
-                <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs font-bold flex items-center justify-between gap-2 animate-in fade-in zoom-in-95">
-                  <div className="flex items-center gap-2 text-left">
-                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span className="text-[11px] font-bold">{posSuccess}</span>
-                  </div>
-                  <button type="button" onClick={() => setPosSuccess("")} className="p-1 hover:bg-emerald-100 rounded-lg text-emerald-500 shrink-0">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold text-left flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span className="text-[11px] leading-tight">{posError}</span>
                 </div>
               )}
 
-              <form onSubmit={handleOpenSession} className="space-y-3">
-                <div className="text-left space-y-2">
-                  <div>
-                    <label className="block text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                      Seleccionar Vendedor / Empleado del Turno
-                    </label>
-                    <select
-                      value={sessionWorkerName}
-                      onChange={e => {
-                        setSessionWorkerName(e.target.value);
-                        setSessionPassword("");
-                      }}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
-                      required
-                    >
-                      <option value="">-- Seleccionar Trabajador / IDN --</option>
-                      {(users || []).filter(u => u.isActive !== false).map(u => (
-                        <option key={u.id} value={u.name}>
-                          {u.name} {u.isIndependent ? '(Vendedor IDN)' : (u.role === 'admin' ? '(Administrador)' : '(Empleado)')}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                      Contraseña del Vendedor Seleccionado
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={sessionPassword}
-                      onChange={e => setSessionPassword(e.target.value)}
-                      placeholder={detectedWorker ? `Ingresa la contraseña de ${detectedWorker.name}` : "Ingresa la contraseña del trabajador"}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                    />
-                  </div>
+              <form onSubmit={handleJoinExistingSession} className="space-y-3.5">
+                <div className="text-left">
+                  <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                    Contraseña del Vendedor del Turno
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={joiningSessionPassword}
+                    onChange={e => {
+                      setJoiningSessionPassword(e.target.value);
+                      setPosError("");
+                    }}
+                    placeholder="Ingresa la contraseña"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 dark:bg-slate-800 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-900 dark:text-slate-100 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
                 </div>
 
-                {isWorkerIndependent && (
-                  <div className="p-2 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-1.5 text-left">
-                    <Package className="w-3 h-3 text-amber-600 shrink-0" />
-                    <p className="text-[8px] font-black text-amber-800 uppercase tracking-tight">
-                      Vendedor Independiente (IDN) • Almacén exclusivo bloqueado
-                    </p>
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setJoiningSessionId(null);
+                      setJoiningSessionPassword("");
+                      setPosError("");
+                    }}
+                    className="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-[10px] uppercase tracking-wider transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-[10px] uppercase tracking-wider transition-all shadow-sm"
+                  >
+                    Entrar al Turno
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : (
+            <>
+              {lastClosedSession && !showOpenShiftModal ? (
+                /* Pantalla visual de Turno Finalizado / Cierre */
+                <div className="bg-white p-5 sm:p-6 rounded-[2rem] shadow-2xl text-center max-w-md w-full animate-in zoom-in-95 border border-white/20 my-auto">
+                  <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-3 border border-emerald-100 shadow-sm">
+                    <CheckCircle className="w-6 h-6 text-emerald-600" />
                   </div>
-                )}
+                  <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight leading-none mb-1">Turno Finalizado</h3>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-3">
+                    {lastClosedSession.id} • {lastClosedSession.workerName || 'Vendedor'}
+                  </p>
 
-
-                  {(allowedBranches || []).length > 0 ? (
-                  <div className="space-y-4">
-                    <div className="text-left">
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest">
-                          Sucursal / Almacén a Operar
-                        </label>
-                        {isBranchLocked && (
-                          <span className="flex items-center gap-1 text-[8px] font-black text-amber-700 uppercase bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300">
-                            <Lock className="w-2.5 h-2.5" /> Bloqueado
-                          </span>
-                        )}
-                      </div>
-                      <select 
-                        value={sessionBranchId}
-                        disabled={isBranchLocked}
-                        onChange={(e) => setSessionBranchId(e.target.value)}
-                        className={cn(
-                          "w-full px-4 py-3 border rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all appearance-none",
-                          isBranchLocked ? "bg-amber-50/70 border-amber-200 cursor-not-allowed text-amber-900 font-black" : "bg-slate-50 border-slate-100"
-                        )}
-                      >
-                        {allowedBranches.map(b => (
-                          <option key={b.id} value={b.id}>{b.name}</option>
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3 text-left space-y-1.5 mb-4">
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="text-slate-500 font-bold">Sucursal:</span>
+                      <span className="font-black text-slate-900">{branches.find(b => b.id === lastClosedSession.branchId)?.name || 'Central'}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="text-slate-500 font-bold">Cierre:</span>
+                      <span className="font-bold text-slate-700">{new Date(lastClosedSession.closingDate || lastClosedSession.closedAt || new Date()).toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[11px] pt-1 border-t border-slate-200">
+                      <span className="text-slate-500 font-bold">Fondo Inicial:</span>
+                      <span className="font-mono font-bold text-slate-800">{formatMoney(lastClosedSession.openingBalance || 0, baseCurrency.symbol)}</span>
+                    </div>
+                    {lastClosedSession.closingBalances && lastClosedSession.closingBalances.length > 0 && (
+                      <div className="pt-1.5 border-t border-slate-200 space-y-1">
+                        <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block">Arqueo Declarado</span>
+                        {lastClosedSession.closingBalances.map((b, bIdx) => (
+                          <div key={bIdx} className="flex justify-between items-center text-[11px]">
+                            <span className="text-slate-600 capitalize">{b.currencyCode} ({b.method === 'transfer' ? 'Transferencia' : 'Efectivo'}):</span>
+                            <span className="font-mono font-black text-emerald-700">{formatMoney(b.amount, currencies.find(c => c.code === b.currencyCode)?.symbol || '')}</span>
+                          </div>
                         ))}
-                      </select>
-                      {isBranchLocked && (
-                        <p className="text-[8px] font-bold text-amber-700 mt-1 uppercase">
-                          El vendedor tiene un almacén fijo asignado y no puede vender desde otro almacén.
-                        </p>
-                      )}
-                    </div>
-                    
-                    <div className="text-left">
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest">
-                          Fondo Inicial ({baseCurrency.symbol} CUP)
-                        </label>
-                        <span className="text-[8px] font-bold text-slate-400 uppercase">Puede ser 0</span>
                       </div>
-                      <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                          <span className="text-slate-400 font-bold">{baseCurrency.symbol}</span>
-                        </div>
-                        <input 
-                          type="number" 
-                          min="0"
-                          step="0.01"
-                          value={openingAmount}
-                          onFocus={(e) => e.target.select()}
-                          onChange={e => setOpeningAmount(e.target.value)}
-                          className="w-full pl-14 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-xl text-lg font-black text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                          placeholder="0.00"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2.5 pt-2">
-                      <button 
-                        type="submit"
-                        className="w-full py-4 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95"
-                      >
-                        Abrir Caja y Comenzar
-                      </button>
-
-                      {lastClosedSession && (
-                        <button
-                          type="button"
-                          onClick={() => setShowOpenShiftModal(false)}
-                          className="w-full py-2.5 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
-                        >
-                          Ver Resumen de Turno Anterior
-                        </button>
-                      )}
-
-                      {currentUser?.role === 'admin' ? (
-                        <button 
-                          type="button"
-                          onClick={() => navigate('/')}
-                          className="w-full py-2.5 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
-                        >
-                          Volver al Menú
-                        </button>
-                      ) : (
-                        <button 
-                          type="button"
-                          onClick={() => logout()}
-                          className="w-full py-2.5 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
-                        >
-                          Cerrar Sesión
-                        </button>
-                      )}
-                    </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="text-center py-4 space-y-4">
-                    <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold">
-                      No tienes sucursales asignadas.
+
+                  {/* Botones de impresión y acciones */}
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handlePrintClosureThermal(lastClosedSession)}
+                        className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-black text-[8px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                      >
+                        <Printer className="w-3 h-3 text-slate-500" />
+                        Ticket 58mm
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handlePrintClosureThermal(lastClosedSession, { preferRawBT: true })}
+                        className="py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-black text-[8px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                      >
+                        <Share2 className="w-3 h-3 text-indigo-500" />
+                        RawBT (Móvil)
+                      </button>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowOpenShiftModal(true)}
+                      className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[9px] uppercase tracking-widest transition-all shadow-lg shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      <DollarSign className="w-3.5 h-3.5" />
+                      Abrir Nuevo Turno / Caja
+                    </button>
+
                     {currentUser?.role === 'admin' ? (
                       <button 
                         type="button"
                         onClick={() => navigate('/')}
-                        className="w-full py-3 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
+                        className="w-full py-2 bg-slate-100 text-slate-600 rounded-xl font-black text-[8px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
                       >
-                        Volver al Menú
+                        Volver al Menú Principal
                       </button>
                     ) : (
                       <button 
                         type="button"
                         onClick={() => logout()}
-                        className="w-full py-3 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
+                        className="w-full py-2 bg-slate-100 text-slate-600 rounded-xl font-black text-[8px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
                       >
-                        Cerrar Sesión
+                        Cerrar Sesión del Empleado
                       </button>
                     )}
                   </div>
-                )}
-              </form>
-            </div>
+                </div>
+
+              ) : (
+                /* Modal Formulario de Apertura de Caja */
+                <div className="bg-white p-5 rounded-[2rem] shadow-2xl text-center max-w-sm w-full animate-in zoom-in-95 border border-white/20 my-auto">
+                  <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <DollarSign className="w-6 h-6 text-indigo-600" />
+                  </div>
+                  <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight leading-none mb-2">Apertura de Caja</h3>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-3">Fondo Inicial del Turno</p>
+                  
+                  <div className="flex justify-center mb-4">
+                    <span className="flex items-center gap-1 text-[7px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                      <ShieldCheck className="w-2.5 h-2.5" />
+                      Sistema Local Protegido
+                    </span>
+                  </div>
+
+                  
+                  {/* Inline Modal Alert */}
+                  {posError && (
+                    <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold flex items-center justify-between gap-2 animate-in fade-in zoom-in-95">
+                      <div className="flex items-center gap-2 text-left">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span className="text-[11px] font-bold">{posError}</span>
+                      </div>
+                      <button type="button" onClick={() => setPosError("")} className="p-1 hover:bg-rose-100 rounded-lg text-rose-500 shrink-0">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  {posSuccess && (
+                    <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs font-bold flex items-center justify-between gap-2 animate-in fade-in zoom-in-95">
+                      <div className="flex items-center gap-2 text-left">
+                        <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span className="text-[11px] font-bold">{posSuccess}</span>
+                      </div>
+                      <button type="button" onClick={() => setPosSuccess("")} className="p-1 hover:bg-emerald-100 rounded-lg text-emerald-500 shrink-0">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleOpenSession} className="space-y-3">
+                    <div className="text-left space-y-2">
+                      <div>
+                        <label className="block text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                          Seleccionar Vendedor / Empleado del Turno
+                        </label>
+                        <select
+                          value={sessionWorkerName}
+                          onChange={e => {
+                            setSessionWorkerName(e.target.value);
+                            setSessionPassword("");
+                          }}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
+                          required
+                        >
+                          <option value="">-- Seleccionar Trabajador / IDN --</option>
+                          {(users || []).filter(u => u.isActive !== false).map(u => (
+                            <option key={u.id} value={u.name}>
+                              {u.name} {u.isIndependent ? '(Vendedor IDN)' : (u.role === 'admin' ? '(Administrador)' : '(Empleado)')}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                          Contraseña del Vendedor Seleccionado
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          value={sessionPassword}
+                          onChange={e => setSessionPassword(e.target.value)}
+                          placeholder={detectedWorker ? `Ingresa la contraseña de ${detectedWorker.name}` : "Ingresa la contraseña del trabajador"}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    {isWorkerIndependent && (
+                      <div className="p-2 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-1.5 text-left">
+                        <Package className="w-3 h-3 text-amber-600 shrink-0" />
+                        <p className="text-[8px] font-black text-amber-800 uppercase tracking-tight">
+                          Vendedor Independiente (IDN) • Almacén exclusivo bloqueado
+                        </p>
+                      </div>
+                    )}
+
+
+                      {(allowedBranches || []).length > 0 ? (
+                      <div className="space-y-4">
+                        <div className="text-left">
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                              Sucursal / Almacén a Operar
+                            </label>
+                            {isBranchLocked && (
+                              <span className="flex items-center gap-1 text-[8px] font-black text-amber-700 uppercase bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300">
+                                <Lock className="w-2.5 h-2.5" /> Bloqueado
+                              </span>
+                            )}
+                          </div>
+                          <select 
+                            value={sessionBranchId}
+                            disabled={isBranchLocked}
+                            onChange={(e) => setSessionBranchId(e.target.value)}
+                            className={cn(
+                              "w-full px-4 py-3 border rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all appearance-none",
+                              isBranchLocked ? "bg-amber-50/70 border-amber-200 cursor-not-allowed text-amber-900 font-black" : "bg-slate-50 border-slate-100"
+                            )}
+                          >
+                            {allowedBranches.map(b => (
+                              <option key={b.id} value={b.id}>{b.name}</option>
+                            ))}
+                          </select>
+                          {isBranchLocked && (
+                            <p className="text-[8px] font-bold text-amber-700 mt-1 uppercase">
+                              El vendedor tiene un almacén fijo asignado y no puede vender desde otro almacén.
+                            </p>
+                          )}
+                        </div>
+                        
+                        <div className="text-left">
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                              Fondo Inicial ({baseCurrency.symbol} CUP)
+                            </label>
+                            <span className="text-[8px] font-bold text-slate-400 uppercase">Puede ser 0</span>
+                          </div>
+                          <div className="relative">
+                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                              <span className="text-slate-400 font-bold">{baseCurrency.symbol}</span>
+                            </div>
+                            <input 
+                              type="number" 
+                              min="0"
+                              step="0.01"
+                              value={openingAmount}
+                              onFocus={(e) => e.target.select()}
+                              onChange={e => setOpeningAmount(e.target.value)}
+                              className="w-full pl-14 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-xl text-lg font-black text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2.5 pt-2">
+                          <button 
+                            type="submit"
+                            className="w-full py-4 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95"
+                          >
+                            Abrir Caja y Comenzar
+                          </button>
+
+                          {lastClosedSession && (
+                            <button
+                              type="button"
+                              onClick={() => setShowOpenShiftModal(false)}
+                              className="w-full py-2.5 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
+                            >
+                              Ver Resumen de Turno Anterior
+                            </button>
+                          )}
+
+                          {currentUser?.role === 'admin' ? (
+                            <button 
+                              type="button"
+                              onClick={() => navigate('/')}
+                              className="w-full py-2.5 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
+                            >
+                              Volver al Menú
+                            </button>
+                          ) : (
+                            <button 
+                              type="button"
+                              onClick={() => logout()}
+                              className="w-full py-2.5 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
+                            >
+                              Cerrar Sesión
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-4 space-y-4">
+                        <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold">
+                          No tienes sucursales asignadas.
+                        </div>
+                        {currentUser?.role === 'admin' ? (
+                          <button 
+                            type="button"
+                            onClick={() => navigate('/')}
+                            className="w-full py-3 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
+                          >
+                            Volver al Menú
+                          </button>
+                        ) : (
+                          <button 
+                            type="button"
+                            onClick={() => logout()}
+                            className="w-full py-3 bg-slate-100 text-slate-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
+                          >
+                            Cerrar Sesión
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </form>
+                </div>
+              )}
+
+              {/* Turnos Abiertos en Curso (Evita duplicidad y permite reanudar con contraseña) */}
+              {(() => {
+                const otherOpenSessions = (cashSessions || []).filter(s => s.status === 'open');
+                if (otherOpenSessions.length === 0) return null;
+                return (
+                  <div className="bg-white dark:bg-slate-900 p-4 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-800 text-left max-w-sm w-full mt-2 shrink-0">
+                    <span className="text-[8px] font-black uppercase text-indigo-600 tracking-wider flex items-center gap-1.5 mb-2.5">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin-slow text-indigo-500" />
+                      Turnos Abiertos Actualmente
+                    </span>
+                    <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
+                      {otherOpenSessions.map(s => (
+                        <div key={s.id} className="p-2.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <span className="text-[10px] font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight block truncate">
+                              {s.workerName || 'Vendedor'}
+                            </span>
+                            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wide block">
+                              {branches.find(b => b.id === s.branchId)?.name || 'Sucursal'} • ID: {s.id.slice(0, 6)}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setJoiningSessionId(s.id);
+                              setJoiningSessionPassword("");
+                              setPosError("");
+                            }}
+                            className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-400 font-black text-[8px] uppercase tracking-wide rounded-lg transition-all active:scale-95 cursor-pointer shrink-0"
+                          >
+                            Reanudar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </>
           )}
         </div>
       )}
@@ -3119,12 +3340,7 @@ export default function POS() {
                 <div className="space-y-4">
                   {(() => {
                     const sessionTx = transactions.filter(t => 
-                      t.sessionId === currentSession.id || 
-                      (
-                        (!t.sessionId && (t.branchId === currentSession.branchId || t.branchId === currentBranchId)) &&
-                        new Date(t.date).getTime() >= new Date(currentSession.openedAt).getTime() &&
-                        (!currentSession.closedAt || new Date(t.date).getTime() <= new Date(currentSession.closedAt).getTime())
-                      )
+                      t.sessionId === currentSession.id && !t.deletedAt
                     );
 
                     // Categorize payment types
@@ -3640,8 +3856,7 @@ export default function POS() {
                         if (!sessionUser || sessionUser.isIndependent) return null;
                         
                         const sessionTx = transactions.filter(t => 
-                          t.branchId === currentBranchId && 
-                          (t.sessionId ? t.sessionId === currentSession.id : (new Date(t.date).getTime() >= new Date(currentSession.openedAt).getTime()))
+                          t.sessionId === currentSession.id && !t.deletedAt
                         );
                         const totalSales = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
                         
@@ -4363,6 +4578,11 @@ export default function POS() {
               <button 
                 disabled={cart.length === 0}
                 onClick={() => {
+                  if (!currentSession) {
+                    setPosError("Debes abrir un turno de caja antes de cobrar.");
+                    setShowOpenShiftModal(true);
+                    return;
+                  }
                   const lineId = crypto.randomUUID();
                   setPaymentLines([{ id: lineId, code: baseCurrency.code, amount: totalBase, method: 'cash' }]);
                   setActivePaymentLineId(lineId);
@@ -4378,6 +4598,11 @@ export default function POS() {
                 <button 
                   disabled={cart.length === 0}
                   onClick={() => {
+                    if (!currentSession) {
+                      setPosError("Debes abrir un turno de caja antes de cobrar.");
+                      setShowOpenShiftModal(true);
+                      return;
+                    }
                     const lineId = crypto.randomUUID();
                     setPaymentLines([{ id: lineId, code: baseCurrency.code, amount: totalBase, method: 'transfer' }]);
                     setActivePaymentLineId(lineId);
@@ -4709,8 +4934,7 @@ export default function POS() {
               {(() => {
                 const sessionTransactions = transactions.filter(t => 
                   t.branchId === lastClosedSession.branchId && 
-                  new Date(t.date) >= new Date(lastClosedSession.openedAt) && 
-                  (lastClosedSession.closedAt ? new Date(t.date) <= new Date(lastClosedSession.closedAt) : true)
+                  t.sessionId === lastClosedSession.id
                 );
 
                 const employee = users.find(u => u.id === lastClosedSession.userId || u.name === lastClosedSession.workerName) || users.find(u => u.name?.toLowerCase() === lastClosedSession.workerName?.toLowerCase()) || users.find(u => u.role === 'employee') || currentUser;
@@ -4993,9 +5217,7 @@ export default function POS() {
         <div id="print-closure-area" className="hidden font-mono text-[11px] leading-tight text-black bg-white p-2">
           {(() => {
             const sessionTx = transactions.filter(t => 
-              t.branchId === lastClosedSession.branchId && 
-              new Date(t.date) >= new Date(lastClosedSession.openedAt) && 
-              (lastClosedSession.closedAt ? new Date(t.date) <= new Date(lastClosedSession.closedAt) : true)
+              t.sessionId === lastClosedSession.id && !t.deletedAt
             );
 
             const soldMap: { [name: string]: { name: string, qty: number, total: number } } = {};

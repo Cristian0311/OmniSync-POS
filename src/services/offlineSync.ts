@@ -10,6 +10,7 @@ import {
   Transaction, CashRegisterSession, InventoryLevel, 
   Customer, ReturnItem, BankTransaction, Branch, Product, Category 
 } from '../types';
+import { callOpenSessionRPC, callProcessTransactionRPC } from './supabaseSync';
 
 export type OfflineActionType =
   | 'transaction'
@@ -21,7 +22,8 @@ export type OfflineActionType =
   | 'branch'
   | 'product'
   | 'category'
-  | 'receipt_config';
+  | 'receipt_config'
+  | 'store_config';
 
 export interface OfflineQueueItem {
   id: string; // ID único del item en la cola
@@ -112,6 +114,15 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
   switch (type) {
     case 'cash_session': {
       const session = data as CashRegisterSession;
+      
+      // Intentar usar RPC para garantizar el Turno-N correlativo e integridad
+      try {
+        const res = await callOpenSessionRPC(session);
+        if (res.success) return true;
+      } catch (rpcErr) {
+        console.warn("[offlineSync] RPC open_cash_session falló, usando fallback upsert:", rpcErr);
+      }
+
       let extendedNotes = session.notes || '';
       const meta = {
         closing_balances: session.closingBalances || [],
@@ -133,7 +144,10 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         opening_balance: session.openingAmount,
         status: session.status,
         notes: extendedNotes,
-        working_employee_ids: session.workingEmployeeIds || []
+        working_employee_ids: session.workingEmployeeIds || [],
+        deleted_at: session.deletedAt || null,
+        deleted_by: session.deletedBy || null,
+        delete_reason: session.deleteReason || null
       };
 
       const { error } = await supabase.from('cash_sessions').upsert(row);
@@ -213,25 +227,16 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
 
     case 'transaction': {
       const tx = data as Transaction;
-      // Si la transacción está vinculada a una sesión, asegurar que la sesión esté en Supabase
-      if (tx.sessionId) {
-        const localSession = useStore.getState().cashSessions?.find(s => s.id === tx.sessionId);
-        if (localSession) {
-          try {
-            await processQueueItem(supabase, {
-              id: 'temp-session',
-              actionId: localSession.id,
-              type: 'cash_session',
-              data: localSession,
-              timestamp: localSession.openedAt,
-              retryCount: 0
-            });
-          } catch {
-            // Continuar
-          }
-        }
+
+      // Usar RPC atómico para asegurar que el stock se ajuste correctamente en el servidor
+      try {
+        const res = await callProcessTransactionRPC(tx);
+        if (res.success) return true;
+      } catch (rpcErr) {
+        console.warn("[offlineSync] RPC process_pos_transaction falló, usando fallback upsert:", rpcErr);
       }
 
+      // Fallback a manual si falla el RPC (e.g. por red o esquema)
       const row = {
         id: tx.id,
         date: tx.date,
@@ -249,7 +254,10 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         items: tx.items || [],
         payments: tx.payments || [],
         change_payments: tx.changePayments || [],
-        seller_employee_ids: tx.sellerEmployeeIds || []
+        seller_employee_ids: tx.sellerEmployeeIds || [],
+        deleted_at: tx.deletedAt || null,
+        deleted_by: tx.deletedBy || null,
+        delete_reason: tx.deleteReason || null
       };
 
       const { error } = await supabase.from('transactions').upsert(row);
@@ -318,6 +326,15 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       return true;
     }
 
+    case 'store_config': {
+      const { error } = await supabase.from('settings').upsert({
+        id: 'global',
+        store_config: data
+      });
+      if (error) throw error;
+      return true;
+    }
+
     default:
       return true;
   }
@@ -360,7 +377,8 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
     inventory: 7,
     bank_transaction: 8,
     return: 9,
-    receipt_config: 10
+    receipt_config: 10,
+    store_config: 11
   };
 
   const sortedQueue = [...queue].sort((a, b) => {

@@ -5,6 +5,7 @@ import { InfoTooltip } from "../components/InfoTooltip";
 import { Branch, Category, User } from "../types";
 import { cn } from "../lib/utils";
 import { testSupabaseTables, pushAllToSupabase, SupabaseDiagnosticReport } from "../services/supabaseSync";
+import { normalizeSemanticText } from "../utils/textUtils";
 
 export default function Settings() {
   const { 
@@ -19,6 +20,7 @@ export default function Settings() {
     registerEmployee,
     idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice,
     products,
+    inventory, transactions, cashSessions,
     syncWithSupabase
   } = useStore();
 
@@ -199,6 +201,16 @@ export default function Settings() {
 
   const confirmDeleteBranchAction = () => {
     if (branchToDelete) {
+      const hasStock = (inventory || []).some(l => l.branchId === branchToDelete.id && l.quantity > 0);
+      const hasTx = (transactions || []).some(t => t.branchId === branchToDelete.id && !t.deletedAt);
+      const hasSessions = (cashSessions || []).some(s => s.branchId === branchToDelete.id && !s.deletedAt);
+
+      if (hasStock || hasTx || hasSessions) {
+        showToast(`No se puede eliminar "${branchToDelete.name}" porque contiene existencias, ventas o turnos registrados. Considere desactivarla.`, "error");
+        setBranchToDelete(null);
+        return;
+      }
+
       deleteBranch(branchToDelete.id);
       showToast(`Sucursal "${branchToDelete.name}" eliminada.`);
       setBranchToDelete(null);
@@ -207,6 +219,13 @@ export default function Settings() {
 
   const confirmDeleteCategoryAction = () => {
     if (categoryToDelete) {
+      const hasProducts = (products || []).some(p => p.categoryId === categoryToDelete.id && p.status === 'active');
+      if (hasProducts) {
+        showToast(`No se puede eliminar la categoría "${categoryToDelete.name}" porque tiene productos activos asignados.`, "error");
+        setCategoryToDelete(null);
+        return;
+      }
+
       deleteCategory(categoryToDelete.id);
       showToast(`Categoría "${categoryToDelete.name}" eliminada.`);
       setCategoryToDelete(null);
@@ -214,13 +233,25 @@ export default function Settings() {
   };
 
   const handleAddBranch = () => {
-    if (newBranchName.trim()) {
+    const trimmed = newBranchName.trim();
+    if (trimmed) {
+      const normInput = normalizeSemanticText(trimmed);
+      const duplicate = branches.find(b => 
+        normalizeSemanticText(b.name) === normInput && 
+        (!editingBranch || b.id !== editingBranch.id)
+      );
+
+      if (duplicate) {
+        showToast(`Ya existe un almacén/sucursal con este nombre ("${duplicate.name}"). No se permiten duplicados.`, "error");
+        return;
+      }
+
       if (editingBranch) {
-        updateBranch(editingBranch.id, { name: newBranchName.trim() });
+        updateBranch(editingBranch.id, { name: trimmed });
         setEditingBranch(null);
         showToast("Sucursal actualizada.");
       } else {
-        addBranch({ id: crypto.randomUUID(), name: newBranchName.trim() });
+        addBranch({ id: crypto.randomUUID(), name: trimmed });
         showToast("Sucursal agregada y guardada en Supabase.");
       }
       setNewBranchName("");

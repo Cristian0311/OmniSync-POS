@@ -1,6 +1,7 @@
 import { getSupabase } from '../lib/supabase';
 import { useStore } from '../store/useStore';
 import { enqueueOfflineItem } from './offlineSync';
+import { normalizeSemanticText } from '../utils/textUtils';
 import { 
   Product, Category, Branch, InventoryLevel, User, 
   BankCard, Customer, Currency, Transaction, CashRegisterSession,
@@ -272,7 +273,10 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
           items: Array.isArray(t.items) ? t.items : [],
           payments: Array.isArray(t.payments) ? t.payments : [],
           changePayments: Array.isArray(t.change_payments) ? t.change_payments : [],
-          sellerEmployeeIds: Array.isArray(t.seller_employee_ids) ? t.seller_employee_ids : []
+          sellerEmployeeIds: Array.isArray(t.seller_employee_ids) ? t.seller_employee_ids : [],
+          deletedAt: t.deleted_at || undefined,
+          deletedBy: t.deleted_by || undefined,
+          deleteReason: t.delete_reason || undefined
         }));
       }
     } catch (e: any) {
@@ -316,7 +320,10 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
             notes,
             closingDate,
             workingEmployeeIds: Array.isArray(s.working_employee_ids) ? s.working_employee_ids : [],
-            movements
+            movements,
+            deletedAt: s.deleted_at || undefined,
+            deletedBy: s.deleted_by || undefined,
+            deleteReason: s.delete_reason || undefined
           };
         });
       }
@@ -473,13 +480,14 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
       }
     } catch (e) { /* ignore */ }
 
-    // 19. Global Settings (Receipt, Store, and Catalog Configs)
+    // 19. Global Settings (Receipt, Store, Catalog Configs, and State)
     try {
       const { data: setRes, error: setErr } = await supabase.from('settings').select('*').eq('id', 'global').maybeSingle();
       if (!setErr && setRes) {
         if (setRes.receipt_config) fetchedData.receiptConfig = setRes.receipt_config;
         if (setRes.store_config) fetchedData.storeConfig = setRes.store_config;
         if (setRes.catalog_config) fetchedData.catalogConfig = setRes.catalog_config;
+        if (setRes.last_turn_number !== undefined) fetchedData.lastTurnNumber = Number(setRes.last_turn_number);
       }
     } catch (e: any) {
       errors.push(`Configuración de Tickets: ${e.message}`);
@@ -842,7 +850,10 @@ export async function pushTransactionToSupabase(tx: Transaction) {
       items: tx.items || [],
       payments: tx.payments || [],
       change_payments: tx.changePayments || [],
-      seller_employee_ids: tx.sellerEmployeeIds || []
+      seller_employee_ids: tx.sellerEmployeeIds || [],
+      deleted_at: tx.deletedAt || null,
+      deleted_by: tx.deletedBy || null,
+      delete_reason: tx.deleteReason || null
     };
 
     const res = await safeUpsert(supabase, 'transactions', row);
@@ -889,7 +900,10 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession) {
       opening_balance: session.openingAmount,
       status: session.status,
       notes: extendedNotes,
-      working_employee_ids: session.workingEmployeeIds || []
+      working_employee_ids: session.workingEmployeeIds || [],
+      deleted_at: session.deletedAt || null,
+      deleted_by: session.deletedBy || null,
+      delete_reason: session.deleteReason || null
     };
 
     const res = await safeUpsert(supabase, 'cash_sessions', row);
@@ -914,6 +928,15 @@ export async function pushBranchToSupabase(branch: Branch) {
   }
 
   try {
+    // Verificar si ya existe una sucursal con el mismo nombre normalizado bajo otro ID
+    const normName = normalizeSemanticText(branch.name);
+    const { data: existingBranches } = await supabase.from('branches').select('id, name');
+    const duplicate = existingBranches?.find(b => b.id !== branch.id && normalizeSemanticText(b.name) === normName);
+    if (duplicate) {
+      console.warn(`[MARÉ] Bloqueado push de sucursal duplicada a Supabase: "${branch.name}" ya existe como "${duplicate.name}" (${duplicate.id})`);
+      return;
+    }
+
     const row = {
       id: branch.id,
       name: branch.name,
@@ -939,11 +962,20 @@ export async function deleteBranchFromSupabase(id: string) {
   if (!supabase) return;
 
   try {
-    // 1. Delete associated inventory in Supabase first so FK constraints or stale records don't resurrect
-    await supabase.from('inventory').delete().eq('branch_id', id);
-    // 2. Unassign branch from users in Supabase
+    // 1. Validar si la sucursal tiene relaciones activas (inventario, transacciones, turnos)
+    const { count: invCount } = await supabase.from('inventory').select('*', { count: 'exact', head: true }).eq('branch_id', id);
+    const { count: txCount } = await supabase.from('transactions').select('*', { count: 'exact', head: true }).eq('branch_id', id);
+    const { count: csCount } = await supabase.from('cash_sessions').select('*', { count: 'exact', head: true }).eq('branch_id', id);
+
+    if ((invCount || 0) > 0 || (txCount || 0) > 0 || (csCount || 0) > 0) {
+      console.warn(`[MARÉ] Bloqueada eliminación física de sucursal ${id} por tener datos históricos (inv: ${invCount}, tx: ${txCount}, turnos: ${csCount}). Se marca como inactiva.`);
+      await supabase.from('branches').update({ is_active: false }).eq('id', id);
+      return;
+    }
+
+    // 2. Desvincular de usuarios
     await supabase.from('users').update({ branch_id: null, assigned_branch_id: null }).eq('branch_id', id);
-    // 3. Delete the branch row from Supabase
+    // 3. Eliminar registro vacío
     await supabase.from('branches').delete().eq('id', id);
   } catch (e) {
     console.warn("Supabase delete branch failed:", e);
@@ -1515,9 +1547,128 @@ export async function pushStoreConfigToSupabase(config: StoreConfig) {
     });
     if (error) {
       console.warn("Supabase push store config failed:", error);
+      enqueueOfflineItem('store_config', config, 'global');
     }
   } catch (e) {
     console.warn("Supabase push store config exception:", e);
+    enqueueOfflineItem('store_config', config, 'global');
+  }
+}
+
+export async function logAuditEvent(entry: {
+  userId?: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  oldData?: any;
+  newData?: any;
+  meta?: any;
+}) {
+  const supabase = getSupabase();
+  if (!supabase) return;
+
+  try {
+    await supabase.from('audit_log').insert({
+      user_id: entry.userId,
+      action: entry.action,
+      entity_type: entry.entityType,
+      entity_id: entry.entityId,
+      old_data: entry.oldData,
+      new_data: entry.newData,
+      meta: entry.meta
+    });
+  } catch (e) {
+    console.warn("Audit log failed:", e);
+  }
+}
+
+export async function callOpenSessionRPC(session: CashRegisterSession): Promise<{ success: boolean; data?: any; error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: "Supabase no configurado" };
+
+  try {
+    const { data, error } = await supabase.rpc('open_cash_session_v2', {
+      p_user_id: session.userId,
+      p_worker_name: session.workerName,
+      p_branch_id: session.branchId,
+      p_opening_amount: session.openingAmount,
+      p_opened_at: session.openedAt,
+      p_working_employee_ids: session.workingEmployeeIds || [],
+      p_notes: session.notes || ''
+    });
+
+    if (error) throw error;
+    return { success: true, data };
+  } catch (e: any) {
+    console.error("[RPC] open_cash_session_v2 failed:", e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function callProcessTransactionRPC(tx: Transaction): Promise<{ success: boolean; data?: any; error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: "Supabase no configurado" };
+
+  try {
+    const { data, error } = await supabase.rpc('process_pos_transaction_v2', {
+      p_id: tx.id,
+      p_branch_id: tx.branchId,
+      p_user_id: tx.userId,
+      p_date: tx.date,
+      p_total: tx.total,
+      p_tax: tx.tax || 0,
+      p_discount: tx.discount || 0,
+      p_items: tx.items.map(item => ({
+        product_id: typeof item.product === 'string' ? item.product : item.product?.id,
+        quantity: item.quantity,
+        variant_label: item.variantLabel || null
+      })),
+      p_payments: tx.payments || [],
+      p_payment_method: tx.paymentMethod || 'cash',
+      p_session_id: tx.sessionId,
+      p_customer_id: tx.customerId || null,
+      p_notes: tx.notes || ''
+    });
+
+    if (error) throw error;
+    return { success: true, data };
+  } catch (e: any) {
+    console.error("[RPC] process_pos_transaction_v2 failed:", e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function callCloseSessionRPC(
+  sessionId: string, 
+  closingBalances: any[], 
+  closedAt: string, 
+  notes: string, 
+  settlement: SalarySettlement
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: "Supabase no configurado" };
+
+  try {
+    const { data, error } = await supabase.rpc('close_cash_session_v2', {
+      p_session_id: sessionId,
+      p_closing_balances: closingBalances,
+      p_closed_at: closedAt,
+      p_notes: notes,
+      p_settlement_data: {
+        userId: settlement.userId,
+        userName: settlement.userName,
+        baseSalary: settlement.baseSalary,
+        commissions: settlement.commissions,
+        total: settlement.total,
+        discrepancyDeduction: settlement.discrepancyDeduction || 0
+      }
+    });
+
+    if (error) throw error;
+    return { success: true, data };
+  } catch (e: any) {
+    console.error("[RPC] close_cash_session_v2 failed:", e);
+    return { success: false, error: e.message };
   }
 }
 
@@ -1737,6 +1888,15 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
 
   const store = useStore.getState();
   const errors: string[] = [];
+  
+  // Persistir estado global primero
+  try {
+    await supabase.from('settings').upsert({
+      id: 'global',
+      last_turn_number: store.lastTurnNumber
+    });
+  } catch (e) {}
+
   const pushed: Record<string, number> = {
     branches: store.branches.length,
     categories: store.categories.length,
@@ -1941,11 +2101,70 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
       await safeUpsertMany(supabase, 'bank_transactions', btRows);
     }
 
-    // 15. Inventory Transfers
+    // 15. Cash Sessions
+    if ((store.cashSessions || []).length > 0) {
+      const sessionRows = store.cashSessions.map(s => {
+        let metaNotes = s.notes || '';
+        const metaObj = {
+          closing_balances: s.closingBalances || [],
+          closing_date: s.closingDate || null,
+          movements: s.movements || []
+        };
+        const metaStr = `__META__:${JSON.stringify(metaObj)}`;
+        if (!metaNotes.includes('__META__:')) {
+          metaNotes = metaNotes ? `${metaNotes} ${metaStr}` : metaStr;
+        }
+        return {
+          id: s.id,
+          user_id: s.userId || null,
+          worker_name: s.workerName || 'Cajero',
+          branch_id: s.branchId,
+          opened_at: s.openedAt,
+          closed_at: s.closedAt || null,
+          opening_balance: Number(s.openingBalance) || 0,
+          opening_amount: Number(s.openingAmount) || 0,
+          status: s.status || 'open',
+          working_employee_ids: s.workingEmployeeIds || [],
+          notes: metaNotes
+        };
+      });
+      await safeUpsertMany(supabase, 'cash_sessions', sessionRows);
+    }
+
+    // 16. Salary Settlements
+    if ((store.salarySettlements || []).length > 0) {
+      const settlementRows = store.salarySettlements.map(ss => ({
+        id: ss.id,
+        user_id: ss.userId,
+        user_name: ss.userName,
+        session_id: ss.sessionId || null,
+        base_salary: Number(ss.baseSalary) || 0,
+        commissions: Number(ss.commissions) || 0,
+        discrepancy_deduction: Number(ss.discrepancyDeduction) || 0,
+        total: Number(ss.total) || 0,
+        sales_goal: Number(ss.salesGoal) || 0,
+        date: ss.date,
+        status: ss.status || 'pending'
+      }));
+      await safeUpsertMany(supabase, 'salary_settlements', settlementRows);
+    }
+
+    // 17. Inventory Transfers
     if ((store.transfers || []).length > 0) {
       const transferRows = store.transfers.map(t => ({
-        id: t.id, product_id: t.productId, from_branch_id: t.fromBranchId, 
-        to_branch_id: t.toBranchId, quantity: t.quantity, date: t.date, status: t.status
+        id: t.id,
+        product_id: t.productId,
+        product_name: t.productName,
+        from_branch_id: t.fromBranchId,
+        from_branch_name: t.fromBranchName,
+        to_branch_id: t.toBranchId,
+        to_branch_name: t.toBranchName,
+        variant_label: t.variantLabel || 'Estándar',
+        quantity: Number(t.quantity) || 0,
+        variants: t.variants || [],
+        date: t.date,
+        user_id: t.userId && t.userId !== 'system' ? t.userId : null,
+        status: t.status || 'completed'
       }));
       await safeUpsertMany(supabase, 'inventory_transfers', transferRows);
     }
@@ -1954,6 +2173,95 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
   } catch (err: any) {
     errors.push(`Error en push total: ${err.message}`);
     return { success: false, pushed, errors };
+  }
+}
+
+/**
+ * Busca y elimina duplicados semánticos directamente en Supabase.
+ * Útil para limpiar la base de datos de registros redundantes creados por múltiples dispositivos offline.
+ */
+export async function cleanupCloudDuplicates() {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, message: "Supabase no configurado" };
+
+  const report = { deletedBranches: 0, deletedCategories: 0, deletedProducts: 0 };
+
+  try {
+    // 1. Limpiar Sucursales (por nombre normalizado: sin acentos, minúsculas, espacios colapsados)
+    const { data: branches } = await supabase.from('branches').select('id, name').order('created_at', { ascending: true });
+    if (branches && branches.length > 1) {
+      const seenNames = new Map<string, string>(); // normName -> primaryId
+      for (const b of branches) {
+        const normName = normalizeSemanticText(b.name);
+        if (seenNames.has(normName)) {
+          const primaryId = seenNames.get(normName)!;
+          // Validar que el candidato a eliminar realmente esté vacío antes de borrarlo
+          const { count: invCount } = await supabase.from('inventory').select('*', { count: 'exact', head: true }).eq('branch_id', b.id);
+          const { count: txCount } = await supabase.from('transactions').select('*', { count: 'exact', head: true }).eq('branch_id', b.id);
+          const { count: csCount } = await supabase.from('cash_sessions').select('*', { count: 'exact', head: true }).eq('branch_id', b.id);
+
+          if ((invCount || 0) === 0 && (txCount || 0) === 0 && (csCount || 0) === 0) {
+            // Seguro de eliminar
+            await supabase.from('branches').delete().eq('id', b.id);
+            report.deletedBranches++;
+            console.log(`[MARÉ] Duplicado vacío de sucursal eliminado de Supabase: "${b.name}" (${b.id})`);
+          } else {
+            console.warn(`[MARÉ] Conflicto de sucursal con datos en ambos registros ("${b.name}" - ${b.id} vs ${primaryId}). No se elimina automáticamente.`);
+          }
+        } else {
+          seenNames.set(normName, b.id);
+        }
+      }
+    }
+
+    // 2. Limpiar Categorías (por nombre normalizado)
+    const { data: categories } = await supabase.from('categories').select('id, name').order('created_at', { ascending: true });
+    if (categories && categories.length > 1) {
+      const seenNames = new Map<string, string>();
+      for (const c of categories) {
+        const normName = normalizeSemanticText(c.name);
+        if (seenNames.has(normName)) {
+          const { count: prodCount } = await supabase.from('products').select('*', { count: 'exact', head: true }).eq('category_id', c.id);
+          if ((prodCount || 0) === 0) {
+            await supabase.from('categories').delete().eq('id', c.id);
+            report.deletedCategories++;
+          }
+        } else {
+          seenNames.set(normName, c.id);
+        }
+      }
+    }
+
+    // 3. Limpiar Productos (por SKU normalizado o Nombre normalizado)
+    const { data: products } = await supabase.from('products').select('id, name, sku').order('created_at', { ascending: true });
+    if (products && products.length > 1) {
+      const seenSkus = new Map<string, string>();
+      const seenNames = new Map<string, string>();
+      for (const p of products) {
+        const normSku = p.sku ? normalizeSemanticText(p.sku) : '';
+        const normName = normalizeSemanticText(p.name);
+        let isDup = false;
+        if (normSku && seenSkus.has(normSku)) isDup = true;
+        else if (seenNames.has(normName)) isDup = true;
+
+        if (isDup) {
+          // Validar que no tenga inventario o transacciones
+          const { count: invCount } = await supabase.from('inventory').select('*', { count: 'exact', head: true }).eq('product_id', p.id);
+          if ((invCount || 0) === 0) {
+            await supabase.from('products').delete().eq('id', p.id);
+            report.deletedProducts++;
+          }
+        } else {
+          if (normSku) seenSkus.set(normSku, p.id);
+          seenNames.set(normName, p.id);
+        }
+      }
+    }
+
+    return { success: true, report };
+  } catch (err: any) {
+    console.warn("[cleanupCloudDuplicates] Error:", err);
+    return { success: false, error: err.message };
   }
 }
 

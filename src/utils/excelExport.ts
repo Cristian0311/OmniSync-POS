@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx';
 import { 
   Transaction, CashRegisterSession, Product, Category, 
   Currency, Branch, User, Customer, BankTransaction, BankCard, SalarySettlement,
-  InventoryLevel
+  InventoryLevel, InventoryTransfer
 } from '../types';
 
 export interface AIDiagnosticReport {
@@ -29,6 +29,7 @@ export interface ExcelExportData {
   bankTransactions: BankTransaction[];
   bankCards: BankCard[];
   inventory?: InventoryLevel[];
+  transfers?: InventoryTransfer[];
   returns?: any[];
   warranties?: any[];
   baseCurrency: Currency;
@@ -385,11 +386,8 @@ export function generateSessionsSheet(data: ExcelExportData): any[][] {
     const closeDate = s.closedAt ? new Date(s.closingDate || s.closedAt).toLocaleString('es-CU') : 'En curso (Abierta)';
 
     const sessionTx = transactions.filter(t => 
-      t.sessionId ? t.sessionId === s.id : (
-        t.branchId === s.branchId &&
-        new Date(t.date).getTime() >= new Date(s.openedAt).getTime() &&
-        (!s.closedAt || new Date(t.date).getTime() <= new Date(s.closedAt).getTime())
-      )
+      t.branchId === s.branchId &&
+      t.sessionId === s.id
     );
     const sessionSales = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
 
@@ -463,11 +461,8 @@ export function generatePayrollSheet(data: ExcelExportData): any[][] {
   cashSessions.filter(s => s.status === 'closed').forEach(session => {
     const st = settlementMap.get(session.id);
     const sessionTx = transactions.filter(t => 
-      t.sessionId ? t.sessionId === session.id : (
-        t.branchId === session.branchId &&
-        new Date(t.date).getTime() >= new Date(session.openedAt).getTime() &&
-        (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime())
-      )
+      t.branchId === session.branchId &&
+      t.sessionId === session.id
     );
     const sessionTotalSales = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
 
@@ -837,7 +832,15 @@ export function exportFullReportsToExcel(data: ExcelExportData) {
   formatWorksheet(movWs, movAoa, 0, true);
   XLSX.utils.book_append_sheet(wb, movWs, 'Movimientos POS');
 
-  // 12. Diagnóstico Inteligente IA (si está disponible o generado)
+  // 12. Transferencias de Inventario entre Sucursales
+  if (data.transfers && data.transfers.length > 0) {
+    const tfAoa = generateTransfersSheet(data);
+    const tfWs = XLSX.utils.aoa_to_sheet(tfAoa);
+    formatWorksheet(tfWs, tfAoa, 0, true);
+    XLSX.utils.book_append_sheet(wb, tfWs, 'Transferencias Stock');
+  }
+
+  // 13. Diagnóstico Inteligente IA (si está disponible o generado)
   if (data.aiDiagnostic) {
     const aiAoa = generateAIDiagnosticSheet(data.aiDiagnostic, data.baseCurrency);
     const aiWs = XLSX.utils.aoa_to_sheet(aiAoa);
@@ -951,9 +954,8 @@ export function generateDiscrepanciesSheet(data: ExcelExportData): any[][] {
       const openDate = new Date(session.openedAt).getTime();
       const closeDate = session.closedAt ? new Date(session.closedAt).getTime() : Date.now();
       const sessionTx = (transactions || []).filter(t => 
-        t.sessionId 
-          ? t.sessionId === session.id 
-          : (t.branchId === session.branchId && new Date(t.date).getTime() >= openDate && new Date(t.date).getTime() <= closeDate)
+        t.branchId === session.branchId && 
+        t.sessionId === session.id
       );
 
       const expected: { currencyCode: string; method: 'cash' | 'transfer'; amount: number }[] = [];
@@ -1113,9 +1115,49 @@ export function generateCashMovementsSheet(data: ExcelExportData): any[][] {
   return rows;
 }
 
+// SHEET: TRANSFERENCIAS DE INVENTARIO ENTRE SUCURSALES
+export function generateTransfersSheet(data: ExcelExportData): any[][] {
+  const { transfers = [], users, branches } = data;
+
+  const rows: any[][] = [
+    [
+      'ID Transferencia',
+      'Fecha y Hora',
+      'Producto',
+      'Variante / Detalle',
+      'Cantidad',
+      'Sucursal Origen',
+      'Sucursal Destino',
+      'Usuario / Responsable',
+      'Estado'
+    ]
+  ];
+
+  transfers.forEach(t => {
+    const user = users.find(u => u.id === t.userId);
+    const fromB = branches.find(b => b.id === t.fromBranchId)?.name || t.fromBranchName || t.fromBranchId;
+    const toB = branches.find(b => b.id === t.toBranchId)?.name || t.toBranchName || t.toBranchId;
+    const dateStr = new Date(t.date).toLocaleString('es-CU');
+
+    rows.push([
+      t.id,
+      dateStr,
+      t.productName || 'Producto',
+      t.variantLabel || 'Estándar',
+      t.quantity,
+      fromB,
+      toB,
+      user?.name || t.userId || 'Sistema',
+      t.status === 'completed' ? 'Completado' : (t.status || 'Completado')
+    ]);
+  });
+
+  return rows;
+}
+
 // EXPORT SINGLE SECTION
 export function exportSingleSectionToExcel(
-  section: 'summary' | 'sales' | 'items' | 'sessions' | 'payroll' | 'products' | 'returns' | 'banks' | 'idn' | 'discrepancies' | 'movements',
+  section: 'summary' | 'sales' | 'items' | 'sessions' | 'payroll' | 'products' | 'returns' | 'banks' | 'idn' | 'discrepancies' | 'movements' | 'transfers',
   data: ExcelExportData
 ) {
   const wb = XLSX.utils.book_new();
@@ -1159,6 +1201,9 @@ export function exportSingleSectionToExcel(
   } else if (section === 'movements') {
     aoa = generateCashMovementsSheet(data);
     sheetName = 'Movimientos POS';
+  } else if (section === 'transfers') {
+    aoa = generateTransfersSheet(data);
+    sheetName = 'Transferencias de Inventario';
   }
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);

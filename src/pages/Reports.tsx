@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { 
   TrendingUp, DollarSign, Calendar, Calculator, Package, User, Users, Smartphone, Eye,
-  X, ArrowDownRight, ArrowUpRight, ArrowLeftRight, History, Download, Printer, CheckCircle2, 
-  Clock, AlertCircle, AlertTriangle, FileSpreadsheet, ChevronDown, Check,
+  X, ArrowDownRight, ArrowUpRight, ArrowLeftRight, ArrowRight, History, Download, Printer, CheckCircle2, 
+  Clock, AlertCircle, AlertTriangle, FileSpreadsheet, ChevronDown, Check, Plus, Search,
   Sparkles, Brain, ListChecks, ShieldAlert, ShieldCheck, Loader2, Trash2, PieChart as PieChartIcon, BarChart3,
   HelpCircle, Edit3, Save, FileText, CheckCircle
 } from "lucide-react";
@@ -22,8 +22,8 @@ import {
 export default function Reports() {
   const store = useStore();
 
-  const transactions = store.transactions || [];
-  const cashSessions = store.cashSessions || [];
+  const transactions = (store.transactions || []).filter(t => !t.deletedAt);
+  const cashSessions = (store.cashSessions || []).filter(s => !s.deletedAt);
   const users = store.users || [];
   const branches = store.branches || [];
   const currencies = store.currencies || [];
@@ -32,6 +32,7 @@ export default function Reports() {
   const supplierOrders = store.supplierOrders || [];
   const products = store.products || [];
   const inventory = store.inventory || [];
+  const transfers = store.transfers || [];
   const bankTransactions = store.bankTransactions || [];
   const bankCards = store.bankCards || [];
   const customers = store.customers || [];
@@ -190,7 +191,13 @@ export default function Reports() {
     return itemProduct.name || 'Desconocido';
   };
 
-  const [activeTab, setActiveTab] = useState<'sales' | 'payroll' | 'sessions' | 'discrepancies' | 'movements' | 'products' | 'idn'>('sales');
+  const [activeTab, setActiveTab] = useState<'sales' | 'payroll' | 'sessions' | 'discrepancies' | 'movements' | 'products' | 'idn' | 'transfers' | 'audit'>('sales');
+  const [salesViewMode, setSalesViewMode] = useState<'by_shift' | 'all_tickets'>('by_shift');
+  const [transferFromFilter, setTransferFromFilter] = useState<string>('all');
+  const [transferToFilter, setTransferToFilter] = useState<string>('all');
+  const [transferSearch, setTransferSearch] = useState<string>('');
+  const [selectedTransferModal, setSelectedTransferModal] = useState<import('../types').InventoryTransfer | null>(null);
+  const [selectedDirectTxModal, setSelectedDirectTxModal] = useState<import('../types').Transaction | null>(null);
   const [discrepancyTypeFilter, setDiscrepancyTypeFilter] = useState<'all' | 'shortage' | 'overage' | 'deducted' | 'pending'>('all');
   const [movementTypeFilter, setMovementTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
   const [movementCurrencyFilter, setMovementCurrencyFilter] = useState<string>('all');
@@ -199,9 +206,21 @@ export default function Reports() {
   const [editingAuditStatus, setEditingAuditStatus] = useState<'pending_review' | 'reviewed' | 'resolved'>('pending_review');
   const [selectedDiscrepancyDetailSession, setSelectedDiscrepancyDetailSession] = useState<CashRegisterSession | null>(null);
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
-  const [sessionFilter, setSessionFilter] = useState<'all' | 'today' | 'custom'>('all');
+  const [sessionFilter, setSessionFilter] = useState<'all' | 'today' | 'yesterday' | 'custom'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'closed'>('all');
+  const [selectedWorkerFilter, setSelectedWorkerFilter] = useState<string>('all');
   const [selectedFilterDate, setSelectedFilterDate] = useState<string>('');
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>('all');
+
+  const getLocalDateYMD = (dStr: string | null | undefined): string => {
+    if (!dStr) return '';
+    const d = new Date(dStr);
+    if (isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
   const [printSessionId, setPrintSessionId] = useState<string | null>(null);
   const [selectedIDNTxModal, setSelectedIDNTxModal] = useState<import('../types').Transaction | null>(null);
   const [selectedIDNWorkerModal, setSelectedIDNWorkerModal] = useState<{ userId: string; workerName: string; branchName: string } | null>(null);
@@ -232,21 +251,137 @@ export default function Reports() {
   const [deletePin, setDeletePin] = useState("");
   const [deletePinError, setDeletePinError] = useState(false);
 
+  const [editingSessionDateId, setEditingSessionDateId] = useState<string | null>(null);
+  const [newSessionDate, setNewSessionDate] = useState<string>("");
+  const [isUpdatingSessionDate, setIsUpdatingSessionDate] = useState(false);
+
+  // Estados para Cierre de Turno desde Reportes
+  const [sessionToCloseModal, setSessionToCloseModal] = useState<CashRegisterSession | null>(null);
+  const [sessionClosingBalances, setSessionClosingBalances] = useState<{ [key: string]: number }>({});
+  const [sessionClosingDateInput, setSessionClosingDateInput] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [sessionClosingNotesInput, setSessionClosingNotesInput] = useState<string>("");
+  const [isClosingShiftFromReports, setIsClosingShiftFromReports] = useState(false);
+
+  // Estados para Añadir Producto Vendido al Informe (Sin tocar stock físico)
+  const [addItemToShiftModal, setAddItemToShiftModal] = useState<CashRegisterSession | null>(null);
+  const [manualItemProductSearch, setManualItemProductSearch] = useState<string>("");
+  const [manualItemProductId, setManualItemProductId] = useState<string>("");
+  const [manualItemQuantity, setManualItemQuantity] = useState<number>(1);
+  const [manualItemPrice, setManualItemPrice] = useState<number>(0);
+  const [manualItemWorkerId, setManualItemWorkerId] = useState<string>("");
+  const [manualItemPaymentMethod, setManualItemPaymentMethod] = useState<'cash' | 'transfer'>('cash');
+  const [manualItemCurrencyCode, setManualItemCurrencyCode] = useState<string>('CUP');
+  const [isAddingManualItem, setIsAddingManualItem] = useState(false);
+
   const REQUIRED_DELETE_PIN = "03111166702";
 
-  // Filtro y resumen de transacciones de Vendedores Independientes (IDN)
+  // Filtro y resumen de transacciones de Vendedores Independientes (IDN/IDM)
   const idnTransactions = useMemo(() => {
+    const todayYMD = getLocalDateYMD(new Date().toISOString());
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayYMD = getLocalDateYMD(yesterdayDate.toISOString());
+
     return (transactions || []).filter(t => {
+      if (t.deletedAt) return false;
       if (selectedBranchFilter !== 'all' && t.branchId !== selectedBranchFilter) return false;
-      const dateObj = new Date(t.date);
+      const tYMD = getLocalDateYMD(t.date);
       if (selectedFilterDate) {
-        if (dateObj.toISOString().split('T')[0] !== selectedFilterDate) return false;
+        if (tYMD !== selectedFilterDate) return false;
       } else if (sessionFilter === 'today') {
-        if (dateObj.toLocaleDateString() !== new Date().toLocaleDateString()) return false;
+        if (tYMD !== todayYMD) return false;
+      } else if (sessionFilter === 'yesterday') {
+        if (tYMD !== yesterdayYMD) return false;
       }
-      return t.id.startsWith('LIQ-IDN-') || t.notes === 'LIQUIDACION_IDN' || (t.notes && t.notes.includes('IDN'));
+      const user = users.find(u => u.id === t.userId);
+      return t.id.startsWith('LIQ-IDN-') || t.notes === 'LIQUIDACION_IDN' || (t.notes && t.notes.includes('IDN')) || user?.isIndependent === true;
     });
-  }, [transactions, selectedBranchFilter, selectedFilterDate, sessionFilter]);
+  }, [transactions, selectedBranchFilter, selectedFilterDate, sessionFilter, users]);
+
+  // Filtro de Transferencias entre Sucursales
+  const filteredTransfers = useMemo(() => {
+    const todayYMD = getLocalDateYMD(new Date().toISOString());
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayYMD = getLocalDateYMD(yesterdayDate.toISOString());
+
+    return (transfers || []).filter(t => {
+      if (transferFromFilter !== 'all' && t.fromBranchId !== transferFromFilter) return false;
+      if (transferToFilter !== 'all' && t.toBranchId !== transferToFilter) return false;
+      if (selectedBranchFilter !== 'all' && t.fromBranchId !== selectedBranchFilter && t.toBranchId !== selectedBranchFilter) return false;
+      
+      const tDateYMD = getLocalDateYMD(t.date);
+      if (selectedFilterDate) {
+        if (tDateYMD !== selectedFilterDate) return false;
+      } else if (sessionFilter === 'today') {
+        if (tDateYMD !== todayYMD) return false;
+      } else if (sessionFilter === 'yesterday') {
+        if (tDateYMD !== yesterdayYMD) return false;
+      }
+
+      if (transferSearch.trim()) {
+        const q = transferSearch.toLowerCase();
+        const pName = (t.productName || '').toLowerCase();
+        const vLabel = (t.variantLabel || '').toLowerCase();
+        const fromN = (branches.find(b => b.id === t.fromBranchId)?.name || t.fromBranchName || '').toLowerCase();
+        const toN = (branches.find(b => b.id === t.toBranchId)?.name || t.toBranchName || '').toLowerCase();
+        if (!pName.includes(q) && !vLabel.includes(q) && !fromN.includes(q) && !toN.includes(q) && !t.id.toLowerCase().includes(q)) {
+          return false;
+        }
+      }
+      return true;
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [transfers, transferFromFilter, transferToFilter, selectedBranchFilter, selectedFilterDate, sessionFilter, transferSearch, branches]);
+
+  // Estadísticas de Transferencias
+  const transferStats = useMemo(() => {
+    const totalCount = filteredTransfers.length;
+    const totalUnits = filteredTransfers.reduce((sum, t) => sum + (t.quantity || 0), 0);
+    
+    const originCounts: Record<string, number> = {};
+    filteredTransfers.forEach(t => {
+      const name = branches.find(b => b.id === t.fromBranchId)?.name || t.fromBranchName || 'Origen';
+      originCounts[name] = (originCounts[name] || 0) + t.quantity;
+    });
+    const topOrigin = Object.entries(originCounts).sort((a, b) => b[1] - a[1])[0] || ['Ninguna', 0];
+
+    const destCounts: Record<string, number> = {};
+    filteredTransfers.forEach(t => {
+      const name = branches.find(b => b.id === t.toBranchId)?.name || t.toBranchName || 'Destino';
+      destCounts[name] = (destCounts[name] || 0) + t.quantity;
+    });
+    const topDest = Object.entries(destCounts).sort((a, b) => b[1] - a[1])[0] || ['Ninguna', 0];
+
+    return { totalCount, totalUnits, topOrigin, topDest };
+  }, [filteredTransfers, branches]);
+
+  // Lista de Transacciones individuales lineales filtradas
+  const filteredTransactions = useMemo(() => {
+    const todayYMD = getLocalDateYMD(new Date().toISOString());
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayYMD = getLocalDateYMD(yesterdayDate.toISOString());
+
+    return (transactions || []).filter(t => {
+      if (t.deletedAt) return false;
+      if (selectedBranchFilter !== 'all' && t.branchId !== selectedBranchFilter) return false;
+      if (selectedWorkerFilter !== 'all') {
+        const emp = users.find(u => u.id === t.userId || (u.name && t.cashierName && u.name.toLowerCase() === t.cashierName.toLowerCase()));
+        if (emp?.id !== selectedWorkerFilter && t.userId !== selectedWorkerFilter && t.cashierName !== selectedWorkerFilter) {
+          return false;
+        }
+      }
+      const tYMD = getLocalDateYMD(t.date);
+      if (selectedFilterDate) {
+        if (tYMD !== selectedFilterDate) return false;
+      } else if (sessionFilter === 'today') {
+        if (tYMD !== todayYMD) return false;
+      } else if (sessionFilter === 'yesterday') {
+        if (tYMD !== yesterdayYMD) return false;
+      }
+      return true;
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [transactions, selectedBranchFilter, selectedWorkerFilter, selectedFilterDate, sessionFilter, users]);
 
   const idnWorkerStats = useMemo(() => {
     const map = new Map<string, {
@@ -356,10 +491,40 @@ export default function Reports() {
     }
   };
 
+  // Reconciliar y recuperar sesiones: asegura que ningún turno se pierda,
+  // incluso si su registro de sesión fue borrado pero existen transacciones asociadas
+  const reconciledSessions = useMemo(() => {
+    const sessionMap = new Map<string, CashRegisterSession>();
+    (cashSessions || []).forEach(s => {
+      if (!s.deletedAt) {
+        sessionMap.set(s.id, s);
+      }
+    });
+
+    (transactions || []).forEach(t => {
+      if (t.sessionId && !sessionMap.has(t.sessionId) && !t.deletedAt) {
+        sessionMap.set(t.sessionId, {
+          id: t.sessionId,
+          userId: t.userId || 'recovered',
+          workerName: t.cashierName || 'Vendedor',
+          branchId: t.branchId || 'b1',
+          openedAt: t.date,
+          openingBalance: 0,
+          openingAmount: 0,
+          status: 'closed',
+          closedAt: t.date,
+          closingDate: t.date
+        });
+      }
+    });
+
+    return Array.from(sessionMap.values());
+  }, [cashSessions, transactions]);
+
   // Chronological mapping so all sessions (historical and new) have consistent Turno-1, Turno-2, etc.
   const sessionTurnMap = useMemo(() => {
     const map = new Map<string, string>();
-    const sorted = [...cashSessions].sort(
+    const sorted = [...reconciledSessions].sort(
       (a, b) => new Date(a.openedAt || a.closedAt || '').getTime() - new Date(b.openedAt || b.closedAt || '').getTime()
     );
     sorted.forEach((s, idx) => {
@@ -370,29 +535,49 @@ export default function Reports() {
       }
     });
     return map;
-  }, [cashSessions]);
+  }, [reconciledSessions]);
 
   const closedSessions = useMemo(() => {
-    return [...cashSessions]
-      .filter(s => s.status === 'closed')
+    return [...reconciledSessions]
+      .filter(s => s.status === 'closed' && !s.deletedAt)
       .sort((a, b) => new Date(b.closingDate || b.closedAt || b.openedAt || '').getTime() - new Date(a.closingDate || a.closedAt || a.openedAt || '').getTime());
-  }, [cashSessions]);
+  }, [reconciledSessions]);
+
+  const filteredSessions = useMemo(() => {
+    const todayYMD = getLocalDateYMD(new Date().toISOString());
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayYMD = getLocalDateYMD(yesterdayDate.toISOString());
+
+    return [...reconciledSessions]
+      .filter(s => {
+        if (s.deletedAt) return false;
+        if (statusFilter !== 'all' && s.status !== statusFilter) return false;
+        if (selectedBranchFilter !== 'all' && s.branchId !== selectedBranchFilter) return false;
+        if (selectedWorkerFilter !== 'all') {
+          const emp = users.find(u => u.id === s.userId || (u.name && s.workerName && u.name.toLowerCase() === s.workerName.toLowerCase()));
+          if (emp?.id !== selectedWorkerFilter && s.userId !== selectedWorkerFilter && s.workerName !== selectedWorkerFilter) {
+            return false;
+          }
+        }
+        const sDateYMD = getLocalDateYMD(s.closingDate || s.closedAt || s.openedAt);
+        if (selectedFilterDate) {
+          return sDateYMD === selectedFilterDate;
+        }
+        if (sessionFilter === 'today') {
+          return sDateYMD === todayYMD;
+        }
+        if (sessionFilter === 'yesterday') {
+          return sDateYMD === yesterdayYMD;
+        }
+        return true;
+      })
+      .sort((a, b) => new Date(b.closingDate || b.closedAt || b.openedAt || '').getTime() - new Date(a.closingDate || a.closedAt || a.openedAt || '').getTime());
+  }, [reconciledSessions, statusFilter, selectedBranchFilter, selectedWorkerFilter, selectedFilterDate, sessionFilter, users]);
 
   const filteredClosedSessions = useMemo(() => {
-    return closedSessions.filter(s => {
-      if (selectedBranchFilter !== 'all' && s.branchId !== selectedBranchFilter) {
-        return false;
-      }
-      const dateObj = new Date(s.closingDate || s.closedAt || s.openedAt);
-      if (selectedFilterDate) {
-        return dateObj.toISOString().split('T')[0] === selectedFilterDate;
-      }
-      if (sessionFilter === 'today') {
-        return dateObj.toLocaleDateString() === new Date().toLocaleDateString();
-      }
-      return true;
-    });
-  }, [closedSessions, sessionFilter, selectedFilterDate, selectedBranchFilter]);
+    return filteredSessions.filter(s => s.status === 'closed');
+  }, [filteredSessions]);
 
   // Complete payroll settlements per closed session
   const payrollList = useMemo(() => {
@@ -409,11 +594,8 @@ export default function Reports() {
       .map(session => {
         const turnLabel = sessionTurnMap.get(session.id) || session.id;
       const sessionTx = transactions.filter(t => 
-        t.sessionId 
-          ? t.sessionId === session.id
-          : (t.branchId === session.branchId && 
-             new Date(t.date).getTime() >= new Date(session.openedAt).getTime() && 
-             (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
+        t.branchId === session.branchId && 
+        t.sessionId === session.id
       );
 
       const totalSales = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
@@ -477,21 +659,7 @@ export default function Reports() {
     });
   }, [payrollList, selectedBranchFilter, selectedFilterDate, sessionFilter]);
 
-  const filteredCashSessions = useMemo(() => {
-    return cashSessions.filter(s => {
-      if (selectedBranchFilter !== 'all' && s.branchId !== selectedBranchFilter) {
-        return false;
-      }
-      const dateObj = new Date(s.closingDate || s.closedAt || s.openedAt);
-      if (selectedFilterDate) {
-        return dateObj.toISOString().split('T')[0] === selectedFilterDate;
-      }
-      if (sessionFilter === 'today') {
-        return dateObj.toLocaleDateString() === new Date().toLocaleDateString();
-      }
-      return true;
-    });
-  }, [cashSessions, selectedBranchFilter, selectedFilterDate, sessionFilter]);
+  const filteredCashSessions = filteredSessions;
 
   // Aggregated payroll totals per worker
   const aggregatedPayrollByWorker = useMemo(() => {
@@ -575,11 +743,8 @@ export default function Reports() {
       const workerName = session.workerName || users.find(u => u.id === session.userId)?.name || 'Vendedor';
 
       const sessionTx = transactions.filter(t => 
-        t.sessionId 
-          ? t.sessionId === session.id
-          : (t.branchId === session.branchId && 
-             new Date(t.date).getTime() >= new Date(session.openedAt).getTime() && 
-             (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
+        t.branchId === session.branchId && 
+        t.sessionId === session.id
       );
 
       const totalSales = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
@@ -1031,6 +1196,44 @@ export default function Reports() {
     }
   };
 
+  const handlePrintTransferTicket = async (transfer: import('../types').InventoryTransfer, preferRawBT = false) => {
+    try {
+      const { printThermalReceipt, format58mmLine } = await import('../lib/escpos');
+      const user = users.find(u => u.id === transfer.userId);
+      const fromB = branches.find(b => b.id === transfer.fromBranchId)?.name || transfer.fromBranchName || 'Origen';
+      const toB = branches.find(b => b.id === transfer.toBranchId)?.name || transfer.toBranchName || 'Destino';
+      const dateStr = new Date(transfer.date).toLocaleDateString('es-CU');
+      const timeStr = new Date(transfer.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      const lines: string[] = [
+        "CENTER|BOLD|" + (receiptConfig?.businessName || "MARÉ POS"),
+        "CENTER|VALE DE TRANSFERENCIA STOCK",
+        "---",
+        format58mmLine("FECHA:", dateStr, 32),
+        format58mmLine("HORA:", timeStr, 32),
+        format58mmLine("ORIGEN:", fromB.slice(0, 18), 32),
+        format58mmLine("DESTINO:", toB.slice(0, 18), 32),
+        format58mmLine("RESPONSABLE:", (user?.name || transfer.userId || 'Sistema').slice(0, 15), 32),
+        "---",
+        "PRODUCTO | VAR | CANT",
+        `${transfer.productName} | ${transfer.variantLabel || 'Base'} | ${transfer.quantity} uds`,
+        "---",
+        format58mmLine("TOTAL UDS:", `${transfer.quantity} UDS`, 32),
+        "---",
+        "CENTER|EMITIDO Y REGISTRADO"
+      ];
+
+      await printThermalReceipt({
+        lines,
+        width: '58mm',
+        preferRawBT
+      });
+      if (addNotification) addNotification("Comprobante de transferencia enviado a impresión", "success");
+    } catch (e) {
+      console.error("Error printing transfer ticket:", e);
+    }
+  };
+
   // State for Excel Export Menu
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
@@ -1073,6 +1276,7 @@ export default function Reports() {
       bankTransactions,
       bankCards,
       inventory,
+      transfers,
       returns,
       warranties,
       baseCurrency,
@@ -1089,7 +1293,7 @@ export default function Reports() {
     setTimeout(() => setExportSuccess(false), 2500);
   };
 
-  const handleExportSectionExcel = (sec: 'summary' | 'sales' | 'items' | 'sessions' | 'payroll' | 'products' | 'returns' | 'banks' | 'idn' | 'discrepancies' | 'movements') => {
+  const handleExportSectionExcel = (sec: 'summary' | 'sales' | 'items' | 'sessions' | 'payroll' | 'products' | 'returns' | 'banks' | 'idn' | 'discrepancies' | 'movements' | 'transfers') => {
     const data = getExportData();
     exportSingleSectionToExcel(sec, data);
     setShowExportMenu(false);
@@ -1426,6 +1630,15 @@ export default function Reports() {
                     <ArrowDownRight className="w-3.5 h-3.5 text-slate-700 dark:text-slate-300" />
                     <span>Solo Egresos e Ingresos POS</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleExportSectionExcel('transfers')}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg text-[9px] font-bold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors flex items-center gap-2"
+                  >
+                    <ArrowLeftRight className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    <span>Solo Transferencias entre Sucursales</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -1450,8 +1663,22 @@ export default function Reports() {
               badge: allDetailedMovements.length,
               badgeClass: 'bg-slate-700 text-white'
             },
+            { 
+              id: 'transfers', 
+              label: 'Transferencias', 
+              icon: ArrowLeftRight, 
+              badge: filteredTransfers.length,
+              badgeClass: 'bg-blue-600 text-white'
+            },
             { id: 'products', label: 'Productos Vendidos', icon: Package },
-            { id: 'idn', label: 'Vendedores IDN', icon: Users, badge: idnTransactions.length }
+            { id: 'idn', label: 'Vendedores IDN', icon: Users, badge: idnTransactions.length },
+            { 
+              id: 'audit', 
+              label: 'Integridad de Datos', 
+              icon: ShieldAlert, 
+              badge: (transactions.filter(t => !t.sessionId).length + (store.cashSessions || []).filter(s => s.deletedAt).length) || undefined,
+              badgeClass: 'bg-amber-600 text-white'
+            }
           ].map(tab => {
             const Icon = tab.icon;
             return (
@@ -1659,9 +1886,10 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* Global Filter Toolbar: Sucursales, Periodo, Fecha */}
+      {/* Global Filter Toolbar: Sucursales, Vendedor, Estado, Periodo, Fecha */}
       <div className="bg-secondary p-3 rounded-2xl shadow-sm border border-base flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
+          {/* Filtro Sucursal */}
           <div className="flex items-center gap-1.5 bg-subtle border border-base rounded-xl px-2.5 py-1.5">
             <span className="text-[8px] font-black text-muted uppercase tracking-widest">Sucursal:</span>
             <select
@@ -1676,7 +1904,54 @@ export default function Reports() {
             </select>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-subtle border border-base rounded-xl p-1">
+          {/* Filtro Vendedor / Trabajador */}
+          <div className="flex items-center gap-1.5 bg-subtle border border-base rounded-xl px-2.5 py-1.5">
+            <span className="text-[8px] font-black text-muted uppercase tracking-widest">Vendedor:</span>
+            <select
+              value={selectedWorkerFilter}
+              onChange={(e) => setSelectedWorkerFilter(e.target.value)}
+              className="bg-transparent text-[10px] font-black text-primary uppercase outline-none cursor-pointer"
+            >
+              <option value="all" className="bg-secondary">Todos los Vendedores</option>
+              {(users || []).map(u => (
+                <option key={u.id} value={u.id} className="bg-secondary">{u.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Filtro Estado del Turno */}
+          <div className="flex items-center gap-1 bg-subtle border border-base rounded-xl p-1">
+            <button
+              onClick={() => setStatusFilter('all')}
+              className={cn(
+                "px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all",
+                statusFilter === 'all' ? "bg-indigo-600 text-white shadow-sm" : "text-secondary hover:text-primary hover:bg-secondary"
+              )}
+            >
+              Todos
+            </button>
+            <button
+              onClick={() => setStatusFilter('open')}
+              className={cn(
+                "px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all",
+                statusFilter === 'open' ? "bg-emerald-600 text-white shadow-sm" : "text-secondary hover:text-primary hover:bg-secondary"
+              )}
+            >
+              Abiertos
+            </button>
+            <button
+              onClick={() => setStatusFilter('closed')}
+              className={cn(
+                "px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all",
+                statusFilter === 'closed' ? "bg-slate-700 text-white shadow-sm" : "text-secondary hover:text-primary hover:bg-secondary"
+              )}
+            >
+              Cerrados
+            </button>
+          </div>
+
+          {/* Filtro Fecha */}
+          <div className="flex items-center gap-1 bg-subtle border border-base rounded-xl p-1">
             <button
               onClick={() => { setSessionFilter('all'); setSelectedFilterDate(''); }}
               className={cn(
@@ -1684,7 +1959,7 @@ export default function Reports() {
                 sessionFilter === 'all' && !selectedFilterDate ? "bg-indigo-600 text-white shadow-sm" : "text-secondary hover:text-primary hover:bg-secondary"
               )}
             >
-              Todos ({(closedSessions || []).length})
+              Histórico ({reconciledSessions.length})
             </button>
             <button
               onClick={() => { setSessionFilter('today'); setSelectedFilterDate(''); }}
@@ -1694,6 +1969,15 @@ export default function Reports() {
               )}
             >
               Hoy
+            </button>
+            <button
+              onClick={() => { setSessionFilter('yesterday'); setSelectedFilterDate(''); }}
+              className={cn(
+                "px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
+                sessionFilter === 'yesterday' ? "bg-indigo-600 text-white shadow-sm" : "text-secondary hover:text-primary hover:bg-secondary"
+              )}
+            >
+              Ayer
             </button>
             <div className="flex items-center gap-1 px-2 py-0.5 border-l border-base">
               <Calendar className="w-3 h-3 text-muted" />
@@ -1718,144 +2002,368 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* TAB 1: REGISTRO DE VENTAS POR TURNO */}
+      {/* TAB 1: REGISTRO DE VENTAS POR TURNO Y TICKETS INDIVIDUALES */}
       {activeTab === 'sales' && (
-        <div className="bg-secondary rounded-2xl shadow-sm border border-base overflow-hidden">
-          <div className="p-3.5 border-b border-base flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-subtle/50">
+        <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Subheader with View Switcher */}
+          <div className="bg-secondary rounded-2xl shadow-sm border border-base p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-xs font-black text-primary uppercase tracking-wider flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                Registro de Ventas por Turnos Cerrados
+                Registro de Ventas Comerciales
               </h3>
               <p className="text-[8px] font-bold text-muted uppercase tracking-widest mt-0.5">
-                Ventas consecutivas lineales por turno y fecha de cierre
+                Ventas consecutivas lineales por turno y tickets individuales (Ventas POS + Liquidaciones IDN)
               </p>
             </div>
-            <span className="text-[9px] font-black text-muted uppercase tracking-wider">
-              {filteredClosedSessions.length} turnos encontrados
-            </span>
-          </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-subtle border-b border-base text-[8px] font-black text-muted uppercase tracking-[0.15em]">
-                  <th className="px-3 py-2.5">Turno</th>
-                  <th className="px-3 py-2.5">Fecha y Hora Cierre</th>
-                  <th className="px-3 py-2.5">Vendedor / Sucursal</th>
-                  <th className="px-3 py-2.5 text-center">Productos</th>
-                  <th className="px-3 py-2.5 text-right">Venta Total</th>
-                  <th className="px-3 py-2.5 text-right">Salario Liquidado</th>
-                  <th className="px-3 py-2.5 text-center">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-base">
-                {filteredClosedSessions.map((session, idx) => {
-                  const sessionTx = transactions.filter(t => 
-                    t.sessionId 
-                      ? t.sessionId === session.id
-                      : (t.branchId === session.branchId && 
-                         new Date(t.date).getTime() >= new Date(session.openedAt).getTime() && 
-                         (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
-                  );
-                  const totalSalesInSession = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
-                  const totalItems = sessionTx.reduce((sum, tx) => sum + (tx.items || []).reduce((s, i) => s + (i.quantity || 0), 0), 0);
-                  const sequentialTurn = sessionTurnMap.get(session.id) || session.id;
-                  const dateToDisplay = new Date(session.closingDate || session.closedAt || session.openedAt);
-                  const pItem = filteredPayrollList.find(p => p.sessionId === session.id);
-                  const branchName = branches.find(b => b.id === session.branchId)?.name || 'Sucursal Principal';
-                  const workerName = session.workerName || users.find(u => u.id === session.userId)?.name || 'Vendedor';
-                  
-                  return (
-                    <tr key={`${session.id || 'sess'}-${session.openedAt || ''}-${idx}`} className="hover:bg-subtle transition-colors">
-                      {/* Turno lineal */}
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/50 tracking-wider">
-                          {sequentialTurn}
-                        </span>
-                      </td>
-
-                      {/* Fecha y hora en una sola línea */}
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-primary">
-                          <span>{dateToDisplay.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
-                          <span className="text-[9px] font-medium text-muted">{dateToDisplay.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                      </td>
-
-                      {/* Vendedor y Sucursal en una sola línea */}
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-black text-primary uppercase">{workerName}</span>
-                          <span className="text-[8px] font-bold text-muted uppercase bg-subtle px-1.5 py-0.5 rounded border border-base">
-                            {branchName}
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Productos */}
-                      <td className="px-3 py-2 text-center whitespace-nowrap">
-                        <span className="bg-subtle text-muted px-2 py-0.5 rounded text-[9px] font-black uppercase border border-base">
-                          {totalItems} prods
-                        </span>
-                      </td>
-
-                      {/* Venta Total */}
-                      <td className="px-3 py-2 text-right font-black text-primary text-xs sm:text-sm tracking-tight whitespace-nowrap">
-                        {formatMoney(totalSalesInSession)}
-                      </td>
-
-                      {/* Salario Liquidado */}
-                      <td className="px-3 py-2 text-right whitespace-nowrap">
-                        <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-100 dark:border-emerald-900/30">
-                          {formatMoney(pItem?.totalSalary || 0)}
-                        </span>
-                      </td>
-
-                      {/* Acciones */}
-                      <td className="px-3 py-2 text-center whitespace-nowrap">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button 
-                            onClick={() => setExpandedSession(session.id)}
-                            className="bg-indigo-600 text-white px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 shadow-sm"
-                          >
-                            Detalle
-                          </button>
-                          <button
-                            onClick={() => handlePrintShiftTicket(session.id)}
-                            title="Imprimir Comprobante Térmico"
-                            className="p-1.5 bg-subtle text-primary rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-all active:scale-95 border border-base"
-                          >
-                            <Printer className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => setDeleteConfirmTarget({ 
-                              type: 'session', 
-                              id: session.id, 
-                              label: `Turno ${sequentialTurn} - ${workerName} (${branchName})` 
-                            })}
-                            title="Eliminar Turno"
-                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 dark:text-rose-400 rounded-lg transition-all active:scale-95 border border-rose-200 dark:border-rose-800/40"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-
-                {filteredClosedSessions.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-6 py-10 text-center text-muted">
-                      <AlertCircle className="w-7 h-7 mx-auto mb-1.5 opacity-40" />
-                      <p className="font-black uppercase text-[10px] tracking-wider">No se encontraron turnos cerrados para el filtro seleccionado.</p>
-                    </td>
-                  </tr>
+            {/* View Mode Toggle Button Group */}
+            <div className="flex items-center gap-1.5 bg-subtle p-1 rounded-xl border border-base shrink-0">
+              <button
+                type="button"
+                onClick={() => setSalesViewMode('by_shift')}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer",
+                  salesViewMode === 'by_shift'
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "text-secondary hover:text-primary"
                 )}
-              </tbody>
-            </table>
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Por Turnos ({filteredSessions.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSalesViewMode('all_tickets')}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer",
+                  salesViewMode === 'all_tickets'
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "text-secondary hover:text-primary"
+                )}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Todos los Tickets ({filteredTransactions.length})</span>
+              </button>
+            </div>
           </div>
+
+          {/* VIEW 1: POR TURNOS DE CAJA */}
+          {salesViewMode === 'by_shift' ? (
+            <div className="bg-secondary rounded-2xl shadow-sm border border-base overflow-hidden">
+              <div className="p-3 border-b border-base flex items-center justify-between bg-subtle/50">
+                <span className="text-[9px] font-black text-primary uppercase tracking-wider">
+                  Listado Consecutivo de Turnos de Caja
+                </span>
+                <span className="text-[9px] font-bold text-muted">
+                  {filteredSessions.length} turnos encontrados
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-subtle border-b border-base text-[8px] font-black text-muted uppercase tracking-[0.15em]">
+                      <th className="px-3 py-2.5">Turno</th>
+                      <th className="px-3 py-2.5 text-center">Estado</th>
+                      <th className="px-3 py-2.5">Fecha y Hora</th>
+                      <th className="px-3 py-2.5">Vendedor / Sucursal</th>
+                      <th className="px-3 py-2.5 text-center">Productos</th>
+                      <th className="px-3 py-2.5 text-right">Venta Total</th>
+                      <th className="px-3 py-2.5 text-right">Salario Liquidado</th>
+                      <th className="px-3 py-2.5 text-center">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-base">
+                    {filteredSessions.map((session, idx) => {
+                      const sessionTx = transactions.filter(t => 
+                        t.sessionId === session.id && !t.deletedAt
+                      );
+                      const totalSalesInSession = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
+                      const totalItems = sessionTx.reduce((sum, tx) => sum + (tx.items || []).reduce((s, i) => s + (i.quantity || 0), 0), 0);
+                      const sequentialTurn = sessionTurnMap.get(session.id) || session.id;
+                      const dateToDisplay = new Date(session.closingDate || session.closedAt || session.openedAt);
+                      const pItem = filteredPayrollList.find(p => p.sessionId === session.id);
+                      const branchName = branches.find(b => b.id === session.branchId)?.name || 'Sucursal Principal';
+                      const workerName = session.workerName || users.find(u => u.id === session.userId)?.name || 'Vendedor';
+                      
+                      return (
+                        <tr key={`${session.id || 'sess'}-${session.openedAt || ''}-${idx}`} className="hover:bg-subtle transition-colors">
+                          {/* Turno lineal */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/50 tracking-wider">
+                              {sequentialTurn}
+                            </span>
+                          </td>
+
+                          {/* Estado */}
+                          <td className="px-3 py-2 text-center whitespace-nowrap">
+                            <span className={cn(
+                              "px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest",
+                              session.status === 'open' 
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800" 
+                                : "bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700"
+                            )}>
+                              {session.status === 'open' ? 'Abierto' : 'Cerrado'}
+                            </span>
+                          </td>
+
+                          {/* Fecha y hora en una sola línea */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-primary">
+                              <span>{dateToDisplay.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                              <span className="text-[9px] font-medium text-muted">
+                                {dateToDisplay.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {session.status === 'open' && " (En curso)"}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Vendedor y Sucursal en una sola línea */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] font-black text-primary uppercase">{workerName}</span>
+                              <span className="text-[8px] font-bold text-muted uppercase bg-subtle px-1.5 py-0.5 rounded border border-base">
+                                {branchName}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Productos */}
+                          <td className="px-3 py-2 text-center whitespace-nowrap">
+                            <span className="bg-subtle text-muted px-2 py-0.5 rounded text-[9px] font-black uppercase border border-base">
+                              {totalItems} prods
+                            </span>
+                          </td>
+
+                          {/* Venta Total */}
+                          <td className="px-3 py-2 text-right font-black text-primary text-xs sm:text-sm tracking-tight whitespace-nowrap">
+                            {formatMoney(totalSalesInSession)}
+                          </td>
+
+                          {/* Salario Liquidado */}
+                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                            <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-100 dark:border-emerald-900/30">
+                              {formatMoney(pItem?.totalSalary || 0)}
+                            </span>
+                          </td>
+
+                          {/* Acciones */}
+                          <td className="px-3 py-2 text-center whitespace-nowrap">
+                            <div className="flex items-center justify-center gap-1.5">
+                              {session.status === 'open' && (
+                                <button
+                                  onClick={() => {
+                                    setSessionClosingBalances({});
+                                    setSessionClosingDateInput(new Date().toISOString().split('T')[0]);
+                                    setSessionClosingNotesInput("");
+                                    setSessionToCloseModal(session);
+                                  }}
+                                  title="Cerrar Turno de Caja"
+                                  className="h-7 px-2.5 inline-flex items-center justify-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 shadow-2xs cursor-pointer"
+                                >
+                                  <CheckCircle className="w-3 h-3" />
+                                  <span>Cerrar</span>
+                                </button>
+                              )}
+                              <button 
+                                onClick={() => setExpandedSession(session.id)}
+                                title="Ver Detalle Completo del Turno"
+                                className="h-7 px-2.5 inline-flex items-center justify-center gap-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 rounded-lg text-[9px] font-black uppercase tracking-wider border border-indigo-200 dark:border-indigo-900/50 transition-all active:scale-95 shadow-2xs cursor-pointer"
+                              >
+                                <Eye className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                                <span>Detalle</span>
+                              </button>
+                              <button
+                                onClick={() => handlePrintShiftTicket(session.id)}
+                                title="Imprimir Comprobante Térmico"
+                                className="h-7 w-7 p-0 inline-flex items-center justify-center bg-subtle text-primary rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-all active:scale-95 border border-base cursor-pointer shadow-2xs"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setDeleteConfirmTarget({ 
+                                  type: 'session', 
+                                  id: session.id, 
+                                  label: `Turno ${sequentialTurn} - ${workerName} (${branchName})` 
+                                })}
+                                title="Eliminar Turno"
+                                className="h-7 w-7 p-0 inline-flex items-center justify-center bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 dark:text-rose-400 rounded-lg transition-all active:scale-95 border border-rose-200 dark:border-rose-800/40 cursor-pointer shadow-2xs"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+
+                    {filteredSessions.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-6 py-10 text-center text-muted">
+                          <AlertCircle className="w-7 h-7 mx-auto mb-1.5 opacity-40" />
+                          <p className="font-black uppercase text-[10px] tracking-wider">No se encontraron turnos para el filtro seleccionado.</p>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            /* VIEW 2: TODOS LOS TICKETS Y VENTAS INDIVIDUALES (LINEAL DIRECTO) */
+            <div className="bg-secondary rounded-2xl shadow-sm border border-base overflow-hidden">
+              <div className="p-3 border-b border-base flex items-center justify-between bg-subtle/50">
+                <span className="text-[9px] font-black text-primary uppercase tracking-wider flex items-center gap-1.5">
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-indigo-600" />
+                  Listado Detallado de Tickets y Facturas Individuales
+                </span>
+                <span className="text-[9px] font-bold text-muted">
+                  {filteredTransactions.length} ventas / facturas registradas
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-subtle border-b border-base text-[8px] font-black text-muted uppercase tracking-[0.15em]">
+                      <th className="px-3 py-2.5">Ticket / Vale</th>
+                      <th className="px-3 py-2.5">Tipo Venta</th>
+                      <th className="px-3 py-2.5">Fecha y Hora</th>
+                      <th className="px-3 py-2.5">Vendedor / Cajero</th>
+                      <th className="px-3 py-2.5">Sucursal / Almacén</th>
+                      <th className="px-3 py-2.5">Artículos</th>
+                      <th className="px-3 py-2.5 text-right">Total</th>
+                      <th className="px-3 py-2.5 text-center">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-base">
+                    {filteredTransactions.map((tx) => {
+                      const isIDN = tx.id.startsWith('LIQ-IDN-') || tx.notes === 'LIQUIDACION_IDN' || (tx.notes && tx.notes.includes('IDN'));
+                      const branchName = branches.find(b => b.id === tx.branchId)?.name || 'Sucursal';
+                      const worker = users.find(u => u.id === tx.userId);
+                      const workerName = tx.cashierName || worker?.name || 'Vendedor';
+                      const totalItems = (tx.items || []).reduce((s, i) => s + (i.quantity || 0), 0);
+                      const dateObj = new Date(tx.date);
+
+                      return (
+                        <tr key={tx.id} className="hover:bg-subtle transition-colors">
+                          {/* Ticket ID */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className={cn(
+                              "inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black font-mono border tracking-wider",
+                              isIDN
+                                ? "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800"
+                                : "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800"
+                            )}>
+                              {tx.id}
+                            </span>
+                          </td>
+
+                          {/* Tipo */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className={cn(
+                              "px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-wider",
+                              isIDN
+                                ? "bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-200"
+                                : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                            )}>
+                              {isIDN ? 'Liquidación IDN' : 'Venta POS'}
+                            </span>
+                          </td>
+
+                          {/* Fecha */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <div className="flex items-center gap-1 text-[11px] font-bold text-primary">
+                              <span>{dateObj.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                              <span className="text-[9px] font-mono text-muted">{dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            </div>
+                          </td>
+
+                          {/* Vendedor */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className="text-[11px] font-black text-primary uppercase">{workerName}</span>
+                          </td>
+
+                          {/* Sucursal */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className="text-[8px] font-bold text-muted uppercase bg-subtle px-1.5 py-0.5 rounded border border-base">
+                              {branchName}
+                            </span>
+                          </td>
+
+                          {/* Artículos */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className="bg-subtle text-muted px-2 py-0.5 rounded text-[9px] font-black uppercase border border-base">
+                              {totalItems} uds ({(tx.items || []).length} items)
+                            </span>
+                          </td>
+
+                          {/* Total */}
+                          <td className="px-3 py-2 text-right font-black text-primary text-xs whitespace-nowrap">
+                            {formatMoney(tx.total)}
+                          </td>
+
+                          {/* Acciones */}
+                          <td className="px-3 py-2 text-center whitespace-nowrap">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => {
+                                  if (isIDN) {
+                                    setSelectedIDNTxModal(tx);
+                                  } else {
+                                    setSelectedDirectTxModal(tx);
+                                  }
+                                }}
+                                title="Ver Detalle del Ticket de Venta"
+                                className="h-7 px-2.5 inline-flex items-center justify-center gap-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 rounded-lg text-[9px] font-black uppercase tracking-wider border border-indigo-200 dark:border-indigo-900/50 transition-all active:scale-95 shadow-2xs cursor-pointer"
+                              >
+                                <Eye className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                                <span>Detalle</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (isIDN) {
+                                    handlePrintIDNTicket(tx, false);
+                                  } else if (tx.sessionId) {
+                                    handlePrintShiftTicket(tx.sessionId);
+                                  }
+                                }}
+                                title="Imprimir Ticket Térmico"
+                                className="h-7 w-7 p-0 inline-flex items-center justify-center bg-subtle text-primary rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-all border border-base active:scale-95 cursor-pointer shadow-2xs"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setDeleteConfirmTarget({ 
+                                  type: 'transaction', 
+                                  id: tx.id, 
+                                  label: `Ticket #${tx.id} - ${workerName}` 
+                                })}
+                                title="Eliminar Venta"
+                                className="h-7 w-7 p-0 inline-flex items-center justify-center bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-all border border-rose-200 active:scale-95 cursor-pointer shadow-2xs"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+
+                    {filteredTransactions.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-6 py-10 text-center text-muted text-[10px] font-bold uppercase">
+                          No se encontraron transacciones para el filtro seleccionado.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1999,7 +2507,7 @@ export default function Reports() {
                             <button
                               onClick={() => setExpandedSession(item.sessionId)}
                               title="Ver Detalle del Turno y Liquidación"
-                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-[8px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-900/50 transition-all flex items-center gap-1 active:scale-95 shadow-2xs cursor-pointer"
+                              className="h-7 px-2.5 inline-flex items-center justify-center gap-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 text-[9px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-900/50 transition-all active:scale-95 shadow-2xs cursor-pointer"
                             >
                               <Eye className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
                               <span>Detalle</span>
@@ -2007,7 +2515,7 @@ export default function Reports() {
                             <button
                               onClick={() => handlePrintShiftTicket(item.sessionId)}
                               title="Imprimir Comprobante de Liquidación"
-                              className="p-1.5 bg-subtle text-primary rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-all border border-base active:scale-95 cursor-pointer"
+                              className="h-7 w-7 p-0 inline-flex items-center justify-center bg-subtle text-primary rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-all border border-base active:scale-95 cursor-pointer shadow-2xs"
                             >
                               <Printer className="w-3.5 h-3.5" />
                             </button>
@@ -2163,17 +2671,17 @@ export default function Reports() {
                             <button
                               onClick={() => setExpandedSession(session.id)}
                               title="Ver Detalle Completo del Turno"
-                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[8px] font-black uppercase rounded-lg border border-indigo-200 transition-all flex items-center gap-1 active:scale-95 shadow-2xs cursor-pointer"
+                              className="h-7 px-2.5 inline-flex items-center justify-center gap-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 text-[9px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-900/50 transition-all active:scale-95 shadow-2xs cursor-pointer"
                             >
-                              <Eye className="w-3 h-3 text-indigo-600" />
+                              <Eye className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
                               <span>Detalle</span>
                             </button>
                             <button
                               onClick={() => handlePrintShiftTicket(session.id)}
                               title="Imprimir Ticket de Cierre"
-                              className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-all border border-slate-200 active:scale-95 cursor-pointer"
+                              className="h-7 w-7 p-0 inline-flex items-center justify-center bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary rounded-lg transition-all border border-base active:scale-95 cursor-pointer shadow-2xs"
                             >
-                              <Printer className="w-3 h-3" />
+                              <Printer className="w-3.5 h-3.5" />
                             </button>
                           </>
                         )}
@@ -2184,9 +2692,19 @@ export default function Reports() {
                             label: `Sesión de Caja #${session.id} (${branches.find(b => b.id === session.branchId)?.name || 'Caja'})` 
                           })}
                           title="Eliminar Sesión"
-                          className="p-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-all active:scale-95 border border-rose-200"
+                          className="h-7 w-7 p-0 inline-flex items-center justify-center bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 dark:text-rose-400 rounded-lg transition-all active:scale-95 border border-rose-200 dark:border-rose-800/40 cursor-pointer shadow-2xs"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingSessionDateId(session.id);
+                            setNewSessionDate(new Date(session.openedAt).toISOString().split('T')[0]);
+                          }}
+                          title="Editar Fecha del Turno (Cascada)"
+                          className="h-7 w-7 p-0 inline-flex items-center justify-center bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:hover:bg-amber-900/60 dark:text-amber-400 rounded-lg transition-all active:scale-95 border border-amber-200 dark:border-amber-800/40 cursor-pointer shadow-2xs"
+                        >
+                          <Calendar className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </td>
@@ -2427,7 +2945,7 @@ export default function Reports() {
                                 setEditingAuditStatus(info.auditStatus || 'pending_review');
                               }}
                               title="Ver Detalle de Auditoría de Descuadre"
-                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-[8px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-900/50 transition-all flex items-center gap-1 active:scale-95 shadow-2xs cursor-pointer"
+                              className="h-7 px-2.5 inline-flex items-center justify-center gap-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 text-[9px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-900/50 transition-all active:scale-95 shadow-2xs cursor-pointer"
                             >
                               <Eye className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
                               <span>Auditoría</span>
@@ -2435,7 +2953,7 @@ export default function Reports() {
                             <button
                               onClick={() => handlePrintDiscrepancyTicket(session)}
                               title="Imprimir Comprobante de Descuadre (58mm)"
-                              className="p-1 bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary rounded-lg transition-all border border-base active:scale-95 cursor-pointer"
+                              className="h-7 w-7 p-0 inline-flex items-center justify-center bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary rounded-lg transition-all border border-base active:scale-95 cursor-pointer shadow-2xs"
                             >
                               <Printer className="w-3.5 h-3.5" />
                             </button>
@@ -2655,7 +3173,7 @@ export default function Reports() {
                             <button
                               onClick={() => setSelectedMovementDetail(m)}
                               title="Ver Detalle del Movimiento"
-                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-[8px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-900/50 transition-all flex items-center gap-1 active:scale-95 shadow-2xs cursor-pointer"
+                              className="h-7 px-2.5 inline-flex items-center justify-center gap-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 text-[9px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-900/50 transition-all active:scale-95 shadow-2xs cursor-pointer"
                             >
                               <Eye className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
                               <span>Detalle</span>
@@ -2663,7 +3181,7 @@ export default function Reports() {
                             <button
                               onClick={() => handlePrintCashMovementTicket(m)}
                               title="Imprimir Vale de Movimiento (58mm)"
-                              className="p-1 bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary rounded-lg transition-all border border-base active:scale-95 cursor-pointer shadow-2xs"
+                              className="h-7 w-7 p-0 inline-flex items-center justify-center bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary rounded-lg transition-all border border-base active:scale-95 cursor-pointer shadow-2xs"
                             >
                               <Printer className="w-3.5 h-3.5" />
                             </button>
@@ -2677,6 +3195,208 @@ export default function Reports() {
                     <tr>
                       <td colSpan={8} className="px-6 py-12 text-center text-muted text-[10px] font-bold uppercase">
                         No hay movimientos de caja registrados para el filtro seleccionado.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: TRANSFERENCIAS ENTRE SUCURSALES */}
+      {activeTab === 'transfers' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Top KPI Cards for Transfers */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/50 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
+                <ArrowLeftRight className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Total Transferencias</p>
+                <p className="text-base font-black text-primary mt-0.5">{transferStats.totalCount}</p>
+                <p className="text-[7px] font-bold text-muted uppercase">Envíos registrados</p>
+              </div>
+            </div>
+
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                <Package className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Unidades Movidas</p>
+                <p className="text-base font-black text-indigo-600 dark:text-indigo-400 mt-0.5">{transferStats.totalUnits} u.</p>
+                <p className="text-[7px] font-bold text-muted uppercase">Artículos transferidos</p>
+              </div>
+            </div>
+
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/50 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+                <ArrowUpRight className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Mayor Almacén Origen</p>
+                <p className="text-xs font-black text-primary mt-0.5 truncate">{transferStats.topOrigin[0]}</p>
+                <p className="text-[7px] font-bold text-amber-600 uppercase">{transferStats.topOrigin[1]} uds despachadas</p>
+              </div>
+            </div>
+
+            <div className="bg-secondary p-3.5 rounded-2xl shadow-xs border border-base flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
+                <ArrowDownRight className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-black text-muted uppercase tracking-widest truncate">Mayor Sucursal Destino</p>
+                <p className="text-xs font-black text-primary mt-0.5 truncate">{transferStats.topDest[0]}</p>
+                <p className="text-[7px] font-bold text-emerald-600 uppercase">{transferStats.topDest[1]} uds recibidas</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Subfilters bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-secondary rounded-2xl border border-base">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Origin Branch Filter */}
+              <div className="flex items-center gap-1">
+                <span className="text-[8px] font-black uppercase text-muted tracking-wider">Desde:</span>
+                <select
+                  value={transferFromFilter}
+                  onChange={(e) => setTransferFromFilter(e.target.value)}
+                  className="px-2 py-1 bg-subtle border border-base rounded-lg text-[8px] font-black uppercase text-primary outline-none cursor-pointer"
+                >
+                  <option value="all">Todos los Orígenes</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Destination Branch Filter */}
+              <div className="flex items-center gap-1">
+                <span className="text-[8px] font-black uppercase text-muted tracking-wider">Hacia:</span>
+                <select
+                  value={transferToFilter}
+                  onChange={(e) => setTransferToFilter(e.target.value)}
+                  className="px-2 py-1 bg-subtle border border-base rounded-lg text-[8px] font-black uppercase text-primary outline-none cursor-pointer"
+                >
+                  <option value="all">Todos los Destinos</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Text Search */}
+              <div className="relative min-w-[160px]">
+                <input
+                  type="text"
+                  placeholder="Buscar producto..."
+                  value={transferSearch}
+                  onChange={(e) => setTransferSearch(e.target.value)}
+                  className="w-full pl-2.5 pr-2 py-1 bg-subtle border border-base rounded-lg text-[8px] font-bold text-primary placeholder:text-muted outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+
+            <div className="text-[9px] font-bold text-muted">
+              Mostrando {filteredTransfers.length} transferencias
+            </div>
+          </div>
+
+          {/* Transfers Table */}
+          <div className="bg-secondary rounded-2xl shadow-xs border border-base overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-subtle border-b border-base text-[8px] font-black text-muted uppercase tracking-[0.15em]">
+                    <th className="px-3 py-2.5">Fecha y Hora</th>
+                    <th className="px-3 py-2.5">Producto & Variante</th>
+                    <th className="px-3 py-2.5">Almacén Origen</th>
+                    <th className="px-3 py-2.5 text-center"></th>
+                    <th className="px-3 py-2.5">Sucursal Destino</th>
+                    <th className="px-3 py-2.5 text-center">Cantidad</th>
+                    <th className="px-3 py-2.5">Responsable</th>
+                    <th className="px-3 py-2.5 text-center">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-base text-sm">
+                  {filteredTransfers.map((t) => {
+                    const dateObj = new Date(t.date);
+                    const fromBranch = branches.find(b => b.id === t.fromBranchId);
+                    const toBranch = branches.find(b => b.id === t.toBranchId);
+                    const worker = users.find(u => u.id === t.userId);
+                    const workerName = worker?.name || 'Sistema';
+
+                    return (
+                      <tr key={t.id} className="hover:bg-subtle/50 transition-colors">
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <div className="text-[10px] font-bold text-primary">
+                            {dateObj.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                          </div>
+                          <div className="text-[8px] font-mono text-muted">
+                            {dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2.5">
+                          <span className="text-[11px] font-black text-primary uppercase block">
+                            {t.productName}
+                          </span>
+                          {t.variantLabel && (
+                            <span className="text-[8px] font-bold text-muted uppercase">
+                              Variante: {t.variantLabel}
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <span className="text-[9px] font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-900/40 uppercase">
+                            {fromBranch?.name || t.fromBranchName || 'Origen'}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          <ArrowRight className="w-3.5 h-3.5 text-muted inline-block" />
+                        </td>
+
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-900/40 uppercase">
+                            {toBranch?.name || t.toBranchName || 'Destino'}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/50">
+                            {t.quantity} uds
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <span className="text-[10px] font-bold text-muted uppercase">
+                            {workerName}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          <button
+                            onClick={() => setSelectedTransferModal(t)}
+                            title="Ver Detalle de Transferencia"
+                            className="h-7 px-2.5 inline-flex items-center justify-center gap-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 text-[9px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-900/50 transition-all mx-auto active:scale-95 shadow-2xs cursor-pointer"
+                          >
+                            <Eye className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                            <span>Detalle</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {filteredTransfers.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-6 py-12 text-center text-muted text-[10px] font-bold uppercase">
+                        No hay transferencias de inventario registradas para el filtro seleccionado.
                       </td>
                     </tr>
                   )}
@@ -2744,10 +3464,11 @@ export default function Reports() {
                                   transactions: relatedTxs
                                 });
                               }}
-                              className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg transition-all active:scale-95 border border-indigo-100"
+                              className="h-7 px-2.5 inline-flex items-center justify-center gap-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[9px] font-black uppercase rounded-lg border border-indigo-200 transition-all active:scale-95 shadow-2xs cursor-pointer"
                               title="Ver Detalles de Ventas"
                             >
-                              <Eye className="w-3.5 h-3.5" />
+                              <Eye className="w-3 h-3 text-indigo-600" />
+                              <span>Detalle</span>
                             </button>
                           </td>
                         </tr>
@@ -2874,10 +3595,11 @@ export default function Reports() {
                       <td className="px-3 py-2 text-center whitespace-nowrap">
                         <button
                           onClick={() => setSelectedIDNWorkerModal({ userId: st.userId, workerName: st.workerName, branchName: st.branchName })}
-                          className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 text-[9px] font-black uppercase rounded-lg border border-amber-200 transition-all flex items-center gap-1 mx-auto active:scale-95 cursor-pointer shadow-2xs"
+                          title="Ver Resumen de Ventas del Vendedor"
+                          className="h-7 px-2.5 inline-flex items-center justify-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-800 text-[9px] font-black uppercase rounded-lg border border-amber-200 transition-all mx-auto active:scale-95 cursor-pointer shadow-2xs"
                         >
                           <Eye className="w-3 h-3 text-amber-600" />
-                          <span>Ver más</span>
+                          <span>Detalle</span>
                         </button>
                       </td>
                     </tr>
@@ -2957,22 +3679,23 @@ export default function Reports() {
                           <div className="flex items-center justify-center gap-1.5">
                             <button
                               onClick={() => setSelectedIDNTxModal(tx)}
-                              className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[9px] font-black uppercase rounded-lg border border-indigo-200 transition-all flex items-center gap-1 active:scale-95 cursor-pointer shadow-2xs"
+                              title="Ver Detalle del Vale de Liquidación"
+                              className="h-7 px-2.5 inline-flex items-center justify-center gap-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[9px] font-black uppercase rounded-lg border border-indigo-200 transition-all active:scale-95 cursor-pointer shadow-2xs"
                             >
                               <Eye className="w-3 h-3 text-indigo-600" />
-                              <span>Ver más</span>
+                              <span>Detalle</span>
                             </button>
                             <button
                               onClick={() => handlePrintIDNTicket(tx, false)}
                               title="Imprimir Ticket Térmico 58mm"
-                              className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-all border border-slate-200 active:scale-95 cursor-pointer"
+                              className="h-7 w-7 p-0 inline-flex items-center justify-center bg-subtle hover:bg-slate-200 text-slate-700 rounded-lg transition-all border border-base active:scale-95 cursor-pointer shadow-2xs"
                             >
                               <Printer className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => handlePrintIDNTicket(tx, true)}
                               title="Imprimir con App RawBT"
-                              className="p-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg transition-all border border-emerald-200 active:scale-95 cursor-pointer"
+                              className="h-7 w-7 p-0 inline-flex items-center justify-center bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg transition-all border border-emerald-200 active:scale-95 cursor-pointer shadow-2xs"
                             >
                               <Smartphone className="w-3.5 h-3.5" />
                             </button>
@@ -2983,7 +3706,7 @@ export default function Reports() {
                                 label: `Vale IDN #${tx.id} - ${workerName}` 
                               })}
                               title="Eliminar Vale"
-                              className="p-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-all border border-rose-200 active:scale-95 cursor-pointer"
+                              className="h-7 w-7 p-0 inline-flex items-center justify-center bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-all border border-rose-200 active:scale-95 cursor-pointer shadow-2xs"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -3139,6 +3862,275 @@ export default function Reports() {
                 <button
                   onClick={() => setSelectedIDNTxModal(null)}
                   className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Detalle de Venta / Ticket Directo */}
+      {selectedDirectTxModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 border border-base my-auto text-primary">
+            <div className="bg-indigo-600 p-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/10 rounded-2xl backdrop-blur-md">
+                  <TrendingUp className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-indigo-200 block">
+                    Comprobante de Venta POS
+                  </span>
+                  <h3 className="text-base font-black text-white uppercase tracking-tight">
+                    Ticket #{selectedDirectTxModal.id}
+                  </h3>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedDirectTxModal(null)}
+                className="p-2 hover:bg-white/10 rounded-xl transition-all text-white/80 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-2 gap-3 text-left">
+                <div className="bg-subtle p-3 rounded-xl border border-base">
+                  <span className="text-[8px] font-black text-muted uppercase tracking-wider block mb-0.5">
+                    Cajero / Vendedor
+                  </span>
+                  <p className="text-xs font-black text-primary uppercase">
+                    {selectedDirectTxModal.cashierName || users.find(u => u.id === selectedDirectTxModal.userId)?.name || 'Vendedor'}
+                  </p>
+                </div>
+                <div className="bg-subtle p-3 rounded-xl border border-base">
+                  <span className="text-[8px] font-black text-muted uppercase tracking-wider block mb-0.5">
+                    Sucursal / Fecha
+                  </span>
+                  <p className="text-xs font-black text-primary uppercase">
+                    {branches.find(b => b.id === selectedDirectTxModal.branchId)?.name || 'Sucursal'}
+                  </p>
+                  <p className="text-[9px] font-bold text-muted">
+                    {new Date(selectedDirectTxModal.date).toLocaleString('es-CU')}
+                  </p>
+                </div>
+              </div>
+
+              {/* Items List */}
+              <div className="border border-base rounded-2xl overflow-hidden">
+                <div className="bg-subtle px-3.5 py-2 border-b border-base flex items-center justify-between">
+                  <span className="text-[9px] font-black text-muted uppercase tracking-wider">
+                    Productos del Ticket
+                  </span>
+                  <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 px-2 py-0.5 rounded-md border border-indigo-100 dark:border-indigo-900">
+                    {(selectedDirectTxModal.items || []).reduce((sum, i) => sum + i.quantity, 0)} unidades
+                  </span>
+                </div>
+
+                <div className="divide-y divide-base max-h-56 overflow-y-auto">
+                  {(selectedDirectTxModal.items || []).map((item, idx) => {
+                    const prodObj = typeof item.product === 'object' ? item.product : products.find(p => p.id === (item.product as unknown as string));
+                    const name = prodObj?.name || getProductName(item.product);
+                    const price = item.price ?? prodObj?.price ?? 0;
+                    const totalItem = (item.quantity || 0) * price;
+
+                    return (
+                      <div key={idx} className="p-3 flex items-center justify-between hover:bg-subtle/50 transition-colors">
+                        <div>
+                          <p className="text-xs font-black text-primary uppercase">
+                            {name}
+                          </p>
+                          {item.variantLabel && (
+                            <p className="text-[9px] font-bold text-muted uppercase">
+                              Variante: {item.variantLabel}
+                            </p>
+                          )}
+                          <p className="text-[9px] font-medium text-muted">
+                            {item.quantity} x {formatMoney(price)}
+                          </p>
+                        </div>
+                        <span className="text-xs font-black text-primary">
+                          {formatMoney(totalItem)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Payment details */}
+              <div className="bg-subtle p-3 rounded-xl border border-base space-y-1">
+                <span className="text-[8px] font-black text-muted uppercase tracking-wider block mb-1">
+                  Desglose de Pago
+                </span>
+                {(selectedDirectTxModal.payments || []).map((pay, pIdx) => (
+                  <div key={pIdx} className="flex justify-between text-[9px] font-bold">
+                    <span className="text-muted uppercase">{pay.method === 'cash' ? 'Efectivo' : 'Transferencia'} ({pay.currencyCode}):</span>
+                    <span className="text-primary font-mono">{formatMoney(pay.amount, pay.currencyCode)}</span>
+                  </div>
+                ))}
+                {(!selectedDirectTxModal.payments || selectedDirectTxModal.payments.length === 0) && (
+                  <div className="flex justify-between text-[9px] font-bold">
+                    <span className="text-muted">Total Venta:</span>
+                    <span className="text-primary font-mono">{formatMoney(selectedDirectTxModal.total)}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Total Banner */}
+              <div className="p-4 bg-indigo-50/50 dark:bg-indigo-950/30 rounded-2xl border border-indigo-100 dark:border-indigo-900/40 flex items-center justify-between">
+                <div>
+                  <span className="text-[8px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400 block">
+                    Total Facturado
+                  </span>
+                  <span className="text-xs font-bold text-muted">
+                    {(selectedDirectTxModal.items || []).length} productos diferentes
+                  </span>
+                </div>
+                <span className="text-lg font-black text-indigo-700 dark:text-indigo-300">
+                  {formatMoney(selectedDirectTxModal.total)}
+                </span>
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  onClick={() => {
+                    if (selectedDirectTxModal.sessionId) {
+                      handlePrintShiftTicket(selectedDirectTxModal.sessionId);
+                    }
+                  }}
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                >
+                  <Printer className="w-4 h-4" />
+                  Imprimir
+                </button>
+                <button
+                  onClick={() => {
+                    const idToDelete = selectedDirectTxModal.id;
+                    setSelectedDirectTxModal(null);
+                    setDeleteConfirmTarget({
+                      type: 'transaction',
+                      id: idToDelete,
+                      label: `Ticket #${idToDelete}`
+                    });
+                  }}
+                  className="px-3 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border border-rose-200"
+                  title="Eliminar este Ticket"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setSelectedDirectTxModal(null)}
+                  className="px-4 py-2.5 bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border border-base"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Detalle de Transferencia entre Sucursales */}
+      {selectedTransferModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 border border-base my-auto text-primary">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/10 rounded-2xl backdrop-blur-md">
+                  <ArrowLeftRight className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-blue-200 block">
+                    Transferencia de Inventario
+                  </span>
+                  <h3 className="text-base font-black text-white uppercase tracking-tight">
+                    {selectedTransferModal.productName}
+                  </h3>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedTransferModal(null)}
+                className="p-2 hover:bg-white/10 rounded-xl transition-all text-white/80 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto custom-scrollbar">
+              {/* Origin to Dest visual block */}
+              <div className="p-4 bg-subtle rounded-2xl border border-base flex items-center justify-between gap-3">
+                <div className="flex-1 text-center">
+                  <span className="text-[8px] font-black text-amber-600 uppercase tracking-wider block">Almacén Origen</span>
+                  <p className="text-xs font-black text-primary uppercase mt-0.5">
+                    {branches.find(b => b.id === selectedTransferModal.fromBranchId)?.name || selectedTransferModal.fromBranchName || 'Origen'}
+                  </p>
+                </div>
+
+                <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                  <ArrowRight className="w-4 h-4" />
+                </div>
+
+                <div className="flex-1 text-center">
+                  <span className="text-[8px] font-black text-emerald-600 uppercase tracking-wider block">Sucursal Destino</span>
+                  <p className="text-xs font-black text-primary uppercase mt-0.5">
+                    {branches.find(b => b.id === selectedTransferModal.toBranchId)?.name || selectedTransferModal.toBranchName || 'Destino'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Meta information */}
+              <div className="grid grid-cols-2 gap-3 text-left">
+                <div className="bg-subtle p-3 rounded-xl border border-base">
+                  <span className="text-[8px] font-black text-muted uppercase tracking-wider block mb-0.5">
+                    Cantidad Transferida
+                  </span>
+                  <p className="text-sm font-black text-indigo-600 dark:text-indigo-400">
+                    {selectedTransferModal.quantity} unidades
+                  </p>
+                </div>
+                <div className="bg-subtle p-3 rounded-xl border border-base">
+                  <span className="text-[8px] font-black text-muted uppercase tracking-wider block mb-0.5">
+                    Fecha y Hora
+                  </span>
+                  <p className="text-[10px] font-bold text-primary">
+                    {new Date(selectedTransferModal.date).toLocaleString('es-CU')}
+                  </p>
+                </div>
+              </div>
+
+              {/* Variants breakdown if any */}
+              {selectedTransferModal.variants && selectedTransferModal.variants.length > 0 && (
+                <div className="border border-base rounded-2xl overflow-hidden">
+                  <div className="bg-subtle px-3.5 py-2 border-b border-base flex items-center justify-between">
+                    <span className="text-[9px] font-black text-muted uppercase tracking-wider">
+                      Desglose de Variantes
+                    </span>
+                    <span className="text-[9px] font-bold text-muted">
+                      {selectedTransferModal.variants.length} variantes
+                    </span>
+                  </div>
+                  <div className="divide-y divide-base">
+                    {selectedTransferModal.variants.map((v, vIdx) => (
+                      <div key={vIdx} className="p-2.5 flex items-center justify-between text-xs">
+                        <span className="font-bold text-primary">{v.variantLabel || 'Variante'}</span>
+                        <span className="font-black text-indigo-600 dark:text-indigo-400">{v.quantity} uds</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Footer buttons */}
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={() => setSelectedTransferModal(null)}
+                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-md"
                 >
                   Cerrar
                 </button>
@@ -3435,8 +4427,28 @@ export default function Reports() {
                     </div>
 
                     <div>
-                      <div className="text-[9px] font-black text-muted uppercase tracking-widest mb-2">
-                        Productos Vendidos ({Object.keys(groupedItems).length})
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-[9px] font-black text-muted uppercase tracking-widest">
+                          Productos Vendidos ({Object.keys(groupedItems).length})
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setManualItemProductId("");
+                            setManualItemProductSearch("");
+                            setManualItemQuantity(1);
+                            setManualItemPrice(0);
+                            setManualItemWorkerId(session.userId || "");
+                            setManualItemPaymentMethod('cash');
+                            setManualItemCurrencyCode('CUP');
+                            setAddItemToShiftModal(session);
+                          }}
+                          className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all border border-indigo-200 dark:border-indigo-900/50 flex items-center gap-1 active:scale-95 cursor-pointer shadow-2xs"
+                          title="Permite registrar productos vendidos en este turno sin alterar el stock físico de inventario"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>+ Añadir Producto al Informe (Sin afectar stock)</span>
+                        </button>
                       </div>
                       <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
                         {Object.values(groupedItems).map((item, idx) => (
@@ -3490,6 +4502,21 @@ export default function Reports() {
                       <span className="text-base font-black text-indigo-600 dark:text-indigo-400">{formatMoney(totalSalesInSession)}</span>
                     </div>
                     <div className="flex items-center gap-2">
+                      {session.status === 'open' && (
+                        <button
+                          onClick={() => {
+                            setExpandedSession(null);
+                            setSessionClosingBalances({});
+                            setSessionClosingDateInput(new Date().toISOString().split('T')[0]);
+                            setSessionClosingNotesInput("");
+                            setSessionToCloseModal(session);
+                          }}
+                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-sm cursor-pointer active:scale-95"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          <span>Cerrar Turno Ahora</span>
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           const idToDelete = session.id;
@@ -3504,6 +4531,17 @@ export default function Reports() {
                         title="Eliminar este Turno"
                       >
                         <Trash2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingSessionDateId(session.id);
+                          setNewSessionDate(new Date(session.openedAt).toISOString().split('T')[0]);
+                        }}
+                        className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 rounded-xl transition-all border border-amber-200 dark:border-amber-900/60 active:scale-95 cursor-pointer flex items-center gap-1 text-[9px] font-black uppercase tracking-wider"
+                        title="Editar Fecha del Turno"
+                      >
+                        <Calendar className="w-4 h-4" />
+                        <span>Editar Fecha</span>
                       </button>
                       <button
                         onClick={() => handlePrintShiftTicket(session.id)}
@@ -3999,11 +5037,8 @@ export default function Reports() {
         <div id="print-closure-area" className="hidden">
           {(() => {
             const sessionTx = transactions.filter(t => 
-              t.sessionId 
-                ? t.sessionId === printSession.id
-                : (t.branchId === printSession.branchId && 
-                   new Date(t.date).getTime() >= new Date(printSession.openedAt).getTime() && 
-                   (!printSession.closedAt || new Date(t.date).getTime() <= new Date(printSession.closedAt).getTime()))
+              t.branchId === printSession.branchId && 
+              t.sessionId === printSession.id
             );
             const totalSales = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
             const totalItems = sessionTx.reduce((sum, tx) => sum + (tx.items || []).reduce((s, i) => s + (i.quantity || 0), 0), 0);
@@ -4474,6 +5509,539 @@ export default function Reports() {
                 className="py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-colors shadow-sm"
               >
                 Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingSessionDateId && (
+        <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs z-[100] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 shadow-2xl border border-base max-w-md w-full animate-in zoom-in-95">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-indigo-50 dark:bg-indigo-950 flex items-center justify-center rounded-xl">
+                <Calendar className="w-5 h-5 text-indigo-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight leading-none mb-1">
+                  Editar Fecha del Turno
+                </h3>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                  Turno ID: {editingSessionDateId.slice(0, 8)}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 p-3.5 rounded-2xl mb-4 text-left">
+              <h4 className="text-[10px] font-black text-amber-800 dark:text-amber-400 uppercase mb-1">
+                ¡Atención - Actualización en Cascada!
+              </h4>
+              <p className="text-[9px] font-bold text-amber-950 dark:text-amber-200 leading-normal uppercase">
+                Al cambiar la fecha de este turno, el sistema actualizará automáticamente la fecha de todas las ventas, movimientos de efectivo, transferencias bancarias y liquidaciones salariales asociadas a este turno para garantizar que los reportes sigan cuadrando a la perfección.
+              </p>
+            </div>
+
+            <div className="space-y-3.5">
+              <div className="text-left">
+                <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                  Seleccionar Nueva Fecha del Turno
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={newSessionDate}
+                  onChange={e => setNewSessionDate(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 dark:bg-slate-800 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-base">
+                <button
+                  type="button"
+                  onClick={() => setEditingSessionDateId(null)}
+                  disabled={isUpdatingSessionDate}
+                  className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-[10px] uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={isUpdatingSessionDate || !newSessionDate}
+                  onClick={async () => {
+                    setIsUpdatingSessionDate(true);
+                    try {
+                      const success = await store.updateCashSessionDateCascade(editingSessionDateId, newSessionDate);
+                      if (success) {
+                        store.addNotification("Fecha del turno y registros en cascada actualizados correctamente", "success");
+                        setEditingSessionDateId(null);
+                      } else {
+                        store.addNotification("No se pudo actualizar la fecha de la sesión", "error");
+                      }
+                    } catch (err) {
+                      store.addNotification("Ocurrió un error inesperado al actualizar", "error");
+                    } finally {
+                      setIsUpdatingSessionDate(false);
+                    }
+                  }}
+                  className="py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-[10px] uppercase tracking-wider transition-all shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isUpdatingSessionDate ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Actualizando...</span>
+                    </>
+                  ) : (
+                    <span>Guardar Cambios</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Cerrar Turno de Caja desde Reportes */}
+      {sessionToCloseModal && (
+        <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs z-[100] flex items-center justify-center p-3 sm:p-4 overflow-hidden animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 shadow-2xl border border-base max-w-lg w-full max-h-[94vh] flex flex-col overflow-hidden animate-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-base pb-3 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-emerald-50 dark:bg-emerald-950/50 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">
+                    Cerrar Turno desde Reportes
+                  </h3>
+                  <p className="text-[10px] font-bold text-muted uppercase">
+                    {sessionTurnMap.get(sessionToCloseModal.id) || sessionToCloseModal.id} • {sessionToCloseModal.workerName || 'Vendedor'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSessionToCloseModal(null)}
+                className="p-1 hover:bg-subtle rounded-full text-muted hover:text-primary transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar text-primary">
+              <div className="bg-slate-50 dark:bg-slate-800/50 p-3.5 rounded-2xl border border-base space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted font-bold">Sucursal:</span>
+                  <span className="font-black text-primary">{branches.find(b => b.id === sessionToCloseModal.branchId)?.name || 'Central'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted font-bold">Apertura:</span>
+                  <span className="font-mono text-primary">{new Date(sessionToCloseModal.openedAt).toLocaleString('es-CU')}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted font-bold">Fondo Inicial:</span>
+                  <span className="font-black text-primary">{formatMoney(sessionToCloseModal.openingBalance)}</span>
+                </div>
+                {(() => {
+                  const sessionTxs = transactions.filter(t => 
+                    t.sessionId === sessionToCloseModal.id || (
+                      t.branchId === sessionToCloseModal.branchId &&
+                      new Date(t.date).getTime() >= new Date(sessionToCloseModal.openedAt).getTime()
+                    )
+                  );
+                  const totalSales = sessionTxs.reduce((sum, tx) => sum + (tx.total || 0), 0);
+                  return (
+                    <div className="flex justify-between border-t border-base/60 pt-2 font-black text-indigo-600 dark:text-indigo-400">
+                      <span>Ventas Acumuladas:</span>
+                      <span>{formatMoney(totalSales)}</span>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Fecha de cierre */}
+              <div>
+                <label className="block text-[9px] font-black uppercase text-muted tracking-wider mb-1.5">
+                  Fecha Oficial de Cierre del Turno:
+                </label>
+                <input
+                  type="date"
+                  value={sessionClosingDateInput}
+                  onChange={(e) => setSessionClosingDateInput(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-subtle border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-2 focus:ring-emerald-500/20"
+                />
+              </div>
+
+              {/* Arqueo / Saldos Declarados */}
+              <div>
+                <label className="block text-[9px] font-black uppercase text-muted tracking-wider mb-2">
+                  Arqueo de Efectivo en Caja (Declarado al Cierre):
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {currencies.map(c => {
+                    const key = `${c.code}-cash`;
+                    return (
+                      <div key={c.code} className="p-2.5 bg-subtle rounded-xl border border-base flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-black uppercase text-primary shrink-0">
+                          {c.code} (Efectivo)
+                        </span>
+                        <input
+                          type="number"
+                          step={c.code === 'CUP' ? '1' : '0.01'}
+                          placeholder="0"
+                          value={sessionClosingBalances[key] ?? ''}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setSessionClosingBalances(prev => ({
+                              ...prev,
+                              [key]: isNaN(val) ? 0 : val
+                            }));
+                          }}
+                          className="w-24 px-2 py-1 bg-secondary border border-base rounded-lg text-right text-xs font-black font-mono text-primary outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Notas opcionales */}
+              <div>
+                <label className="block text-[9px] font-black uppercase text-muted tracking-wider mb-1.5">
+                  Notas de Cierre / Observaciones (Opcional):
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Cierre regular verificado por administrador"
+                  value={sessionClosingNotesInput}
+                  onChange={(e) => setSessionClosingNotesInput(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-subtle border border-base rounded-xl text-xs text-primary outline-none focus:ring-2 focus:ring-emerald-500/20"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2.5 pt-4 border-t border-base mt-2">
+              <button
+                type="button"
+                onClick={() => setSessionToCloseModal(null)}
+                disabled={isClosingShiftFromReports}
+                className="flex-1 py-3 bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary font-black rounded-xl text-[10px] uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isClosingShiftFromReports}
+                onClick={async () => {
+                  setIsClosingShiftFromReports(true);
+                  try {
+                    const balancesArray: import('../types').Payment[] = Object.entries(sessionClosingBalances)
+                      .filter(([_, amt]) => (amt as number) > 0)
+                      .map(([k, amt]) => {
+                        const [currCode, method] = k.split('-');
+                        const curr = currencies.find(c => c.code === currCode);
+                        return {
+                          currencyCode: currCode as any,
+                          amount: amt as number,
+                          exchangeRate: curr?.rateToBase || 1,
+                          method: (method || 'cash') as any
+                        };
+                      });
+
+                    let finalClosingDate = new Date().toISOString();
+                    if (sessionClosingDateInput) {
+                      const parts = sessionClosingDateInput.split('-');
+                      if (parts.length === 3) {
+                        const d = new Date();
+                        d.setFullYear(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                        finalClosingDate = d.toISOString();
+                      }
+                    }
+
+                    const res = await store.forceCloseSessionFromReports(
+                      sessionToCloseModal.id,
+                      balancesArray,
+                      finalClosingDate,
+                      sessionClosingNotesInput
+                    );
+
+                    if (res.success) {
+                      store.addNotification(`Turno ${sessionTurnMap.get(sessionToCloseModal.id) || sessionToCloseModal.id} cerrado correctamente.`, 'success');
+                      setSessionToCloseModal(null);
+                    } else {
+                      store.addNotification('No se pudo cerrar el turno.', 'error');
+                    }
+                  } catch (err: any) {
+                    store.addNotification(err.message || 'Error al cerrar turno', 'error');
+                  } finally {
+                    setIsClosingShiftFromReports(false);
+                  }
+                }}
+                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-[10px] uppercase tracking-wider transition-all shadow-md shadow-emerald-600/20 active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isClosingShiftFromReports ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Cerrando Turno...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    <span>Confirmar y Cerrar Turno</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Añadir Producto Vendido al Informe (Sin afectar stock físico) */}
+      {addItemToShiftModal && (
+        <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs z-[100] flex items-center justify-center p-3 sm:p-4 overflow-hidden animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 shadow-2xl border border-base max-w-lg w-full max-h-[94vh] flex flex-col overflow-hidden animate-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-base pb-3 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-indigo-50 dark:bg-indigo-950/50 rounded-2xl flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                  <Plus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">
+                    Añadir Producto al Informe
+                  </h3>
+                  <p className="text-[10px] font-bold text-muted uppercase">
+                    {sessionTurnMap.get(addItemToShiftModal.id) || addItemToShiftModal.id} • {branches.find(b => b.id === addItemToShiftModal.branchId)?.name || 'Sucursal'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAddItemToShiftModal(null)}
+                className="p-1 hover:bg-subtle rounded-full text-muted hover:text-primary transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 p-3 rounded-2xl mb-3 text-left">
+              <p className="text-[9px] font-bold text-amber-950 dark:text-amber-200 uppercase leading-relaxed">
+                ℹ️ Este ajuste agrega el producto vendido directamente al informe de este turno y recalcula la venta y liquidación, <strong>sin descontar nuevamente la mercancía física del almacén</strong>.
+              </p>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3.5 pr-1 custom-scrollbar text-primary">
+              {/* Buscador y Selector de Producto */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[9px] font-black uppercase text-muted tracking-wider">
+                    Buscar y Seleccionar Producto:
+                  </label>
+                  {manualItemProductSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setManualItemProductSearch("")}
+                      className="text-[8px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                    >
+                      Limpiar filtro
+                    </button>
+                  )}
+                </div>
+
+                {/* Search Input Field */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-muted absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={manualItemProductSearch}
+                    onChange={(e) => setManualItemProductSearch(e.target.value)}
+                    placeholder="Filtrar por nombre o SKU..."
+                    className="w-full pl-9 pr-3.5 py-2 bg-subtle border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-muted/60"
+                  />
+                </div>
+
+                {/* Dropdown with filtered results */}
+                {(() => {
+                  const query = (manualItemProductSearch || "").toLowerCase().trim();
+                  const filteredCatalog = products.filter(p => 
+                    !query || 
+                    (p.name && p.name.toLowerCase().includes(query)) ||
+                    (p.sku && p.sku.toLowerCase().includes(query))
+                  );
+
+                  return (
+                    <div>
+                      <select
+                        value={manualItemProductId}
+                        onChange={(e) => {
+                          const pId = e.target.value;
+                          setManualItemProductId(pId);
+                          const prod = products.find(p => p.id === pId);
+                          if (prod) {
+                            setManualItemPrice(prod.price || 0);
+                          }
+                        }}
+                        className="w-full px-3.5 py-2.5 bg-subtle border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                      >
+                        <option value="">-- Selecciona un producto ({filteredCatalog.length} disponibles) --</option>
+                        {filteredCatalog.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} {p.sku ? `(${p.sku})` : ''} — ${p.price?.toLocaleString()} CUP
+                          </option>
+                        ))}
+                      </select>
+                      {filteredCatalog.length === 0 && (
+                        <p className="text-[9px] text-amber-600 dark:text-amber-400 font-bold mt-1">
+                          No se encontraron productos que coincidan con &quot;{manualItemProductSearch}&quot;.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Cantidad y Precio de Venta */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[9px] font-black uppercase text-muted tracking-wider mb-1.5">
+                    Cantidad Vendida:
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={manualItemQuantity}
+                    onChange={(e) => setManualItemQuantity(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    className="w-full px-3.5 py-2 bg-subtle border border-base rounded-xl text-xs font-black font-mono text-primary outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-black uppercase text-muted tracking-wider mb-1.5">
+                    Precio Unitario (CUP):
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={manualItemPrice}
+                    onChange={(e) => setManualItemPrice(Math.max(0, parseFloat(e.target.value) || 0))}
+                    className="w-full px-3.5 py-2 bg-subtle border border-base rounded-xl text-xs font-black font-mono text-primary outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+              </div>
+
+              {/* Vendedor / Trabajador responsable */}
+              <div>
+                <label className="block text-[9px] font-black uppercase text-muted tracking-wider mb-1.5">
+                  Vendedor Responsable:
+                </label>
+                <select
+                  value={manualItemWorkerId || addItemToShiftModal.userId}
+                  onChange={(e) => setManualItemWorkerId(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-subtle border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-2 focus:ring-indigo-500/20"
+                >
+                  {users.map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.name} ({u.role === 'admin' ? 'Administrador' : 'Empleado'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Método de Pago y Moneda */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[9px] font-black uppercase text-muted tracking-wider mb-1.5">
+                    Método de Pago:
+                  </label>
+                  <select
+                    value={manualItemPaymentMethod}
+                    onChange={(e) => setManualItemPaymentMethod(e.target.value as any)}
+                    className="w-full px-3.5 py-2 bg-subtle border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    <option value="cash">Efectivo</option>
+                    <option value="transfer">Transferencia Bancaria</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[9px] font-black uppercase text-muted tracking-wider mb-1.5">
+                    Moneda Cobrada:
+                  </label>
+                  <select
+                    value={manualItemCurrencyCode}
+                    onChange={(e) => setManualItemCurrencyCode(e.target.value)}
+                    className="w-full px-3.5 py-2 bg-subtle border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    {currencies.map(c => (
+                      <option key={c.code} value={c.code}>{c.code} ({c.name})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Subtotal Total Calculado */}
+              <div className="bg-indigo-50/50 dark:bg-indigo-950/30 p-3 rounded-xl border border-indigo-200/60 dark:border-indigo-900/60 flex justify-between items-center">
+                <span className="text-[10px] font-black text-indigo-900 dark:text-indigo-300 uppercase">Monto Total a Sumar al Turno:</span>
+                <span className="text-base font-black text-indigo-700 dark:text-indigo-400 font-mono">
+                  {formatMoney(manualItemQuantity * manualItemPrice, manualItemCurrencyCode)}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex gap-2.5 pt-4 border-t border-base mt-2">
+              <button
+                type="button"
+                onClick={() => setAddItemToShiftModal(null)}
+                disabled={isAddingManualItem}
+                className="flex-1 py-3 bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary font-black rounded-xl text-[10px] uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isAddingManualItem || !manualItemProductId || manualItemQuantity <= 0}
+                onClick={async () => {
+                  const prod = products.find(p => p.id === manualItemProductId);
+                  if (!prod) {
+                    store.addNotification('Selecciona un producto válido', 'warning');
+                    return;
+                  }
+                  setIsAddingManualItem(true);
+                  try {
+                    const worker = users.find(u => u.id === manualItemWorkerId) || users.find(u => u.id === addItemToShiftModal.userId);
+                    const res = await store.addInformationalSoldProductToSession(addItemToShiftModal.id, {
+                      productId: prod.id,
+                      productName: prod.name,
+                      quantity: manualItemQuantity,
+                      price: manualItemPrice,
+                      userId: worker?.id || addItemToShiftModal.userId,
+                      workerName: worker?.name || addItemToShiftModal.workerName,
+                      paymentMethod: manualItemPaymentMethod,
+                      currencyCode: manualItemCurrencyCode
+                    });
+
+                    if (res.success) {
+                      store.addNotification(`Producto ${prod.name} (${manualItemQuantity} uds) añadido al informe del turno.`, 'success');
+                      setAddItemToShiftModal(null);
+                    } else {
+                      store.addNotification('No se pudo añadir el producto al informe.', 'error');
+                    }
+                  } catch (err: any) {
+                    store.addNotification(err.message || 'Error al añadir producto', 'error');
+                  } finally {
+                    setIsAddingManualItem(false);
+                  }
+                }}
+                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-[10px] uppercase tracking-wider transition-all shadow-md shadow-indigo-600/20 active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isAddingManualItem ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Añadiendo...</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4" />
+                    <span>Añadir al Informe</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
