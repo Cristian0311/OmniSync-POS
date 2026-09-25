@@ -224,6 +224,8 @@ interface AppState {
   
   bankTransactions: import('../types').BankTransaction[];
   addBankTransaction: (transaction: import('../types').BankTransaction) => void;
+  deleteBankTransaction: (id: string) => void;
+  reconcileBankBalances: () => Promise<{ removedDuplicates: number; totalSales?: number; totalMovements?: number; message: string }>;
 
   // Supabase Sync
   isSyncing: boolean;
@@ -1644,13 +1646,26 @@ export const useStore = create<AppState>()(
   bankTransactions: [],
   addBankTransaction: (transaction) => {
     set(state => {
+      // 1. Strict anti-duplication check
+      const isDuplicate = (state.bankTransactions || []).some(t => {
+        if (t.id === transaction.id) return true;
+        if (transaction.transactionId && t.transactionId && t.transactionId === transaction.transactionId) return true;
+        if (transaction.reference && t.reference && t.reference === transaction.reference && t.cardId === transaction.cardId) return true;
+        return false;
+      });
+
+      if (isDuplicate) {
+        console.warn("[Bank] Duplicate bank transaction blocked:", transaction);
+        return state;
+      }
+
       const updatedCards = state.bankCards.map(card => {
         if (card.id === transaction.cardId) {
           let newBalance = card.balance;
           if (transaction.type === 'deposit' || transaction.type === 'payment_received') {
             newBalance += transaction.amount;
           } else if (transaction.type === 'withdrawal' || transaction.type === 'supplier_payment') {
-            newBalance -= transaction.amount;
+            newBalance = Math.max(0, newBalance - transaction.amount);
           }
           const updatedCard = { ...card, balance: newBalance };
           pushBankCardToSupabase(updatedCard).catch(() => {});
@@ -1658,12 +1673,98 @@ export const useStore = create<AppState>()(
         }
         return card;
       });
+
       pushBankTransactionToSupabase(transaction).catch(() => {});
       return { 
         bankTransactions: [transaction, ...state.bankTransactions],
         bankCards: updatedCards
       };
     });
+  },
+
+  deleteBankTransaction: (id) => {
+    set(state => {
+      const txToDelete = (state.bankTransactions || []).find(t => t.id === id);
+      if (!txToDelete) return state;
+
+      // Adjust card balance
+      const updatedCards = state.bankCards.map(card => {
+        if (card.id === txToDelete.cardId) {
+          let newBalance = card.balance;
+          if (txToDelete.type === 'deposit' || txToDelete.type === 'payment_received') {
+            // Deduct deposit amount from card balance
+            newBalance = Math.max(0, newBalance - txToDelete.amount);
+          } else if (txToDelete.type === 'withdrawal' || txToDelete.type === 'supplier_payment') {
+            // Restore withdrawal amount to card balance
+            newBalance = newBalance + txToDelete.amount;
+          }
+          const updatedCard = { ...card, balance: newBalance };
+          pushBankCardToSupabase(updatedCard).catch(() => {});
+          return updatedCard;
+        }
+        return card;
+      });
+
+      // Delete from Supabase
+      deleteBankTransactionFromSupabase(id).catch(() => {});
+
+      return {
+        bankTransactions: state.bankTransactions.filter(t => t.id !== id),
+        bankCards: updatedCards
+      };
+    });
+  },
+
+  reconcileBankBalances: async () => {
+    // 1. Sync latest data from Supabase
+    try {
+      await get().syncWithSupabase();
+    } catch (e) {
+      console.warn("Supabase sync before reconciliation failed:", e);
+    }
+
+    const state = get();
+    const seenIds = new Set<string>();
+    const seenTxIds = new Set<string>();
+    const seenRefs = new Set<string>();
+    const uniqueTxs: import('../types').BankTransaction[] = [];
+    let removedDuplicates = 0;
+
+    // Filter duplicates preserving the most recent unique record
+    for (const bt of state.bankTransactions || []) {
+      if (seenIds.has(bt.id)) {
+        removedDuplicates++;
+        continue;
+      }
+      if (bt.transactionId && seenTxIds.has(bt.transactionId)) {
+        removedDuplicates++;
+        continue;
+      }
+      const refKey = bt.reference ? `${bt.cardId}::${bt.reference}` : null;
+      if (refKey && seenRefs.has(refKey)) {
+        removedDuplicates++;
+        continue;
+      }
+
+      seenIds.add(bt.id);
+      if (bt.transactionId) seenTxIds.add(bt.transactionId);
+      if (refKey) seenRefs.add(refKey);
+      uniqueTxs.push(bt);
+    }
+
+    if (removedDuplicates > 0) {
+      set({ bankTransactions: uniqueTxs });
+    }
+
+    const totalSales = state.transactions.length;
+    const totalMovements = uniqueTxs.length;
+
+    return {
+      removedDuplicates,
+      totalSales,
+      totalMovements,
+      message: `Reconciliación completada: Base de datos sincronizada con ${totalSales} ventas y ${totalMovements} movimientos bancarios verificados.${removedDuplicates > 0 ? ` Se eliminaron ${removedDuplicates} duplicados.` : ''}`
+    };
   },
 
   syncWithSupabase: async () => {
@@ -1753,6 +1854,17 @@ export const useStore = create<AppState>()(
           const baseInv = data.inventory !== undefined ? data.inventory : state.inventory;
           const mergedInventory = baseInv.filter(inv => !inv.branchId || validBranchIds.has(inv.branchId));
 
+          // 7. Transacciones Bancarias (Deduplicación estricta)
+          const baseBts: import('../types').BankTransaction[] = data.bankTransactions !== undefined ? data.bankTransactions : state.bankTransactions || [];
+          const existingBtIds = new Set(baseBts.map(bt => bt.id));
+          const localOnlyBts = (state.bankTransactions || []).filter(bt => !existingBtIds.has(bt.id));
+          const mergedBankTransactions = [...baseBts, ...localOnlyBts];
+
+          // 8. Actualizar currentUser si está activo con los datos más recientes de Supabase
+          const updatedCurrentUser = state.currentUser
+            ? ((data.users || []).find((u: any) => u.id === state.currentUser?.id) || state.currentUser)
+            : null;
+
           return {
             products: data.products !== undefined ? data.products : state.products,
             categories: data.categories !== undefined ? data.categories : state.categories,
@@ -1760,7 +1872,9 @@ export const useStore = create<AppState>()(
             branches: mergedBranches,
             currentBranchId: nextBranchId,
             users: data.users !== undefined ? data.users : state.users,
+            currentUser: updatedCurrentUser,
             bankCards: data.bankCards !== undefined ? data.bankCards : state.bankCards,
+            bankTransactions: mergedBankTransactions,
             customers: mergedCustomers,
             suppliers: data.suppliers !== undefined ? data.suppliers : state.suppliers,
             supplierOrders: data.supplierOrders !== undefined ? data.supplierOrders : state.supplierOrders,

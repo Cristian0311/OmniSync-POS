@@ -9,6 +9,7 @@ import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import { useStore } from "./store/useStore";
 import { initOfflineSyncWatcher } from "./services/offlineSync";
+import { initMultiDeviceRealtimeSync } from "./services/realtimeSync";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
 // Code-splitting de rutas para acelerar inicio en tablets y reducir consumo de memoria
@@ -40,12 +41,14 @@ export default function App() {
   const { currentUser, isInitialized } = useStore();
 
   useEffect(() => {
-    // Sincronizar con Supabase al iniciar la aplicación
-    useStore.getState().syncWithSupabase().catch(() => {});
     // Inicializar el monitor y sincronizador automático offline
-    const cleanupWatcher = initOfflineSyncWatcher();
+    const cleanupOfflineWatcher = initOfflineSyncWatcher();
+    // Inicializar sincronización multi-dispositivo y realtime de Supabase
+    const cleanupRealtimeSync = initMultiDeviceRealtimeSync();
+
     return () => {
-      cleanupWatcher();
+      cleanupOfflineWatcher();
+      cleanupRealtimeSync();
     };
   }, []);
 

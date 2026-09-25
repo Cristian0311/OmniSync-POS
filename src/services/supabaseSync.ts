@@ -195,6 +195,25 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
       errors.push(`Tarjetas Bancarias: ${e.message}`);
     }
 
+    // 6b. Bank Transactions
+    try {
+      const { data, error } = await supabase.from('bank_transactions').select('*').order('date', { ascending: false }).limit(500);
+      if (!error && data && Array.isArray(data)) {
+        fetchedData.bankTransactions = data.map((bt: any): BankTransaction => ({
+          id: bt.id,
+          cardId: bt.card_id || bt.cardId,
+          type: bt.type,
+          amount: Number(bt.amount) || 0,
+          date: bt.date,
+          reference: bt.reference || '',
+          description: bt.description || '',
+          transactionId: bt.transaction_id || bt.transactionId
+        }));
+      }
+    } catch (e: any) {
+      // Non-fatal
+    }
+
     // 7. Customers
     try {
       const { data, error } = await supabase.from('customers').select('*');
