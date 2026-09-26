@@ -241,19 +241,19 @@ export default function POS() {
   );
 
   const allowedBranches = React.useMemo(() => {
-    if (workerAssignedBranchId) {
-      const match = (branches || []).filter(b => b.id === workerAssignedBranchId);
-      if (match.length > 0) return match;
-    }
+    // Administrators can operate across every branch.
     if (currentUser?.role === 'admin') return branches || [];
-    if (currentUser?.assignedBranchId) {
-      const match = (branches || []).filter(b => b.id === currentUser.assignedBranchId);
-      if (match.length > 0) return match;
+
+    // Employees must never inherit a previous admin branch or fall back to all branches.
+    // Their scope comes strictly from assignedBranchId, branchId, or allowedBranches.
+    const assignedId = currentUser?.assignedBranchId || currentUser?.branchId || workerAssignedBranchId;
+    if (assignedId) {
+      return (branches || []).filter(b => b.id === assignedId);
     }
     if (currentUser?.allowedBranches && currentUser.allowedBranches.length > 0) {
       return (branches || []).filter(b => currentUser.allowedBranches!.includes(b.id));
     }
-    return branches || [];
+    return [];
   }, [currentUser, branches, workerAssignedBranchId]);
     
   const [showConfirmIDNModal, setShowConfirmIDNModal] = useState(false);
@@ -1779,11 +1779,27 @@ export default function POS() {
 
     const { users } = useStore.getState();
     const trimmedWorkerName = sessionWorkerName.trim();
-    const workerToAssign = detectedWorker || (trimmedWorkerName ? users.find(u => (u.name || '').toLowerCase() === trimmedWorkerName.toLowerCase()) : currentUser);
-    
+
+    // An employee can only open a shift for their own account. The administrator
+    // may explicitly select another worker/IDN from the POS.
+    const workerToAssign = currentUser?.role === 'admin'
+      ? (detectedWorker || (trimmedWorkerName ? users.find(u => (u.name || '').toLowerCase() === trimmedWorkerName.toLowerCase()) : currentUser))
+      : currentUser;
+
     if (!workerToAssign) {
       setPosError("Debes seleccionar un vendedor para abrir la caja");
       setTimeout(() => setPosError(""), 3000);
+      return;
+    }
+
+    if (currentUser?.role !== 'admin' && workerToAssign.id !== currentUser?.id) {
+      setPosError("Un trabajador solo puede abrir su propio turno.");
+      return;
+    }
+
+    const permittedBranchIds = new Set(allowedBranches.map(b => b.id));
+    if (currentUser?.role !== 'admin' && (!sessionBranchId || !permittedBranchIds.has(sessionBranchId))) {
+      setPosError("No tienes una sucursal autorizada para abrir el turno.");
       return;
     }
 
@@ -1838,6 +1854,16 @@ export default function POS() {
     const targetUser = (users || []).find(u => u.id === targetSession.userId || (u.name || '').toLowerCase() === (targetSession.workerName || '').toLowerCase());
     if (!targetUser) {
       setPosError("No se pudo identificar al dueño del turno");
+      return;
+    }
+
+    if (currentUser?.role !== 'admin' && targetUser.id !== currentUser?.id) {
+      setPosError("No puedes unirte al turno de otro trabajador.");
+      return;
+    }
+
+    if (currentUser?.role !== 'admin' && !allowedBranches.some(b => b.id === targetSession.branchId)) {
+      setPosError("Este turno pertenece a una sucursal que no tienes autorizada.");
       return;
     }
 
@@ -2591,22 +2617,28 @@ export default function POS() {
                         <label className="block text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">
                           Seleccionar Vendedor / Empleado del Turno
                         </label>
-                        <select
-                          value={sessionWorkerName}
-                          onChange={e => {
-                            setSessionWorkerName(e.target.value);
-                            setSessionPassword("");
-                          }}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
-                          required
-                        >
-                          <option value="">-- Seleccionar Trabajador / IDN --</option>
-                          {(users || []).filter(u => u.isActive !== false).map(u => (
-                            <option key={u.id} value={u.name || ''}>
-                              {u.name || 'Trabajador'} {u.isIndependent ? '(Vendedor IDN)' : (u.role === 'admin' ? '(Administrador)' : '(Empleado)')}
-                            </option>
-                          ))}
-                        </select>
+                        {currentUser?.role === 'admin' ? (
+                          <select
+                            value={sessionWorkerName}
+                            onChange={e => {
+                              setSessionWorkerName(e.target.value);
+                              setSessionPassword("");
+                            }}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
+                            required
+                          >
+                            <option value="">-- Seleccionar Trabajador / IDN --</option>
+                            {(users || []).filter(u => u.isActive !== false).map(u => (
+                              <option key={u.id} value={u.name || ''}>
+                                {u.name || 'Trabajador'} {u.isIndependent ? '(Vendedor IDN)' : (u.role === 'admin' ? '(Administrador)' : '(Empleado)')}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-[11px] font-black text-slate-700">
+                            {currentUser?.name || 'Trabajador'}
+                          </div>
+                        )}
                       </div>
 
                       <div>
