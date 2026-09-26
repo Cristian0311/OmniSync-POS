@@ -8,11 +8,13 @@ import { useStore } from "../store/useStore";
 import { Product, Payment, Transaction, CashRegisterSession } from "../types";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { InfoTooltip } from "../components/InfoTooltip";
+import { SupabaseRefreshModal } from "../components/SupabaseRefreshModal";
 import { getOfflineQueueCount, processOfflineQueue } from "../services/offlineSync";
+import { normalizeSemanticText } from "../utils/textUtils";
 
 export default function POS() {
   const store = useStore();
-  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, salarySettlements, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification, joinOpenSession } = store;
+  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, removeCashMovement, salarySettlements, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification, joinOpenSession } = store;
   
   const cashSessions = useMemo(() => (store.cashSessions || []).filter(s => !s.deletedAt), [store.cashSessions]);
   const transactions = useMemo(() => (store.transactions || []).filter(t => !t.deletedAt), [store.transactions]);
@@ -582,7 +584,7 @@ export default function POS() {
     });
 
     // Add cash movements
-    if (currentSession.movements) {
+    if (currentSession?.movements) {
       currentSession.movements.forEach(m => {
         const existing = expected.find(e => e.currencyCode === m.currencyCode && e.method === 'cash');
         if (existing) {
@@ -862,26 +864,53 @@ export default function POS() {
   }, [inventory, currentBranchId]);
 
   const filteredProducts = useMemo(() => {
-    return products.filter(p => {
-      // Filtrar por búsqueda usando el query con debounce
-      const query = debouncedSearchQuery.toLowerCase().trim();
+    const query = normalizeSemanticText(debouncedSearchQuery);
+
+    const filtered = (products || []).filter(p => {
+      if (!p) return false;
+      const normName = normalizeSemanticText(p.name);
+      const normSku = normalizeSemanticText(p.sku);
+      const normBarcode = normalizeSemanticText(p.barcode);
+      const normId = normalizeSemanticText(p.id);
+
+      // Coincidencia directa de código, SKU o ID: Si el usuario busca por código o SKU exacto o parcial,
+      // se detecta prioritariamente ignorando el filtro de categoría.
+      const isCodeMatch = query && (
+        normSku === query || 
+        normBarcode === query || 
+        normId === query ||
+        (query.length >= 3 && (normSku.includes(query) || normBarcode.includes(query)))
+      );
+
+      if (isCodeMatch) return true;
+
+      // Filtrar por texto de búsqueda semántica (nombre, SKU o código de barras sin acentos)
       if (query) {
-        const matchesSearch = p.name.toLowerCase().includes(query) || 
-                              p.sku?.toLowerCase().includes(query) || 
-                              p.barcode?.toLowerCase().includes(query);
+        const matchesSearch = normName.includes(query) || normSku.includes(query) || normBarcode.includes(query);
         if (!matchesSearch) return false;
       }
 
-      // Filtrar por categoría
+      // Filtrar por categoría seleccionada
       const matchesCategory = activeCategoryId === "Todos" || p.categoryId === activeCategoryId;
       if (!matchesCategory) return false;
 
-      // Filtrar por existencia usando el mapa optimizado
+      // Por defecto muestra productos con existencia en la sucursal actual (o todos si se busca explícitamente)
       const branchStockTotal = currentBranchStockMap.get(p.id) || 0;
+      if (query) return true; // Al buscar por texto, incluir incluso sin stock pero etiquetados
       return branchStockTotal > 0;
-    })
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, 100); // Limit to 100 products for performance
+    });
+
+    // Deduplicación estricta por ID para evitar duplicidad de tarjetas en la interfaz
+    const uniqueMap = new Map<string, typeof products[0]>();
+    filtered.forEach(p => {
+      if (p && p.id && !uniqueMap.has(p.id)) {
+        uniqueMap.set(p.id, p);
+      }
+    });
+
+    return Array.from(uniqueMap.values())
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      .slice(0, 150);
   }, [products, debouncedSearchQuery, activeCategoryId, currentBranchStockMap]);
 
   const subtotalBase = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
@@ -922,7 +951,18 @@ export default function POS() {
   };
 
   useBarcodeScanner((barcode) => {
-    const scannedProduct = products.find(p => p.sku === barcode || p.id === barcode || p.barcode === barcode);
+    const normCode = normalizeSemanticText(barcode);
+    const scannedProduct = (products || []).find(p => {
+      if (!p) return false;
+      return (
+        p.id === barcode ||
+        normalizeSemanticText(p.sku) === normCode ||
+        normalizeSemanticText(p.barcode) === normCode ||
+        p.sku === barcode ||
+        p.barcode === barcode
+      );
+    });
+
     if (scannedProduct) {
        const totalAvailable = getProductStock(scannedProduct.id);
        if (totalAvailable > 0) {
@@ -932,13 +972,16 @@ export default function POS() {
              setShowConfigModal(true);
           } else {
              addToCart(scannedProduct);
-             setPosSuccess("Producto escaneado");
-             setTimeout(() => setPosSuccess(""), 1500);
+             setPosSuccess(`¡Producto "${scannedProduct.name}" detectado y agregado al carrito!`);
+             setTimeout(() => setPosSuccess(""), 2000);
           }
        } else {
-          setPosError("Sin existencias");
-          setTimeout(() => setPosError(""), 1500);
+          setPosError(`El producto "${scannedProduct.name}" no tiene existencias suficientes en este almacén.`);
+          setTimeout(() => setPosError(""), 3000);
        }
+    } else {
+      setPosError(`No se encontró ningún producto con el código "${barcode}".`);
+      setTimeout(() => setPosError(""), 2500);
     }
   });
 
@@ -3308,9 +3351,9 @@ export default function POS() {
 
                   <div className="space-y-2">
                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Historial de Turno</h4>
-                    {currentSession.movements && currentSession.movements.length > 0 ? (
+                    {currentSession?.movements && currentSession.movements.length > 0 ? (
                       currentSession.movements.map(m => (
-                        <div key={m.id} className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-xl shadow-sm">
+                        <div key={m.id} className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-xl shadow-sm hover:border-slate-200 transition-all group">
                           <div className="flex items-center gap-3">
                             <div className={cn(
                               "w-8 h-8 rounded-lg flex items-center justify-center",
@@ -3323,12 +3366,28 @@ export default function POS() {
                               <p className="text-[8px] font-bold text-slate-400 uppercase">{new Date(m.date).toLocaleTimeString()}</p>
                             </div>
                           </div>
-                          <p className={cn(
-                            "text-[11px] font-black",
-                            m.type === 'income' ? "text-emerald-600" : "text-rose-600"
-                          )}>
-                            {m.type === 'income' ? '+' : '-'}{m.amount.toLocaleString('es-CU', { minimumFractionDigits: 2 })} {m.currencyCode}
-                          </p>
+                          
+                          <div className="flex items-center gap-3">
+                            <p className={cn(
+                              "text-[11px] font-black",
+                              m.type === 'income' ? "text-emerald-600" : "text-rose-600"
+                            )}>
+                              {m.type === 'income' ? '+' : '-'}{m.amount.toLocaleString('es-CU', { minimumFractionDigits: 2 })} {m.currencyCode}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`¿Estás seguro de que deseas eliminar este movimiento: "${m.description}"?`)) {
+                                  removeCashMovement(currentSession.id, m.id);
+                                  addNotification("Movimiento de caja eliminado", 'info');
+                                }
+                              }}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded-full hover:bg-rose-50 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                              title="Eliminar movimiento"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       ))
                     ) : (
@@ -3340,7 +3399,7 @@ export default function POS() {
                 <div className="space-y-4">
                   {(() => {
                     const sessionTx = transactions.filter(t => 
-                      t.sessionId === currentSession.id && !t.deletedAt
+                      t.sessionId === currentSession?.id && !t.deletedAt
                     );
 
                     // Categorize payment types
@@ -3807,7 +3866,7 @@ export default function POS() {
                   <div className="bg-indigo-50 rounded-2xl p-4 flex justify-between items-center border border-indigo-100">
                     <div>
                       <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Fondo Inicial</p>
-                      <p className="text-lg font-black text-indigo-900">{currentSession.openingBalance.toLocaleString('es-CU', { minimumFractionDigits: 2 })} {baseCurrency.code}</p>
+                      <p className="text-lg font-black text-indigo-900">{(currentSession?.openingBalance || 0).toLocaleString('es-CU', { minimumFractionDigits: 2 })} {baseCurrency.code}</p>
                     </div>
                     <button 
                       onClick={() => {
@@ -3852,11 +3911,11 @@ export default function POS() {
 
                       {/* Salary Calculation Card */}
                       {(() => {
-                        const sessionUser = users.find(u => u.id === currentSession.userId || (u.name && currentSession.workerName && u.name.toLowerCase() === currentSession.workerName.toLowerCase())) || currentUser;
+                        const sessionUser = users.find(u => u.id === currentSession?.userId || (u.name && currentSession?.workerName && u.name.toLowerCase() === currentSession.workerName.toLowerCase())) || currentUser;
                         if (!sessionUser || sessionUser.isIndependent) return null;
                         
                         const sessionTx = transactions.filter(t => 
-                          t.sessionId === currentSession.id && !t.deletedAt
+                          t.sessionId === currentSession?.id && !t.deletedAt
                         );
                         const totalSales = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
                         
@@ -4228,6 +4287,9 @@ export default function POS() {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Botón de Reactualización Total Supabase */}
+          <SupabaseRefreshModal variant="pos" />
+
           {/* Offline / Online Sync Status Badge */}
           <button
             type="button"

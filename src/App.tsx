@@ -38,7 +38,14 @@ function PageLoading() {
 }
 
 export default function App() {
-  const { currentUser, isInitialized } = useStore();
+  const { currentUser, isInitialized, restoreTransactionsFromBackup } = useStore();
+
+  useEffect(() => {
+    if (isInitialized) {
+      // Garantizar la recuperación automática de cualquier ticket cobrado en segundo plano
+      restoreTransactionsFromBackup();
+    }
+  }, [isInitialized, restoreTransactionsFromBackup]);
 
   useEffect(() => {
     // Inicializar el monitor y sincronizador automático offline

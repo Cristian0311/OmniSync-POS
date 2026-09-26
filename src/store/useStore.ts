@@ -191,7 +191,19 @@ interface AppState {
     workerName?: string;
     paymentMethod?: 'cash' | 'transfer';
     currencyCode?: string;
-  }) => Promise<{ success: boolean; transactionId?: string }>;
+    variantLabel?: string;
+  }, affectStock?: boolean, isDeduction?: boolean) => Promise<{ success: boolean; transactionId?: string }>;
+  subtractInformationalProductFromSession: (sessionId: string, itemData: {
+    productId: string;
+    productName: string;
+    quantity: number;
+    price: number;
+    userId?: string;
+    workerName?: string;
+    paymentMethod?: 'cash' | 'transfer';
+    currencyCode?: string;
+    variantLabel?: string;
+  }, affectStock?: boolean) => Promise<{ success: boolean; transactionId?: string }>;
   forceCloseSessionFromReports: (sessionId: string, closingBalances?: import('../types').Payment[], closingDate?: string, notes?: string) => Promise<{ success: boolean }>;
 
   // Garantías
@@ -204,6 +216,7 @@ interface AppState {
   addSalarySettlement: (settlement: SalarySettlement) => void;
   updateSalarySettlement: (id: string, settlement: Partial<SalarySettlement>) => void;
   addCashMovement: (sessionId: string, movement: CashMovement) => void;
+  removeCashMovement: (sessionId: string, movementId: string) => void;
   transfers: InventoryTransfer[];
   addTransfer: (transfer: InventoryTransfer) => void;
 
@@ -261,6 +274,7 @@ interface AppState {
   syncResult: SyncResult | null;
   syncWithSupabase: () => Promise<SyncResult>;
   seedDemoProducts: () => void;
+  restoreTransactionsFromBackup: () => void;
 
   isInitialized: boolean;
   
@@ -1219,10 +1233,26 @@ export const useStore = create<AppState>()(
       };
     });
 
+    // Save backup of the completed sale immediately to independent localStorage key
+    try {
+      const backupRaw = localStorage.getItem('mare_sales_backup_v1');
+      const backupList = backupRaw ? JSON.parse(backupRaw) : [];
+      if (!backupList.some((t: any) => t.id === transaction.id)) {
+        backupList.unshift(transaction);
+        localStorage.setItem('mare_sales_backup_v1', JSON.stringify(backupList));
+      }
+    } catch (e) {
+      console.error("[Backup Safety] Error saving safety backup:", e);
+    }
+
     // 2. RPC Atómico si hay conexión
     if (navigator.onLine) {
-      const res = await callProcessTransactionRPC(transaction);
-      if (res.success) return;
+      try {
+        const res = await callProcessTransactionRPC(transaction);
+        if (res.success) return;
+      } catch (err) {
+        console.warn("[processTransaction] RPC call failed/errored, falling back to offline queue:", err);
+      }
     }
 
     // 3. Fallback a cola offline (si falló RPC o no hay red)
@@ -1495,21 +1525,25 @@ export const useStore = create<AppState>()(
     
     // Si hay red, usar RPC para garantizar integridad y turno único
     if (navigator.onLine) {
-      const res = await callOpenSessionRPC(session);
-      if (res.success && res.data) {
-        const officialSession = {
-          ...res.data,
-          openingBalance: Number(res.data.opening_balance || res.data.opening_amount) || 0,
-          openingAmount: Number(res.data.opening_amount || res.data.opening_balance) || 0,
-          workingEmployeeIds: res.data.working_employee_ids || [],
-          movements: res.data.movements || []
-        };
-        set((state) => ({
-          cashSessions: [...(state.cashSessions || []), officialSession],
-          lastTurnNumber: Math.max(state.lastTurnNumber, parseInt(officialSession.id.split('-')[1]) || 0),
-          cart: []
-        }));
-        return;
+      try {
+        const res = await callOpenSessionRPC(session);
+        if (res.success && res.data) {
+          const officialSession = {
+            ...res.data,
+            openingBalance: Number(res.data.opening_balance || res.data.opening_amount) || 0,
+            openingAmount: Number(res.data.opening_amount || res.data.opening_balance) || 0,
+            workingEmployeeIds: res.data.working_employee_ids || [],
+            movements: res.data.movements || []
+          };
+          set((state) => ({
+            cashSessions: [...(state.cashSessions || []), officialSession],
+            lastTurnNumber: Math.max(state.lastTurnNumber, parseInt(officialSession.id.split('-')[1]) || 0),
+            cart: []
+          }));
+          return;
+        }
+      } catch (err) {
+        console.warn("[openSession] RPC callOpenSessionRPC failed/errored, falling back to local queue:", err);
       }
     }
 
@@ -1582,15 +1616,19 @@ export const useStore = create<AppState>()(
 
     // Intentar RPC atómico
     if (navigator.onLine) {
-      const res = await callCloseSessionRPC(sessionId, closingBalances, finalClosingDate, session.notes || '', settlement);
-      if (res.success) {
-        // Actualizar localmente
-        set((state) => ({
-          cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s),
-          salarySettlements: [...(state.salarySettlements || []), { ...settlement, id: res.data?.settlement_id || settlement.id }],
-          cart: []
-        }));
-        return;
+      try {
+        const res = await callCloseSessionRPC(sessionId, closingBalances, finalClosingDate, session.notes || '', settlement);
+        if (res.success) {
+          // Actualizar localmente
+          set((state) => ({
+            cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s),
+            salarySettlements: [...(state.salarySettlements || []), { ...settlement, id: res.data?.settlement_id || settlement.id }],
+            cart: []
+          }));
+          return;
+        }
+      } catch (err) {
+        console.warn("[closeSession] RPC callCloseSessionRPC failed/errored, falling back to offline push:", err);
       }
     }
 
@@ -1789,7 +1827,7 @@ export const useStore = create<AppState>()(
     );
   },
 
-  addInformationalSoldProductToSession: async (sessionId, itemData) => {
+  addInformationalSoldProductToSession: async (sessionId, itemData, affectStock, isDeduction = false) => {
     const session = get().cashSessions.find(s => s.id === sessionId);
     if (!session) {
       return { success: false };
@@ -1797,13 +1835,17 @@ export const useStore = create<AppState>()(
 
     const txs = get().transactions || [];
     const maxNum = txs.reduce((max, t) => {
-      const match = t.id?.match(/INF-(\d+)/i) || t.id?.match(/ADJ-(\d+)/i);
+      const match = t.id?.match(/INF-(\d+)/i) || t.id?.match(/ADJ-(\d+)/i) || t.id?.match(/SUB-(\d+)/i);
       return match ? Math.max(max, parseInt(match[1], 10)) : max;
     }, 0);
     const nextNum = Math.max(txs.length, maxNum) + 1;
-    const txId = `INF-${nextNum.toString().padStart(3, '0')}`;
+    const prefix = isDeduction ? 'SUB' : 'INF';
+    const txId = `${prefix}-${nextNum.toString().padStart(3, '0')}`;
 
-    const totalAmount = itemData.quantity * itemData.price;
+    const rawTotalAmount = itemData.quantity * itemData.price;
+    const totalAmount = isDeduction ? -Math.abs(rawTotalAmount) : Math.abs(rawTotalAmount);
+    const itemQty = isDeduction ? -Math.abs(itemData.quantity) : Math.abs(itemData.quantity);
+
     const txDate = session.closingDate || session.closedAt || session.openedAt || new Date().toISOString();
     const currencyCode = itemData.currencyCode || get().getBaseCurrency().code;
     const curr = get().currencies.find(c => c.code === currencyCode);
@@ -1826,9 +1868,9 @@ export const useStore = create<AppState>()(
             name: itemData.productName,
             price: itemData.price,
             costPrice: 0,
-            sku: 'INF'
+            sku: isDeduction ? 'SUB' : 'INF'
           } as any,
-          quantity: itemData.quantity,
+          quantity: itemQty,
           price: itemData.price,
           total: totalAmount
         }
@@ -1843,13 +1885,23 @@ export const useStore = create<AppState>()(
       ],
       status: 'completed',
       sessionId: session.id,
-      notes: 'AJUSTE_MANUAL_INFORME (Sin afectar stock físico)'
+      notes: isDeduction
+        ? (affectStock ? 'AJUSTE_AUDITORIA_RESTAR_DUPLICADO (Sumando stock devuelto a almacén)' : 'AJUSTE_AUDITORIA_RESTAR_DUPLICADO (Sin afectar stock)')
+        : (affectStock ? 'AJUSTE_MANUAL_INFORME (Afectando stock físico)' : 'AJUSTE_MANUAL_INFORME (Sin afectar stock físico)')
     };
 
-    // Agregar a transacciones locales SIN descontar inventario físico
+    // Agregar a transacciones locales
     set(state => ({
       transactions: [informationalTx, ...state.transactions]
     }));
+
+    // Acción sobre el inventario físico del almacén de la sucursal:
+    // Si isDeduction = false (agregar faltante): descontamos de inventario (-quantity)
+    // Si isDeduction = true (restar producto anotado doble): SUMAMOS nuevamente al inventario de almacén (+quantity)
+    if (affectStock) {
+      const stockDelta = isDeduction ? Math.abs(itemData.quantity) : -Math.abs(itemData.quantity);
+      get().adjustInventory(itemData.productId, session.branchId, stockDelta, itemData.variantLabel);
+    }
 
     // Sincronizar transacción con Supabase
     pushTransactionToSupabase(informationalTx).catch(() => {});
@@ -1860,11 +1912,18 @@ export const useStore = create<AppState>()(
       if (existingSettlement) {
         const productObj = get().products.find(p => p.id === itemData.productId);
         const commValue = productObj?.commissionValue || 0;
-        const extraCommissions = commValue * itemData.quantity;
+        const commDelta = commValue * Math.abs(itemData.quantity);
+        const newCommissions = isDeduction
+          ? Math.max(0, (existingSettlement.commissions || 0) - commDelta)
+          : (existingSettlement.commissions || 0) + commDelta;
+        const newTotal = isDeduction
+          ? Math.max(0, (existingSettlement.total || 0) - commDelta)
+          : (existingSettlement.total || 0) + commDelta;
+
         const updatedSettlement = {
           ...existingSettlement,
-          commissions: (existingSettlement.commissions || 0) + extraCommissions,
-          total: (existingSettlement.total || 0) + extraCommissions
+          commissions: newCommissions,
+          total: newTotal
         };
         set(state => ({
           salarySettlements: state.salarySettlements.map(st => st.id === existingSettlement.id ? updatedSettlement : st)
@@ -1876,6 +1935,10 @@ export const useStore = create<AppState>()(
     }
 
     return { success: true, transactionId: txId };
+  },
+
+  subtractInformationalProductFromSession: async (sessionId, itemData, affectStock = true) => {
+    return get().addInformationalSoldProductToSession(sessionId, itemData, affectStock, true);
   },
 
   forceCloseSessionFromReports: async (sessionId, closingBalances, closingDate, notes) => {
@@ -2073,6 +2136,17 @@ export const useStore = create<AppState>()(
     set((state) => ({
       cashSessions: state.cashSessions.map(s => 
         s.id === sessionId ? { ...s, movements: [...(s.movements || []), movement] } : s
+      )
+    }));
+    const updated = get().cashSessions.find(s => s.id === sessionId);
+    if (updated) {
+      pushCashSessionToSupabase(updated).catch(() => {});
+    }
+  },
+  removeCashMovement: (sessionId, movementId) => {
+    set((state) => ({
+      cashSessions: (state.cashSessions || []).map(s => 
+        s.id === sessionId ? { ...s, movements: (s.movements || []).filter(m => m.id !== movementId) } : s
       )
     }));
     const updated = get().cashSessions.find(s => s.id === sessionId);
@@ -2326,7 +2400,7 @@ export const useStore = create<AppState>()(
           });
           
           // Purge: Si recibimos datos de Supabase, eliminar locales que no estén en Supabase Y no estén en la cola offline
-          const finalBranches = data.branches 
+          const finalBranches = (data.branches && data.branches.length > 0)
             ? mergedBranches.filter(b => 
                 data.branches.some((sb: any) => sb.id === b.id) || 
                 offlineQueuedBranchIds.has(b.id)
@@ -2390,7 +2464,7 @@ export const useStore = create<AppState>()(
           
           // Purge Inventario: Si recibimos de Supabase, quitar los que no estén en Supabase y no estén en cola offline
           let mergedInventory = Array.from(invMap.values()).filter(inv => !inv.branchId || validBranchIds.has(inv.branchId));
-          if (data.inventory) {
+          if (data.inventory && data.inventory.length > 0) {
             const supabaseInvKeys = new Set(data.inventory.map((si: any) => `${si.product_id || si.productId}_${si.branch_id || si.branchId}_${si.variant_label || si.variantLabel || ''}`));
             const offlineInvKeys = new Set(offlineQueuedInventory.map(oi => `${oi.productId}_${oi.branchId}_${oi.variantLabel || ''}`));
             
@@ -2406,7 +2480,7 @@ export const useStore = create<AppState>()(
             semanticKeys: ['sku', 'name']
           });
           // Purge Productos
-          const finalProducts = data.products 
+          const finalProducts = (data.products && data.products.length > 0) 
             ? mergedProducts.filter(p => data.products.some((sp: any) => sp.id === p.id))
             : mergedProducts;
 
@@ -2415,7 +2489,7 @@ export const useStore = create<AppState>()(
             semanticKeys: ['name']
           });
           // Purge Categorías
-          const finalCategories = data.categories
+          const finalCategories = (data.categories && data.categories.length > 0)
             ? mergedCategories.filter(c => data.categories.some((sc: any) => sc.id === c.id))
             : mergedCategories;
 
@@ -2424,7 +2498,7 @@ export const useStore = create<AppState>()(
             semanticKeys: ['email']
           });
           // Purge Users (except initial admins)
-          const finalUsers = data.users
+          const finalUsers = (data.users && data.users.length > 0)
             ? mergedUsers.filter(u => data.users.some((su: any) => su.id === u.id) || u.id.startsWith('admin-') || u.id.startsWith('employee-'))
             : mergedUsers;
 
@@ -2506,6 +2580,34 @@ export const useStore = create<AppState>()(
       bankCards: INITIAL_BANK_CARDS,
       currencies: INITIAL_CURRENCIES
     });
+  },
+
+  restoreTransactionsFromBackup: () => {
+    try {
+      const backupRaw = localStorage.getItem('mare_sales_backup_v1');
+      if (!backupRaw) return;
+      const backupList = JSON.parse(backupRaw);
+      if (!Array.isArray(backupList) || backupList.length === 0) return;
+
+      const currentTxs = get().transactions || [];
+      const missingTxs = backupList.filter((bt: any) => !currentTxs.some((ct: any) => ct.id === bt.id));
+
+      if (missingTxs.length > 0) {
+        console.info(`[Backup Safety] Detectadas ${missingTxs.length} ventas faltantes en el estado local. Recuperándolas...`);
+        set((state) => ({
+          transactions: [...missingTxs, ...(state.transactions || [])]
+        }));
+        
+        // Sincronizar de forma segura las ventas recuperadas
+        missingTxs.forEach(tx => {
+          pushTransactionToSupabase(tx).catch(() => {});
+        });
+
+        get().addNotification(`¡Garantía de Seguridad! Se recuperaron ${missingTxs.length} tickets de venta de forma automática.`, 'success');
+      }
+    } catch (e) {
+      console.error("[Backup Safety] Error restoring from safety backup:", e);
+    }
   },
 
   notifications: [],

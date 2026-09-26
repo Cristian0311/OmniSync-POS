@@ -4,7 +4,7 @@ import {
   X, ArrowDownRight, ArrowUpRight, ArrowLeftRight, ArrowRight, History, Download, Printer, CheckCircle2, 
   Clock, AlertCircle, AlertTriangle, FileSpreadsheet, ChevronDown, Check, Plus, Search,
   Sparkles, Brain, ListChecks, ShieldAlert, ShieldCheck, Loader2, Trash2, PieChart as PieChartIcon, BarChart3,
-  HelpCircle, Edit3, Save, FileText, CheckCircle
+  HelpCircle, Edit3, Save, FileText, CheckCircle, Minus
 } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
@@ -119,12 +119,14 @@ export default function Reports() {
   const categoryData = useMemo(() => {
     const data: Record<string, number> = {};
     transactions.forEach(tx => {
-      tx.items.forEach(item => {
-        const categoryId = item.product?.categoryId || 'unclassified';
+      (tx.items || []).forEach(item => {
+        const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
+        const prod = products.find(p => p.id === prodId);
+        const categoryId = prod?.categoryId || (typeof item.product === 'object' ? item.product?.categoryId : '') || 'unclassified';
         const category = categories.find(c => c.id === categoryId);
         const categoryName = category?.name || 'Otros';
         
-        data[categoryName] = (data[categoryName] || 0) + (item.price * item.quantity);
+        data[categoryName] = (data[categoryName] || 0) + (item.total || (item.price * item.quantity) || 0);
       });
     });
     
@@ -272,6 +274,16 @@ export default function Reports() {
   const [manualItemPaymentMethod, setManualItemPaymentMethod] = useState<'cash' | 'transfer'>('cash');
   const [manualItemCurrencyCode, setManualItemCurrencyCode] = useState<string>('CUP');
   const [isAddingManualItem, setIsAddingManualItem] = useState(false);
+
+  // Estados para adición de productos faltantes dentro del modal de auditoría de descuadre (Afectando stock físico)
+  const [auditProductSearch, setAuditProductSearch] = useState<string>("");
+  const [auditProductId, setAuditProductId] = useState<string>("");
+  const [auditQuantity, setAuditQuantity] = useState<number>(1);
+  const [auditPrice, setAuditPrice] = useState<number>(0);
+  const [auditPaymentMethod, setAuditPaymentMethod] = useState<'cash' | 'transfer'>('cash');
+  const [auditCurrencyCode, setAuditCurrencyCode] = useState<string>('CUP');
+  const [auditActionMode, setAuditActionMode] = useState<'add' | 'subtract'>('add');
+  const [isAddingAuditProduct, setIsAddingAuditProduct] = useState(false);
 
   const REQUIRED_DELETE_PIN = "03111166702";
 
@@ -3431,14 +3443,21 @@ export default function Reports() {
                   const productMap: Record<string, { product: any, quantity: number, total: number }> = {};
                   const txList = transactions.filter(t => selectedBranchFilter === 'all' || t.branchId === selectedBranchFilter);
                   txList.forEach(tx => {
-                    tx.items.forEach(item => {
-                      const id = typeof item.product === 'string' ? item.product : item.product.id;
+                    (tx.items || []).forEach(item => {
+                      const id = typeof item.product === 'string' ? item.product : item.product?.id || 'unknown';
                       const prodObj = typeof item.product === 'string' ? products.find(p => p.id === id) : item.product;
+                      const name = prodObj?.name || (typeof item.product === 'object' ? item.product?.name : '') || 'Producto';
+                      const categoryId = prodObj?.categoryId || (typeof item.product === 'object' ? item.product?.categoryId : '') || '';
+                      
                       if (!productMap[id]) {
-                        productMap[id] = { product: prodObj || { name: 'Desconocido', categoryId: '' }, quantity: 0, total: 0 };
+                        productMap[id] = { 
+                          product: { id, name, categoryId }, 
+                          quantity: 0, 
+                          total: 0 
+                        };
                       }
                       productMap[id].quantity += item.quantity;
-                      productMap[id].total += ((prodObj?.price || 0) * item.quantity);
+                      productMap[id].total += (item.total || (item.price * item.quantity) || 0);
                     });
                   });
                   const productStats = Object.values(productMap).sort((a, b) => b.quantity - a.quantity);
@@ -4812,6 +4831,85 @@ export default function Reports() {
                         <button
                           type="button"
                           onClick={() => {
+                            // 1. Recalcular saldos esperados para esta sesión
+                            const expected: { currencyCode: string; method: 'cash' | 'transfer'; amount: number }[] = [
+                              { currencyCode: baseCurrency.code, method: 'cash', amount: session.openingBalance || 0 }
+                            ];
+
+                            const sessionTxs = transactions.filter(t => 
+                              t.sessionId 
+                                ? t.sessionId === session.id
+                                : (t.branchId === session.branchId && 
+                                   new Date(t.date).getTime() >= new Date(session.openedAt).getTime() && 
+                                   (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
+                            );
+
+                            sessionTxs.forEach(tx => {
+                              (tx.payments || []).forEach(p => {
+                                const ex = expected.find(e => e.currencyCode === p.currencyCode && e.method === p.method);
+                                if (ex) ex.amount += p.amount;
+                                else expected.push({ currencyCode: p.currencyCode, method: p.method as any, amount: p.amount });
+                              });
+                              if (tx.changePayments && tx.changePayments.length > 0) {
+                                tx.changePayments.forEach(cp => {
+                                  const ex = expected.find(e => e.currencyCode === cp.currencyCode && e.method === cp.method);
+                                  if (ex) ex.amount -= cp.amount;
+                                  else expected.push({ currencyCode: cp.currencyCode, method: cp.method as any, amount: -cp.amount });
+                                });
+                              } else if (tx.changeGiven && tx.changeGiven > 0) {
+                                const ex = expected.find(e => e.currencyCode === baseCurrency.code && e.method === 'cash');
+                                if (ex) ex.amount -= tx.changeGiven;
+                                else expected.push({ currencyCode: baseCurrency.code, method: 'cash', amount: -tx.changeGiven });
+                              }
+                            });
+
+                            (session.movements || []).forEach(m => {
+                              const ex = expected.find(e => e.currencyCode === m.currencyCode && e.method === 'cash');
+                              if (ex) ex.amount += (m.type === 'income' ? m.amount : -m.amount);
+                              else expected.push({ currencyCode: m.currencyCode, method: 'cash', amount: m.type === 'income' ? m.amount : -m.amount });
+                            });
+
+                            const perfectBalances = expected.map(e => ({
+                              currencyCode: e.currencyCode as any,
+                              amount: e.amount,
+                              method: e.method,
+                              exchangeRate: currencies.find(c => c.code === e.currencyCode)?.rateToBase || 1
+                            }));
+
+                            // 2. Actualizar el turno para un Cuadre Perfecto
+                            updateCashSession(session.id, {
+                              closingBalances: perfectBalances,
+                              discrepancyDetails: [],
+                              hasDiscrepancy: false,
+                              isForcedClose: false,
+                              forcedCloseReason: '',
+                              auditStatus: 'resolved',
+                              auditNotes: 'Auditoría cerrada con Cuadre Perfecto aplicado manualmente por el auditor.'
+                            });
+
+                            setSelectedDiscrepancyDetailSession({
+                              ...session,
+                              closingBalances: perfectBalances,
+                              discrepancyDetails: [],
+                              hasDiscrepancy: false,
+                              isForcedClose: false,
+                              forcedCloseReason: '',
+                              auditStatus: 'resolved',
+                              auditNotes: 'Auditoría cerrada con Cuadre Perfecto aplicado manualmente por el auditor.'
+                            });
+
+                            if (addNotification) addNotification("Cuadre perfecto aplicado. La diferencia ha quedado en 0.", "success");
+                          }}
+                          className="px-3.5 py-1.5 bg-emerald-650 hover:bg-emerald-700 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95 mr-2"
+                          title="Alinear saldo declarado con saldo esperado para fijar descuadre a 0"
+                        >
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          <span>Cuadre Perfecto</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
                             updateCashSession(session.id, {
                               auditStatus: editingAuditStatus,
                               auditNotes: editingAuditNotes
@@ -4827,6 +4925,275 @@ export default function Reports() {
                         >
                           <Save className="w-3.5 h-3.5" />
                           <span>Guardar Auditoría</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Sección para registrar productos faltantes o restar productos duplicados del turno */}
+                    <div className={cn(
+                      "p-4 rounded-2xl border transition-all space-y-3.5",
+                      auditActionMode === 'add'
+                        ? "bg-amber-500/5 border-amber-500/20"
+                        : "bg-rose-500/5 border-rose-500/20"
+                    )}>
+                      {/* Tabs de Modo de Auditoría */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-base/50 pb-2.5">
+                        <div className="flex items-center gap-1.5 p-1 bg-secondary rounded-xl border border-base">
+                          <button
+                            type="button"
+                            onClick={() => setAuditActionMode('add')}
+                            className={cn(
+                              "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer",
+                              auditActionMode === 'add'
+                                ? "bg-amber-600 text-white shadow-xs"
+                                : "text-muted hover:text-primary"
+                            )}
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>➕ Agregar Faltante (Descuenta Almacén)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAuditActionMode('subtract')}
+                            className={cn(
+                              "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer",
+                              auditActionMode === 'subtract'
+                                ? "bg-rose-600 text-white shadow-xs"
+                                : "text-muted hover:text-primary"
+                            )}
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                            <span>➖ Restar Duplicado (Suma a Almacén)</span>
+                          </button>
+                        </div>
+
+                        {auditProductSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setAuditProductSearch("")}
+                            className="text-[8px] font-bold text-muted hover:text-primary hover:underline cursor-pointer uppercase"
+                          >
+                            Limpiar Búsqueda
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Banner Informativo Dinámico */}
+                      <div className={cn(
+                        "p-2.5 rounded-xl text-left border",
+                        auditActionMode === 'add'
+                          ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200/40 text-amber-900 dark:text-amber-300"
+                          : "bg-rose-50 dark:bg-rose-950/20 border-rose-200/40 text-rose-900 dark:text-rose-300"
+                      )}>
+                        <p className="text-[8px] font-semibold uppercase leading-relaxed">
+                          {auditActionMode === 'add' ? (
+                            <>ℹ️ <strong>MODO AGREGAR FALTANTE:</strong> Los productos agregados se registrarán como venta de este turno y <strong>se descontarán directamente del almacén ({branch?.name || 'este almacén'})</strong>.</>
+                          ) : (
+                            <>ℹ️ <strong>MODO RESTAR DUPLICADO:</strong> Los productos restados corregirán ventas anotadas doblemente en el turno y <strong>SE SUMARÁN NUEVAMENTE al inventario del almacén ({branch?.name || 'este almacén'})</strong>.</>
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Buscador de Producto */}
+                        <div className="space-y-1">
+                          <label className="block text-[8px] font-black uppercase text-slate-500 tracking-wider">
+                            Buscar Producto:
+                          </label>
+                          <input
+                            type="text"
+                            value={auditProductSearch}
+                            onChange={(e) => setAuditProductSearch(e.target.value)}
+                            placeholder="Nombre o SKU..."
+                            className="w-full px-3 py-1.5 bg-secondary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-2 focus:ring-amber-500/20"
+                          />
+                        </div>
+
+                        {/* Selector de Producto */}
+                        <div className="space-y-1">
+                          <label className="block text-[8px] font-black uppercase text-slate-500 tracking-wider">
+                            Seleccionar Producto:
+                          </label>
+                          {(() => {
+                            const query = (auditProductSearch || "").toLowerCase().trim();
+                            const filtered = products.filter(p => 
+                              !query || 
+                              (p.name && p.name.toLowerCase().includes(query)) ||
+                              (p.sku && p.sku.toLowerCase().includes(query))
+                            );
+
+                            return (
+                              <select
+                                value={auditProductId}
+                                onChange={(e) => {
+                                  const pId = e.target.value;
+                                  setAuditProductId(pId);
+                                  const prod = products.find(p => p.id === pId);
+                                  if (prod) {
+                                    setAuditPrice(prod.price || 0);
+                                  }
+                                }}
+                                className="w-full px-3 py-1.5 bg-secondary border border-base rounded-xl text-xs font-bold text-primary outline-none cursor-pointer"
+                              >
+                                <option value="">-- Selecciona un producto ({filtered.length}) --</option>
+                                {filtered.map(p => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.name} {p.sku ? `(${p.sku})` : ''} — ${p.price?.toLocaleString()} CUP
+                                  </option>
+                                ))}
+                              </select>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        {/* Cantidad */}
+                        <div className="space-y-1">
+                          <label className="block text-[8px] font-black uppercase text-slate-500 tracking-wider">
+                            Cantidad:
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={auditQuantity}
+                            onChange={(e) => setAuditQuantity(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                            className="w-full px-3 py-1.5 bg-secondary border border-base rounded-xl text-xs font-black font-mono text-primary outline-none"
+                          />
+                        </div>
+
+                        {/* Precio */}
+                        <div className="space-y-1">
+                          <label className="block text-[8px] font-black uppercase text-slate-500 tracking-wider">
+                            Precio Unitario (CUP):
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={auditPrice}
+                            onChange={(e) => setAuditPrice(Math.max(0, parseFloat(e.target.value) || 0))}
+                            className="w-full px-3 py-1.5 bg-secondary border border-base rounded-xl text-xs font-black font-mono text-primary outline-none"
+                          />
+                        </div>
+
+                        {/* Método Pago */}
+                        <div className="space-y-1">
+                          <label className="block text-[8px] font-black uppercase text-slate-500 tracking-wider">
+                            Método Pago:
+                          </label>
+                          <select
+                            value={auditPaymentMethod}
+                            onChange={(e) => setAuditPaymentMethod(e.target.value as any)}
+                            className="w-full px-3 py-1.5 bg-secondary border border-base rounded-xl text-xs font-bold text-primary outline-none cursor-pointer"
+                          >
+                            <option value="cash">Efectivo</option>
+                            <option value="transfer">Transferencia</option>
+                          </select>
+                        </div>
+
+                        {/* Moneda */}
+                        <div className="space-y-1">
+                          <label className="block text-[8px] font-black uppercase text-slate-500 tracking-wider">
+                            Moneda:
+                          </label>
+                          <select
+                            value={auditCurrencyCode}
+                            onChange={(e) => setAuditCurrencyCode(e.target.value)}
+                            className="w-full px-3 py-1.5 bg-secondary border border-base rounded-xl text-xs font-bold text-primary outline-none cursor-pointer"
+                          >
+                            {currencies.map(c => (
+                              <option key={c.code} value={c.code}>{c.code}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={isAddingAuditProduct || !auditProductId || auditQuantity <= 0}
+                          onClick={async () => {
+                            const prod = products.find(p => p.id === auditProductId);
+                            if (!prod) {
+                              if (addNotification) addNotification('Selecciona un producto válido', 'warning');
+                              return;
+                            }
+                            setIsAddingAuditProduct(true);
+                            try {
+                              const isDeduction = auditActionMode === 'subtract';
+                              const res = isDeduction
+                                ? await store.subtractInformationalProductFromSession(session.id, {
+                                    productId: prod.id,
+                                    productName: prod.name,
+                                    quantity: auditQuantity,
+                                    price: auditPrice,
+                                    userId: session.userId,
+                                    workerName: session.workerName,
+                                    paymentMethod: auditPaymentMethod,
+                                    currencyCode: auditCurrencyCode
+                                  }, true)
+                                : await store.addInformationalSoldProductToSession(session.id, {
+                                    productId: prod.id,
+                                    productName: prod.name,
+                                    quantity: auditQuantity,
+                                    price: auditPrice,
+                                    userId: session.userId,
+                                    workerName: session.workerName,
+                                    paymentMethod: auditPaymentMethod,
+                                    currencyCode: auditCurrencyCode
+                                  }, true, false);
+
+                              if (res.success) {
+                                if (addNotification) {
+                                  if (isDeduction) {
+                                    addNotification(`Producto ${prod.name} (${auditQuantity} uds) restado del turno y SUMADO nuevamente al inventario de almacén.`, 'success');
+                                  } else {
+                                    addNotification(`Producto ${prod.name} (${auditQuantity} uds) registrado en el turno y descontado de inventario.`, 'success');
+                                  }
+                                }
+                                
+                                // Limpiar campos locales
+                                setAuditProductId("");
+                                setAuditProductSearch("");
+                                setAuditQuantity(1);
+                                setAuditPrice(0);
+                                
+                                // Actualizar el estado de la sesión local en el modal
+                                setSelectedDiscrepancyDetailSession({
+                                  ...session,
+                                  movements: session.movements // trigger re-render
+                                });
+                              } else {
+                                if (addNotification) addNotification('No se pudo realizar el ajuste en el informe.', 'error');
+                              }
+                            } catch (err: any) {
+                              if (addNotification) addNotification(err.message || 'Error al procesar ajuste de auditoría', 'error');
+                            } finally {
+                              setIsAddingAuditProduct(false);
+                            }
+                          }}
+                          className={cn(
+                            "px-4 py-2 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-sm active:scale-95",
+                            auditActionMode === 'add' ? "bg-amber-600 hover:bg-amber-700" : "bg-rose-600 hover:bg-rose-700"
+                          )}
+                        >
+                          {isAddingAuditProduct ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Procesando Auditoría...</span>
+                            </>
+                          ) : auditActionMode === 'add' ? (
+                            <>
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Agregar Faltante a Turno (Descontar de Almacén)</span>
+                            </>
+                          ) : (
+                            <>
+                              <Minus className="w-3.5 h-3.5" />
+                              <span>Restar Producto Duplicado (Devolver y Sumar a Almacén)</span>
+                            </>
+                          )}
                         </button>
                       </div>
                     </div>
@@ -5985,63 +6352,106 @@ export default function Reports() {
               </div>
             </div>
 
-            <div className="flex gap-2.5 pt-4 border-t border-base mt-2">
+            <div className="space-y-2 pt-4 border-t border-base mt-2 flex flex-col">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={isAddingManualItem || !manualItemProductId || manualItemQuantity <= 0}
+                  onClick={async () => {
+                    const prod = products.find(p => p.id === manualItemProductId);
+                    if (!prod) {
+                      store.addNotification('Selecciona un producto válido', 'warning');
+                      return;
+                    }
+                    setIsAddingManualItem(true);
+                    try {
+                      const worker = users.find(u => u.id === manualItemWorkerId) || users.find(u => u.id === addItemToShiftModal.userId);
+                      const res = await store.addInformationalSoldProductToSession(addItemToShiftModal.id, {
+                        productId: prod.id,
+                        productName: prod.name,
+                        quantity: manualItemQuantity,
+                        price: manualItemPrice,
+                        userId: worker?.id || addItemToShiftModal.userId,
+                        workerName: worker?.name || addItemToShiftModal.workerName,
+                        paymentMethod: manualItemPaymentMethod,
+                        currencyCode: manualItemCurrencyCode
+                      }, false); // affectStock: false
+
+                      if (res.success) {
+                        store.addNotification(`Producto ${prod.name} (${manualItemQuantity} uds) añadido al informe (sin afectar stock).`, 'success');
+                        setAddItemToShiftModal(null);
+                      } else {
+                        store.addNotification('No se pudo añadir el producto al informe.', 'error');
+                      }
+                    } catch (err: any) {
+                      store.addNotification(err.message || 'Error al añadir producto', 'error');
+                    } finally {
+                      setIsAddingManualItem(false);
+                    }
+                  }}
+                  className="py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-black rounded-xl text-[10px] uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isAddingManualItem ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="w-3.5 h-3.5 text-indigo-600" />
+                  )}
+                  <span>Añadir sin afectar stock</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isAddingManualItem || !manualItemProductId || manualItemQuantity <= 0}
+                  onClick={async () => {
+                    const prod = products.find(p => p.id === manualItemProductId);
+                    if (!prod) {
+                      store.addNotification('Selecciona un producto válido', 'warning');
+                      return;
+                    }
+                    setIsAddingManualItem(true);
+                    try {
+                      const worker = users.find(u => u.id === manualItemWorkerId) || users.find(u => u.id === addItemToShiftModal.userId);
+                      const res = await store.addInformationalSoldProductToSession(addItemToShiftModal.id, {
+                        productId: prod.id,
+                        productName: prod.name,
+                        quantity: manualItemQuantity,
+                        price: manualItemPrice,
+                        userId: worker?.id || addItemToShiftModal.userId,
+                        workerName: worker?.name || addItemToShiftModal.workerName,
+                        paymentMethod: manualItemPaymentMethod,
+                        currencyCode: manualItemCurrencyCode
+                      }, true); // affectStock: true
+
+                      if (res.success) {
+                        store.addNotification(`Producto ${prod.name} (${manualItemQuantity} uds) añadido al informe y stock descontado.`, 'success');
+                        setAddItemToShiftModal(null);
+                      } else {
+                        store.addNotification('No se pudo añadir el producto al informe.', 'error');
+                      }
+                    } catch (err: any) {
+                      store.addNotification(err.message || 'Error al añadir producto', 'error');
+                    } finally {
+                      setIsAddingManualItem(false);
+                    }
+                  }}
+                  className="py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-[10px] uppercase tracking-wider transition-all shadow-md shadow-indigo-600/20 active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isAddingManualItem ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="w-3.5 h-3.5" />
+                  )}
+                  <span>Añadir afectando stock</span>
+                </button>
+              </div>
+
               <button
                 type="button"
                 onClick={() => setAddItemToShiftModal(null)}
                 disabled={isAddingManualItem}
-                className="flex-1 py-3 bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary font-black rounded-xl text-[10px] uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50"
+                className="w-full py-2.5 bg-subtle hover:bg-slate-200 dark:hover:bg-slate-800 text-primary font-black rounded-xl text-[9px] uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50 mt-1"
               >
                 Cancelar
-              </button>
-              <button
-                type="button"
-                disabled={isAddingManualItem || !manualItemProductId || manualItemQuantity <= 0}
-                onClick={async () => {
-                  const prod = products.find(p => p.id === manualItemProductId);
-                  if (!prod) {
-                    store.addNotification('Selecciona un producto válido', 'warning');
-                    return;
-                  }
-                  setIsAddingManualItem(true);
-                  try {
-                    const worker = users.find(u => u.id === manualItemWorkerId) || users.find(u => u.id === addItemToShiftModal.userId);
-                    const res = await store.addInformationalSoldProductToSession(addItemToShiftModal.id, {
-                      productId: prod.id,
-                      productName: prod.name,
-                      quantity: manualItemQuantity,
-                      price: manualItemPrice,
-                      userId: worker?.id || addItemToShiftModal.userId,
-                      workerName: worker?.name || addItemToShiftModal.workerName,
-                      paymentMethod: manualItemPaymentMethod,
-                      currencyCode: manualItemCurrencyCode
-                    });
-
-                    if (res.success) {
-                      store.addNotification(`Producto ${prod.name} (${manualItemQuantity} uds) añadido al informe del turno.`, 'success');
-                      setAddItemToShiftModal(null);
-                    } else {
-                      store.addNotification('No se pudo añadir el producto al informe.', 'error');
-                    }
-                  } catch (err: any) {
-                    store.addNotification(err.message || 'Error al añadir producto', 'error');
-                  } finally {
-                    setIsAddingManualItem(false);
-                  }
-                }}
-                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-[10px] uppercase tracking-wider transition-all shadow-md shadow-indigo-600/20 active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-              >
-                {isAddingManualItem ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Añadiendo...</span>
-                  </>
-                ) : (
-                  <>
-                    <Plus className="w-4 h-4" />
-                    <span>Añadir al Informe</span>
-                  </>
-                )}
               </button>
             </div>
           </div>

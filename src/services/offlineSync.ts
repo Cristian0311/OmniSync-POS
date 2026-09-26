@@ -11,6 +11,7 @@ import {
   Customer, ReturnItem, BankTransaction, Branch, Product, Category 
 } from '../types';
 import { callOpenSessionRPC, callProcessTransactionRPC } from './supabaseSync';
+import { addSyncLog } from '../utils/syncLogger';
 
 export type OfflineActionType =
   | 'transaction'
@@ -87,6 +88,14 @@ export function enqueueOfflineItem(type: OfflineActionType, data: any, actionId?
   }
 
   saveOfflineQueue(currentQueue);
+  addSyncLog({
+    level: 'info',
+    source: 'offline_queue',
+    title: `Elemento encolado (${type})`,
+    details: `Operación ${finalActionId} guardada en cola offline local. Pendientes totales: ${currentQueue.length}`,
+    entityType: type,
+    actionId: finalActionId
+  });
   console.info(`[offlineSync] Elemento encolado (${type}): ${finalActionId}. Pendientes: ${currentQueue.length}`);
 }
 
@@ -396,11 +405,29 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
     try {
       await processQueueItem(supabase, item);
       processed++;
+      addSyncLog({
+        level: 'success',
+        source: 'offline_queue',
+        title: `Item sincronizado (${item.type})`,
+        details: `Operación ${item.actionId} subida con éxito a Supabase.`,
+        entityType: item.type,
+        actionId: item.actionId
+      });
       console.debug(`[offlineSync] Item sincronizado con éxito (${item.type}): ${item.actionId}`);
     } catch (err: any) {
       console.warn(`[offlineSync] Fallo al sincronizar item (${item.type} ${item.actionId}):`, err?.message || err);
       failed++;
       item.retryCount = (item.retryCount || 0) + 1;
+      addSyncLog({
+        level: 'error',
+        source: 'offline_queue',
+        title: `Error al procesar item (${item.type})`,
+        details: err?.message || 'Fallo de conexión o Supabase RPC',
+        entityType: item.type,
+        actionId: item.actionId,
+        retryAttempt: item.retryCount,
+        maxRetries: 5
+      });
       // Si falló por desconexión de red súbita, mantenerlo para la próxima reconexión
       remainingQueue.push(item);
     }

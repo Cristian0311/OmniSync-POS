@@ -29,6 +29,7 @@ import React, { useState, useEffect } from "react";
 import { cn } from "../lib/utils";
 import { useStore } from "../store/useStore";
 import { getOfflineQueueCount, processOfflineQueue } from "../services/offlineSync";
+import { SupabaseRefreshModal } from "./SupabaseRefreshModal";
 import { 
   CheckCircle2, 
   AlertTriangle, 
@@ -224,7 +225,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className={cn("shrink-0 p-3 bg-secondary border-t border-subtle", sidebarCollapsed && "md:p-2 md:items-center")}>
-          <div className={cn("mb-2", sidebarCollapsed && "md:hidden")}>
+          <div className={cn("mb-2 space-y-1.5", sidebarCollapsed && "md:hidden")}>
+            <SupabaseRefreshModal variant="compact" label="Reactualizar Supabase" buttonClassName="w-full justify-center text-[8px] py-1.5" />
+
             <button
               type="button"
               onClick={handleManualSync}

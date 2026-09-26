@@ -6,6 +6,8 @@ import { Branch, Category, User } from "../types";
 import { cn } from "../lib/utils";
 import { testSupabaseTables, pushAllToSupabase, SupabaseDiagnosticReport } from "../services/supabaseSync";
 import { normalizeSemanticText } from "../utils/textUtils";
+import { SyncLogsPanel } from "../components/SyncLogsPanel";
+import { SupabaseRefreshModal } from "../components/SupabaseRefreshModal";
 
 export default function Settings() {
   const { 
@@ -1208,6 +1210,8 @@ export default function Settings() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <SupabaseRefreshModal variant="compact" label="Reactualizar Todo con Supabase" />
+
               <button
                 type="button"
                 onClick={handleRunSupabaseDiagnostic}
@@ -1888,6 +1892,9 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      {/* Monitor de Logs de Sincronización en Tiempo Real */}
+      <SyncLogsPanel />
 
       {/* Zona Peligrosa */}
       <div className="bg-secondary rounded-2xl shadow-sm border border-red-200 dark:border-red-900/30 p-5 space-y-4 lg:col-span-3">
