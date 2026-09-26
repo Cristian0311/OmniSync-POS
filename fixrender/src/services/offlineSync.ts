@@ -380,10 +380,13 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     }
     case 'salary_settlement': {
       const settlement = data;
+      // Keep the offline replay payload aligned with the live schema.
+      // `discrepancy_deduction` was removed from salary_settlements; sending it
+      // through PostgREST produces a 400/PGRST204 and leaves the item stuck.
       const { error } = await supabase.from('salary_settlements').upsert({
         id: settlement.id, user_id: settlement.userId || null, user_name: settlement.userName || '',
         session_id: settlement.sessionId || null, base_salary: settlement.baseSalary || 0,
-        commissions: settlement.commissions || 0, discrepancy_deduction: settlement.discrepancyDeduction || 0,
+        sales_goal: settlement.salesGoal || 0, commissions: settlement.commissions || 0,
         total: settlement.total || 0, date: settlement.date, status: settlement.status || 'pending'
       });
       if (error) throw error;
@@ -552,7 +555,11 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
     } catch (err:any) {
       failed++;
       item.retryCount = (item.retryCount || 0) + 1;
-      item.lastError = err?.message || 'Error desconocido';
+      const code = err?.code ? ` [${err.code}]` : '';
+      const status = err?.status || err?.statusCode ? ` HTTP ${err?.status || err?.statusCode}` : '';
+      const detail = err?.details ? ` — ${err.details}` : '';
+      const hint = err?.hint ? ` — ${err.hint}` : '';
+      item.lastError = `${err?.message || 'Error desconocido'}${code}${status}${detail}${hint}`;
       const permanent = err?.permanent === true;
       item.status = permanent || item.retryCount >= 8 ? 'conflict' : 'failed';
       remainingFromRun.push(item);

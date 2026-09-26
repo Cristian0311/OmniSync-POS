@@ -120,7 +120,10 @@ export async function reconcileInventoryToSupabase(params: {
       p_min_quantity: Number(params.minQuantity) || 0,
       p_user_id: params.userId || null
     });
-    if (error) return { success: false, error: error.message };
+    if (error) return {
+      success: false,
+      error: [error.message, error.code && `code=${error.code}`, (error as any).status && `HTTP ${(error as any).status}`, error.details, error.hint].filter(Boolean).join(' · ')
+    };
     return { success: !data?.conflict, data, conflict: Boolean(data?.conflict), error: data?.message };
   } catch (e: any) {
     return { success: false, error: e?.message || 'Error de reconciliación' };

@@ -237,6 +237,17 @@ CREATE INDEX IF NOT EXISTS idx_inventory_movements_product_branch
 CREATE INDEX IF NOT EXISTS idx_inventory_movements_reference
   ON inventory_movements(reference_id);
 
+-- Offline inventory RPCs need to record their audit movement under the
+-- current custom-auth/anon architecture. Without this policy RLS rejects
+-- valid transfer/reconciliation writes.
+ALTER TABLE inventory_movements ENABLE ROW LEVEL SECURITY;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='inventory_movements' AND policyname='Public Full Access') THEN
+    CREATE POLICY "Public Full Access" ON inventory_movements FOR ALL TO public USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+
 -- Una sola liquidación por turno.
 DO $$
 BEGIN
