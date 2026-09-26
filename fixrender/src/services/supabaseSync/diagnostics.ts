@@ -239,9 +239,8 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
         session_id: ss.sessionId || null,
         base_salary: Number(ss.baseSalary) || 0,
         commissions: Number(ss.commissions) || 0,
-        discrepancy_deduction: Number(ss.discrepancyDeduction) || 0,
-        total: Number(ss.total) || 0,
         sales_goal: Number(ss.salesGoal) || 0,
+        total: Number(ss.total) || 0,
         date: ss.date,
         status: ss.status || 'pending'
       }));

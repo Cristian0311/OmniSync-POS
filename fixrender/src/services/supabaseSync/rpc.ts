@@ -383,9 +383,9 @@ export async function callCloseSessionRPC(
             user_name: settlement.userName || '',
             session_id: sessionId,
             base_salary: settlement.baseSalary || 0,
+            sales_goal: settlement.salesGoal || 0,
             commissions: settlement.commissions || 0,
             total: settlement.total || 0,
-            discrepancy_deduction: settlement.discrepancyDeduction || 0,
             date: closedAt || new Date().toISOString(),
             status: 'pending'
           });
