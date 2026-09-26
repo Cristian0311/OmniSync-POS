@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useEffect } from "react";
 import { 
   ArrowLeftRight, 
@@ -37,7 +38,7 @@ export default function Transfers() {
     currentBranchId,
     addNotification,
     users
-  } = useStore();
+  } = useStore(useShallow((state) => ({ branches: state.branches, products: state.products, inventory: state.inventory, transferInventory: state.transferInventory, transferInventoryBatch: state.transferInventoryBatch, transferProductsBulk: state.transferProductsBulk, transfers: state.transfers, currentBranchId: state.currentBranchId, addNotification: state.addNotification, users: state.users })));
 
   const getBranchDisplayName = (b: { id: string; name: string }) => {
     const assignedUser = (users || []).find(u => (u.assignedBranchId === b.id || u.branchId === b.id) && u.isIndependent);
@@ -185,24 +186,24 @@ export default function Transfers() {
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20 p-4 sm:p-6 max-w-full overflow-x-hidden bg-slate-50/50 min-h-screen">
       
       {/* Header */}
-      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-secondary p-4 sm:p-5 rounded-2xl border border-base shadow-xs">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-100">
-            <ArrowLeftRight className="w-6 h-6" />
+          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-indigo-100 dark:shadow-none shrink-0">
+            <ArrowLeftRight className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight uppercase leading-none">Transferencias</h2>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Gestión de inventario entre sucursales</p>
+            <h2 className="text-lg sm:text-xl font-black text-primary tracking-tight uppercase leading-none">Transferencias</h2>
+            <p className="text-[9px] font-bold text-muted uppercase tracking-widest mt-1">Gestión de inventario entre sucursales</p>
           </div>
         </div>
         
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200">
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+          <div className="flex bg-subtle p-1 rounded-xl border border-base">
             <button
               onClick={() => setActiveTab('history')}
               className={cn(
-                "px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
-                activeTab === 'history' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm border border-slate-200" : "text-slate-500 hover:text-slate-700"
+                "px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer",
+                activeTab === 'history' ? "bg-secondary text-indigo-600 shadow-xs border border-base" : "text-muted hover:text-primary"
               )}
             >
               Historial
@@ -210,11 +211,11 @@ export default function Transfers() {
             <button
               onClick={() => setActiveTab('new')}
               className={cn(
-                "px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
-                activeTab === 'new' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm border border-slate-200" : "text-slate-500 hover:text-slate-700"
+                "px-3.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer",
+                activeTab === 'new' ? "bg-secondary text-indigo-600 shadow-xs border border-base" : "text-muted hover:text-primary"
               )}
             >
-              Nuevo Traslado (Varios)
+              Nuevo Traslado
             </button>
           </div>
           <button 
@@ -226,9 +227,9 @@ export default function Transfers() {
                 setFormData(prev => ({ ...prev, productId: products[0].id }));
               }
             }}
-            className="bg-slate-900 text-white px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-tight hover:bg-slate-800 transition-all shadow-lg shadow-slate-200 flex items-center gap-2 active:scale-95 whitespace-nowrap"
+            className="btn-primary"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-3.5 h-3.5" />
             Traslado Individual
           </button>
         </div>

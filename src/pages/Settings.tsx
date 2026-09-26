@@ -1,13 +1,11 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useEffect } from "react";
-import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw, Usb, Bluetooth, Wifi, Printer, CheckCircle2, ExternalLink, AlertCircle, Sparkles, Smartphone, ChevronRight, Package, Search, X, Database, CloudUpload, CloudDownload, Check, ShieldCheck, Sun, Moon } from "lucide-react";
+import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw, Usb, Bluetooth, Wifi, Printer, CheckCircle2, ExternalLink, AlertCircle, Sparkles, Smartphone, ChevronRight, Package, Search, X, Database, CloudUpload, CloudDownload, Check, Sun, Moon } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { Branch, Category, User } from "../types";
 import { cn } from "../lib/utils";
-import { testSupabaseTables, pushAllToSupabase, SupabaseDiagnosticReport } from "../services/supabaseSync";
 import { normalizeSemanticText } from "../utils/textUtils";
-import { SyncLogsPanel } from "../components/SyncLogsPanel";
-import { SupabaseRefreshModal } from "../components/SupabaseRefreshModal";
 
 export default function Settings() {
   const { 
@@ -23,8 +21,43 @@ export default function Settings() {
     idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice,
     products,
     inventory, transactions, cashSessions,
-    syncWithSupabase
-  } = useStore();
+    syncWithSupabase,
+    addNotification
+  } = useStore(useShallow((state) => ({ 
+    currencies: state.currencies, 
+    updateCurrencyRate: state.updateCurrencyRate, 
+    storeConfig: state.storeConfig, 
+    updateStoreConfig: state.updateStoreConfig, 
+    branches: state.branches, 
+    addBranch: state.addBranch, 
+    updateBranch: state.updateBranch, 
+    deleteBranch: state.deleteBranch, 
+    categories: state.categories, 
+    addCategory: state.addCategory, 
+    updateCategory: state.updateCategory, 
+    deleteCategory: state.deleteCategory, 
+    receiptConfig: state.receiptConfig, 
+    updateReceiptConfig: state.updateReceiptConfig, 
+    users: state.users, 
+    updateUser: state.updateUser, 
+    addUser: state.addUser, 
+    deleteUser: state.deleteUser, 
+    getBaseCurrency: state.getBaseCurrency, 
+    clearAllData: state.clearAllData, 
+    exportData: state.exportData, 
+    importData: state.importData, 
+    registerEmployee: state.registerEmployee, 
+    idnSettlementPrices: state.idnSettlementPrices, 
+    addIDNSettlementPrice: state.addIDNSettlementPrice, 
+    updateIDNSettlementPrice: state.updateIDNSettlementPrice, 
+    deleteIDNSettlementPrice: state.deleteIDNSettlementPrice, 
+    products: state.products, 
+    inventory: state.inventory, 
+    transactions: state.transactions, 
+    cashSessions: state.cashSessions, 
+    syncWithSupabase: state.syncWithSupabase,
+    addNotification: state.addNotification
+  })));
 
   const baseCurrency = getBaseCurrency();
 
@@ -56,13 +89,6 @@ export default function Settings() {
   const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
   const [branchToDelete, setBranchToDelete] = useState<{ id: string; name: string } | null>(null);
   const [categoryToDelete, setCategoryToDelete] = useState<{ id: string; name: string } | null>(null);
-
-  // Supabase Testing & Sync states
-  const [isTestingSupabase, setIsTestingSupabase] = useState(false);
-  const [isPushingAll, setIsPushingAll] = useState(false);
-  const [isPullingAll, setIsPullingAll] = useState(false);
-  const [diagnosticReport, setDiagnosticReport] = useState<SupabaseDiagnosticReport | null>(null);
-  const [pushSummary, setPushSummary] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -101,6 +127,7 @@ export default function Settings() {
   });
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [showConfirmCache, setShowConfirmCache] = useState(false);
   const [showConfirmReset, setShowConfirmReset] = useState(false);
   const [resetInput, setResetInput] = useState("");
@@ -112,49 +139,7 @@ export default function Settings() {
   const [newSettlementPrice, setNewSettlementPrice] = useState<number>(0);
   const [selectedIDNProduct, setSelectedIDNProduct] = useState<string>("");
 
-  const handleRunSupabaseDiagnostic = async () => {
-    setIsTestingSupabase(true);
-    setPushSummary(null);
-    try {
-      const report = await testSupabaseTables();
-      setDiagnosticReport(report);
-      showToast(report.summary, report.connected ? 'success' : 'error');
-    } catch (err: any) {
-      showToast(`Error al ejecutar test: ${err.message}`, 'error');
-    } finally {
-      setIsTestingSupabase(false);
-    }
-  };
-
-  const handlePushAllToCloud = async () => {
-    setIsPushingAll(true);
-    try {
-      const res = await pushAllToSupabase();
-      if (res.success) {
-        const totalItems = Object.values(res.pushed).reduce((a, b) => a + b, 0);
-        setPushSummary(`Se guardaron exitosamente ${totalItems} registros en Supabase (${res.pushed.branches} sucursales, ${res.pushed.users} empleados, ${res.pushed.products} productos, ${res.pushed.inventory} stock).`);
-        showToast("¡Todos los datos guardados y respaldados en Supabase!", 'success');
-      } else {
-        showToast("Error al respaldar en Supabase", 'error');
-      }
-    } catch (err: any) {
-      showToast(`Error: ${err.message}`, 'error');
-    } finally {
-      setIsPushingAll(false);
-    }
-  };
-
-  const handlePullAllFromCloud = async () => {
-    setIsPullingAll(true);
-    try {
-      await syncWithSupabase();
-      showToast("¡Datos sincronizados desde Supabase correctamente!", 'success');
-    } catch (err: any) {
-      showToast(`Error al sincronizar: ${err.message}`, 'error');
-    } finally {
-      setIsPullingAll(false);
-    }
-  };
+  const [activeTab, setActiveTab] = useState<'connectivity' | 'company' | 'branches' | 'categories' | 'employees' | 'advanced'>('connectivity');
 
   const handleClearData = async () => {
     if (resetInput.trim().toUpperCase() !== 'ELIMINAR') return;
@@ -196,7 +181,7 @@ export default function Settings() {
   const confirmDeleteUserAction = () => {
     if (userToDelete) {
       deleteUser(userToDelete.id);
-      showToast(`Empleado "${userToDelete.name}" eliminado del sistema.`);
+      showToast(`Empleado "${userToDelete.name}" desactivado. Se conserva su historial.`);
       setUserToDelete(null);
     }
   };
@@ -221,9 +206,9 @@ export default function Settings() {
 
   const confirmDeleteCategoryAction = () => {
     if (categoryToDelete) {
-      const hasProducts = (products || []).some(p => p.categoryId === categoryToDelete.id && p.status === 'active');
+      const hasProducts = (products || []).some(p => p.categoryId === categoryToDelete.id);
       if (hasProducts) {
-        showToast(`No se puede eliminar la categoría "${categoryToDelete.name}" porque tiene productos activos asignados.`, "error");
+        showToast(`No se puede eliminar la categoría "${categoryToDelete.name}" porque tiene productos asignados.`, "error");
         setCategoryToDelete(null);
         return;
       }
@@ -314,6 +299,27 @@ export default function Settings() {
     showToast("Empleado registrado con éxito. Ya aparecerá en el punto de venta.");
   };
 
+  const handleManualSync = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const { processOfflineQueue, getOfflineQueueCount } = await import('../services/offlineSync');
+      const count = getOfflineQueueCount();
+      if (count > 0) {
+        addNotification(`Sincronizando ${count} operaciones pendientes...`, 'info');
+        const res = await processOfflineQueue();
+        if (res.processed) addNotification(`Cola procesada: ${res.processed} operaciones.`, 'success');
+        if (res.failed) addNotification(`Error en ${res.failed} operaciones.`, 'error');
+      }
+      await syncWithSupabase();
+      showToast("Sincronización completa con Supabase.");
+    } catch (e) {
+      showToast("Error al sincronizar con la nube.", "error");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500 max-w-5xl mx-auto pb-8 relative">
       {/* In-App Toast Notification */}
@@ -336,6 +342,402 @@ export default function Settings() {
         </div>
       )}
 
+      {/* Header and Sync Status */}
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-secondary p-4 rounded-3xl border border-base shadow-sm">
+          <div>
+            <h2 className="text-xl font-black text-primary uppercase tracking-tight flex items-center gap-2">
+              <SettingsIcon size={20} className="text-indigo-600" />
+              Configuración
+            </h2>
+            <p className="text-[10px] font-bold text-muted uppercase tracking-widest">Sistema y Preferencias</p>
+          </div>
+          <button
+            onClick={handleManualSync}
+            disabled={isSyncing || !navigator.onLine}
+            className={cn(
+              "w-full sm:w-auto px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50",
+              isSyncing ? "bg-slate-100 text-slate-400" : "bg-indigo-600 text-white hover:bg-indigo-700 shadow-indigo-600/20"
+            )}
+          >
+            {isSyncing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CloudUpload size={14} />}
+            {isSyncing ? "Sincronizando..." : "Sincronizar Nube"}
+          </button>
+        </div>
+
+        {/* Linear Tabs for Sections */}
+        <div className="flex items-center gap-1 bg-secondary p-1 rounded-xl border border-base shrink-0 w-full overflow-x-auto custom-scrollbar shadow-xs scroll-smooth">
+          {[
+            { id: 'connectivity', label: 'Conexión', icon: Wifi },
+            { id: 'company', label: 'Empresa', icon: Store },
+            { id: 'branches', label: 'Almacenes', icon: Building2 },
+            { id: 'categories', label: 'Categorías', icon: LayoutGrid },
+            { id: 'employees', label: 'Empleados', icon: Users },
+            { id: 'advanced', label: 'Avanzado', icon: AlertTriangle },
+          ].map(tab => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button 
+                key={tab.id} 
+                onClick={() => setActiveTab(tab.id as any)} 
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap cursor-pointer",
+                  isActive 
+                    ? "bg-indigo-600 text-white shadow-xs" 
+                    : "text-secondary hover:text-primary hover:bg-subtle"
+                )}
+              >
+                <Icon size={13} />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4">
+        {/* Conectividad y Sincronización */}
+        {activeTab === 'connectivity' && (
+          <div className="space-y-4">
+            <div className="bg-secondary rounded-2xl shadow-sm border border-indigo-200 dark:border-indigo-900/30 p-5 space-y-4">
+              <div className="flex items-center gap-3 border-b border-indigo-50 dark:border-indigo-950/30 pb-3">
+                <div className="bg-indigo-50 dark:bg-indigo-950/50 p-2 rounded-lg text-indigo-600 dark:text-indigo-400">
+                  <Wifi size={16} />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">Conectividad y Nube</h3>
+                  <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Control de guardado offline y transferencia de datos</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <label className="flex items-center justify-between p-3.5 bg-primary border border-base rounded-2xl cursor-pointer group hover:border-indigo-300 transition-all">
+                    <div className="flex-1 pr-4">
+                      <div className="flex items-center gap-2">
+                        <CloudUpload size={14} className="text-indigo-600" />
+                        <span className="text-[11px] font-black text-primary uppercase">Sincronización Manual</span>
+                      </div>
+                      <p className="text-[9px] text-muted font-medium mt-1 leading-tight">
+                        Si se activa, el sistema NO subirá los datos automáticamente al recuperar internet. Deberás presionar "Sincronizar Nube" manualmente para evitar errores por caídas de conexión.
+                      </p>
+                    </div>
+                    <div className="relative inline-flex items-center">
+                      <input 
+                        type="checkbox" 
+                        className="sr-only peer"
+                        checked={config.manualOfflineSync === true}
+                        onChange={e => {
+                          const newConfig = { ...config, manualOfflineSync: e.target.checked };
+                          setConfig(newConfig);
+                          updateStoreConfig(newConfig);
+                          showToast(`Sincronización manual ${e.target.checked ? 'activada' : 'desactivada'}.`, 'info');
+                        }}
+                      />
+                      <div className="w-11 h-6 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </div>
+                  </label>
+
+                  <div className="bg-amber-50/50 dark:bg-amber-950/10 p-3.5 rounded-2xl border border-amber-100 dark:border-amber-900/30 flex items-start gap-3">
+                    <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-[9px] text-amber-700 dark:text-amber-400 font-medium leading-relaxed">
+                      <strong>Recomendación:</strong> Activa el modo manual en zonas con internet inestable. El sistema guardará todo en una cola local protegida y solo subirá cuando tú lo decidas, garantizando la integridad de cada transacción.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-primary p-4 rounded-2xl border border-base border-dashed flex flex-col justify-between">
+                  <div>
+                    <h4 className="text-[10px] font-black text-primary uppercase flex items-center gap-2">
+                      <Database size={14} className="text-indigo-600" />
+                      Estado de la Base de Datos
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3 mt-4">
+                      <div className="p-3 bg-secondary rounded-xl border border-base">
+                        <p className="text-[8px] font-black text-muted uppercase">Productos</p>
+                        <p className="text-base font-black text-primary">{products.length}</p>
+                      </div>
+                      <div className="p-3 bg-secondary rounded-xl border border-base">
+                        <p className="text-[8px] font-black text-muted uppercase">Ventas</p>
+                        <p className="text-base font-black text-primary">{transactions.length}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[8px] text-muted uppercase tracking-wider text-center mt-4 font-bold">
+                    Conectado a Supabase: <span className="text-emerald-500">{navigator.onLine ? 'SÍ' : 'NO (OFFLINE)'}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Offline Backup & Restore Section (Moved here) */}
+            <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4">
+              <div className="flex items-center gap-3 border-b border-base pb-3">
+                <div className="bg-emerald-50 dark:bg-emerald-950/30 p-2.5 rounded-xl text-emerald-600 dark:text-emerald-400">
+                  <Save size={20} />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black text-primary uppercase tracking-wider">Copia de Seguridad Offline</h3>
+                  <p className="text-[9px] font-bold text-muted uppercase tracking-tight">Exportar e importar base de datos local</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-4 bg-subtle rounded-2xl border border-base">
+                  <div className="flex items-center gap-2 mb-2">
+                    <CloudDownload className="w-4 h-4 text-indigo-500" />
+                    <span className="text-[10px] font-black uppercase text-primary tracking-widest">Generar Backup</span>
+                  </div>
+                  <p className="text-[9px] text-muted mb-4 font-bold leading-tight">Descarga toda tu información local en un archivo JSON.</p>
+                  <button
+                    onClick={() => {
+                      const data = exportData();
+                      const blob = new Blob([data], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `backup_pos_${new Date().toISOString().split('T')[0]}.json`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                      showToast("Copia de seguridad generada y descargada");
+                    }}
+                    className="w-full py-2 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider hover:bg-indigo-700 transition-all cursor-pointer shadow-md"
+                  >
+                    Exportar Datos
+                  </button>
+                </div>
+
+                <div className="p-4 bg-subtle rounded-2xl border border-base">
+                  <div className="flex items-center gap-2 mb-2">
+                    <CloudUpload className="w-4 h-4 text-indigo-500" />
+                    <span className="text-[10px] font-black uppercase text-primary tracking-widest">Restaurar Sistema</span>
+                  </div>
+                  <p className="text-[9px] text-muted mb-4 font-bold leading-tight">Carga un archivo de respaldo previo para sobrescribir los datos.</p>
+                  <label className="block">
+                    <input
+                      type="file"
+                      accept=".json"
+                      className="hidden"
+                      id="backup-upload"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (window.confirm("¿Restaurar datos? Se perderá lo que no esté en el archivo.")) {
+                          setIsLoading(true);
+                          const reader = new FileReader();
+                          reader.onload = async (ev) => {
+                            const result = await importData(ev.target?.result as string);
+                            if (result.success) {
+                              showToast("Sistema restaurado");
+                              setTimeout(() => window.location.reload(), 1000);
+                            } else showToast(`Error: ${result.error}`, "error");
+                          };
+                          reader.readAsText(file);
+                        }
+                      }}
+                    />
+                    <div className="w-full py-2 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-[9px] font-black uppercase tracking-wider text-center cursor-pointer hover:bg-slate-300 transition-all border border-base">
+                      Importar JSON
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Datos de la Empresa y Apariencia */}
+        {activeTab === 'company' && (
+          <div className="space-y-4">
+            <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4">
+              <div className="flex items-center gap-3 border-b border-base pb-3">
+                <div className="bg-indigo-50 dark:bg-indigo-950/50 p-2 rounded-lg text-indigo-600 dark:text-indigo-400">
+                  <Store size={16} />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black text-primary uppercase tracking-wider">Datos de la Empresa</h3>
+                  <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Información para tickets y reportes</p>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-muted uppercase px-1">Nombre del Negocio</label>
+                  <input 
+                    type="text" 
+                    value={config.storeName}
+                    onChange={e => setConfig({ ...config, storeName: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-muted uppercase px-1">Teléfono</label>
+                  <input 
+                    type="text" 
+                    value={config.phone}
+                    onChange={e => setConfig({ ...config, phone: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm"
+                  />
+                </div>
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="text-[10px] font-black text-muted uppercase px-1">Dirección</label>
+                  <input 
+                    type="text" 
+                    value={config.address}
+                    onChange={e => setConfig({ ...config, address: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm"
+                  />
+                </div>
+              </div>
+              <div className="pt-2 flex justify-end">
+                <button 
+                  onClick={handleSaveConfig}
+                  className="px-6 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md flex items-center gap-2 cursor-pointer"
+                >
+                  <Save size={14} />
+                  Guardar Cambios
+                </button>
+              </div>
+            </div>
+
+            {/* Tasas de Cambio (Moved here) */}
+            <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-base pb-3 gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="bg-emerald-50 p-1.5 rounded-lg text-emerald-600 shrink-0">
+                    <DollarSign className="w-4 h-4" />
+                  </div>
+                  <h3 className="text-xs font-black text-primary uppercase tracking-wider truncate">Tasas de Cambio</h3>
+                </div>
+                <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-md shrink-0">
+                  Base: {baseCurrency.code}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {currencies
+                  .filter(currency => ['CUP', 'USD', 'EUR'].includes(currency.code))
+                  .map(currency => {
+                    const isBase = currency.code === baseCurrency.code;
+                    return (
+                      <div key={currency.code} className={cn("px-3 py-2 rounded-xl border flex items-center justify-between gap-3", isBase ? "bg-subtle border-base" : "bg-primary border-base shadow-xs")}>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="w-6 h-6 rounded-md bg-secondary text-primary font-black text-[11px] flex items-center justify-center shrink-0 border border-base">
+                            {currency.symbol || (currency.code === 'EUR' ? '€' : '$')}
+                          </span>
+                          <span className="text-xs font-black text-primary uppercase">{currency.code}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 justify-end">
+                          {isBase ? (
+                            <span className="text-[9px] font-black uppercase text-emerald-600">1.00 (Base)</span>
+                          ) : (
+                            <div className="flex items-center bg-subtle border border-base rounded-lg px-2 py-0.5">
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={rates[currency.code] ?? ''}
+                                onChange={(e) => setRates({ ...rates, [currency.code]: parseFloat(e.target.value) || 0 })}
+                                className="w-12 bg-transparent text-right text-xs font-black text-primary outline-none"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+              <button onClick={handleSaveRates} className="w-full py-2 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md">
+                <Save size={14} /> Actualizar Tasas
+              </button>
+            </div>
+
+            {/* Apariencia (Moved here) */}
+            <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4">
+              <div className="flex items-center gap-3 border-b border-base pb-3">
+                <div className="bg-indigo-600 p-2 rounded-lg text-white">
+                  <Sparkles size={16} />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black text-primary uppercase tracking-wider">Apariencia</h3>
+                  <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Tema del sistema</p>
+                </div>
+              </div>
+              <div className="flex items-center justify-between bg-subtle p-4 rounded-2xl border border-base">
+                <p className="text-xs font-bold text-primary">Modo Oscuro</p>
+                <div className="flex bg-secondary p-1 rounded-xl border border-base">
+                  <button onClick={() => { const nc = {...config, darkMode:false}; setConfig(nc); updateStoreConfig(nc); }} className={cn("px-4 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer", !config.darkMode ? "bg-indigo-600 text-white" : "text-muted")}>Luz</button>
+                  <button onClick={() => { const nc = {...config, darkMode:true}; setConfig(nc); updateStoreConfig(nc); }} className={cn("px-4 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer", config.darkMode ? "bg-indigo-600 text-white" : "text-muted")}>Noche</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Categorías */}
+        {activeTab === 'categories' && (
+          <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4">
+            <div className="flex items-center gap-3 border-b border-base pb-3">
+              <div className="bg-amber-50 dark:bg-amber-950/30 p-2 rounded-lg text-amber-600 dark:text-amber-400">
+                <LayoutGrid size={16} />
+              </div>
+              <div>
+                <h3 className="text-xs font-black text-primary uppercase tracking-wider">Categorías de Productos</h3>
+                <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Clasificación de inventario para reportes</p>
+              </div>
+            </div>
+            {/* ... Categories content ... */}
+          </div>
+        )}
+
+        {/* Empleados */}
+        {activeTab === 'employees' && (
+          <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4">
+            <div className="flex items-center gap-3 border-b border-base pb-3">
+              <div className="bg-indigo-50 dark:bg-indigo-950/50 p-2 rounded-lg text-indigo-600 dark:text-indigo-400">
+                <Users size={16} />
+              </div>
+              <div>
+                <h3 className="text-xs font-black text-primary uppercase tracking-wider">Gestión de Empleados</h3>
+                <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Permisos y salarios por turno</p>
+              </div>
+            </div>
+            {/* ... Employees content ... */}
+          </div>
+        )}
+
+        {/* Avanzado / Reset */}
+        {activeTab === 'advanced' && (
+          <div className="bg-secondary rounded-2xl shadow-sm border border-rose-100 dark:border-rose-900/30 p-5 space-y-4">
+             <div className="flex items-center gap-3 border-b border-rose-50 dark:border-rose-950/30 pb-3">
+              <div className="bg-rose-50 dark:bg-rose-950/50 p-2 rounded-lg text-rose-600 dark:text-rose-400">
+                <AlertTriangle size={16} />
+              </div>
+              <div>
+                <h3 className="text-xs font-black text-rose-600 dark:text-rose-400 uppercase tracking-wider">Avanzado</h3>
+                <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Acciones críticas del sistema</p>
+              </div>
+            </div>
+            <div className="p-4 bg-rose-50/50 dark:bg-rose-950/10 rounded-2xl border border-rose-100 dark:border-rose-900/30">
+               <h4 className="text-[10px] font-black text-rose-600 uppercase mb-2">Zona de Peligro</h4>
+               <p className="text-[9px] text-rose-700 dark:text-rose-400 font-medium leading-relaxed mb-4">
+                 Las siguientes acciones son irreversibles. Borrarán todos los datos locales de este dispositivo. Asegúrate de tener una copia de seguridad o de que los datos estén sincronizados con la nube.
+               </p>
+               <div className="flex flex-col sm:flex-row gap-3">
+                 <button 
+                   onClick={() => setShowConfirmReset(true)}
+                   className="px-6 py-2.5 bg-rose-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-700 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                 >
+                   <Trash2 size={14} /> Borrar Datos Locales
+                 </button>
+               </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* In-App User Deletion Confirmation Modal */}
       {userToDelete && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
@@ -344,9 +746,9 @@ export default function Settings() {
               <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
                 <Trash2 className="w-6 h-6" />
               </div>
-              <h3 className="text-base font-black text-slate-900 uppercase">¿Eliminar Empleado?</h3>
+              <h3 className="text-base font-black text-slate-900 uppercase">¿Desactivar Empleado?</h3>
               <p className="text-xs text-slate-600">
-                ¿Estás seguro de que deseas eliminar permanentemente a <span className="font-bold text-slate-900">{userToDelete.name}</span>? Esta acción se sincronizará con Supabase y no se puede deshacer.
+                ¿Desactivar a <span className="font-bold text-slate-900">{userToDelete.name}</span>? El empleado perderá acceso, pero se conservarán su historial y operaciones.
               </p>
             </div>
             <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
@@ -362,7 +764,7 @@ export default function Settings() {
                 onClick={confirmDeleteUserAction}
                 className="px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider bg-rose-600 hover:bg-rose-700 text-white shadow-lg shadow-rose-600/20 transition-all cursor-pointer"
               >
-                Sí, Eliminar
+                Sí, Desactivar
               </button>
             </div>
           </div>
@@ -935,15 +1337,7 @@ export default function Settings() {
         </div>
       )}
 
-      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-        <div>
-          <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2 uppercase">
-            <SettingsIcon className="w-5 h-5 text-indigo-600" />
-            Configuración
-          </h2>
-          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ajustes del Sistema</p>
-        </div>
-      </header>
+
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Tasas de Cambio (Compacto Lineal: CUP, USD, EUR) */}
@@ -1035,16 +1429,16 @@ export default function Settings() {
           </div>
 
           <div className="space-y-3">
-            <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+            <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
               {categories.map(cat => (
                 <div key={cat.id} className="flex justify-between items-center bg-subtle p-2 rounded-xl border border-base group">
                   <div className="flex-1 min-w-0 mr-2">
-                    <div className="text-[10px] font-black text-primary uppercase tracking-tight truncate">{cat.name}</div>
-                    <div className="text-[7px] font-bold text-muted uppercase truncate">{cat.department}</div>
+                    <div className="text-[11px] font-black text-primary uppercase tracking-tight break-words leading-snug">{cat.name}</div>
+                    <div className="text-[8px] font-bold text-muted uppercase tracking-wider">{cat.department}</div>
                   </div>
                   <div className="flex gap-1 shrink-0">
-                    <button onClick={() => { setEditingCategory(cat); setNewCategory({ name: cat.name, department: cat.department }); }} className="p-1 text-muted hover:text-indigo-600 rounded-md transition-colors cursor-pointer"><Edit size={12} /></button>
-                    <button onClick={() => setCategoryToDelete({ id: cat.id, name: cat.name })} className="p-1 text-muted hover:text-rose-500 rounded-md transition-colors cursor-pointer"><Trash2 size={12} /></button>
+                    <button onClick={() => { setEditingCategory(cat); setNewCategory({ name: cat.name, department: cat.department }); }} className="p-1.5 text-muted hover:text-indigo-600 rounded-lg transition-colors cursor-pointer" title="Editar"><Edit size={13} /></button>
+                    <button onClick={() => setCategoryToDelete({ id: cat.id, name: cat.name })} className="p-1.5 text-muted hover:text-rose-500 rounded-lg transition-colors cursor-pointer" title="Eliminar"><Trash2 size={13} /></button>
                   </div>
                 </div>
               ))}
@@ -1089,14 +1483,14 @@ export default function Settings() {
           </div>
 
           <div className="space-y-3">
-            <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+            <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
               {branches.map(branch => (
                 <div key={branch.id} className="flex justify-between items-center bg-subtle p-2 rounded-xl border border-base group">
-                  <div className="text-[10px] font-black text-primary uppercase tracking-tight truncate flex-1 min-w-0">{branch.name}</div>
-                  <div className="flex gap-1 shrink-0 ml-2">
-                    <button onClick={() => { setEditingBranch(branch); setNewBranchName(branch.name); }} className="p-1 text-muted hover:text-indigo-600 rounded-md transition-colors cursor-pointer"><Edit size={12} /></button>
+                  <div className="text-[11px] font-black text-primary uppercase tracking-tight break-words leading-snug flex-1 min-w-0 mr-2">{branch.name}</div>
+                  <div className="flex gap-1 shrink-0 ml-1">
+                    <button onClick={() => { setEditingBranch(branch); setNewBranchName(branch.name); }} className="p-1.5 text-muted hover:text-indigo-600 rounded-lg transition-colors cursor-pointer" title="Editar"><Edit size={13} /></button>
                     {branches.length > 1 && (
-                      <button onClick={() => setBranchToDelete({ id: branch.id, name: branch.name })} className="p-1 text-muted hover:text-rose-500 rounded-md transition-colors cursor-pointer"><Trash2 size={12} /></button>
+                      <button onClick={() => setBranchToDelete({ id: branch.id, name: branch.name })} className="p-1.5 text-muted hover:text-rose-500 rounded-lg transition-colors cursor-pointer" title="Eliminar"><Trash2 size={13} /></button>
                     )}
                   </div>
                 </div>
@@ -1185,52 +1579,6 @@ export default function Settings() {
                 </button>
               </div>
               <p className="text-[9px] font-bold text-muted uppercase tracking-widest px-2">Selección de Tema</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Supabase Diagnostic & Cloud Storage Panel */}
-        <div className="bg-secondary rounded-2xl shadow-sm border border-base p-5 space-y-4 lg:col-span-3">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-base pb-3">
-            <div className="flex items-center gap-3">
-              <div className="bg-indigo-50 dark:bg-indigo-950/30 p-2.5 rounded-xl text-indigo-600 dark:text-indigo-400">
-                <Database size={20} />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-black text-primary uppercase tracking-wider">Servidor Supabase</h3>
-                  <span className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-400 text-[8px] font-black rounded-full uppercase flex items-center gap-1 border border-emerald-200 dark:border-emerald-800">
-                    <ShieldCheck size={10} /> Activo
-                  </span>
-                </div>
-                <p className="text-[9px] font-bold text-muted uppercase tracking-tight">
-                  Sincronización automática y diagnóstico Cloud
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-              <SupabaseRefreshModal variant="compact" label="Reactualizar Todo con Supabase" />
-
-              <button
-                type="button"
-                onClick={handleRunSupabaseDiagnostic}
-                disabled={isTestingSupabase}
-                className="flex-1 sm:flex-initial px-3.5 py-2 bg-primary border border-base text-primary rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
-              >
-                {isTestingSupabase ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} className="text-indigo-600" />}
-                Diagnóstico
-              </button>
-
-              <button
-                type="button"
-                onClick={handlePushAllToCloud}
-                disabled={isPushingAll}
-                className="flex-1 sm:flex-initial px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
-              >
-                {isPushingAll ? <RefreshCw size={14} className="animate-spin" /> : <CloudUpload size={14} />}
-                Guardar Todo
-              </button>
             </div>
           </div>
         </div>
@@ -1762,7 +2110,7 @@ export default function Settings() {
               <div className="flex justify-end pt-1">
                 <button 
                   type="submit"
-                  className="w-full sm:w-auto px-6 py-2 bg-indigo-600 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all shadow-md flex items-center justify-center gap-2"
+                  className="w-full sm:w-auto px-6 py-2 bg-indigo-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center justify-center gap-2"
                 >
                   <Plus size={14} />
                   Registrar
@@ -1827,7 +2175,7 @@ export default function Settings() {
                             type="button"
                             onClick={() => setUserToDelete({ id: u.id, name: u.name })}
                             className="p-1.5 text-muted hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-colors cursor-pointer"
-                            title="Eliminar Empleado"
+                            title="Desactivar Empleado"
                           >
                             <Trash2 size={14} />
                           </button>
@@ -1893,9 +2241,6 @@ export default function Settings() {
         </div>
       )}
 
-      {/* Monitor de Logs de Sincronización en Tiempo Real */}
-      <SyncLogsPanel />
-
       {/* Zona Peligrosa */}
       <div className="bg-secondary rounded-2xl shadow-sm border border-red-200 dark:border-red-900/30 p-5 space-y-4 lg:col-span-3">
         <div className="flex items-center gap-3 border-b border-red-50 dark:border-red-950/30 pb-3">
@@ -1910,9 +2255,9 @@ export default function Settings() {
 
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-primary p-4 rounded-xl border border-base border-dashed">
           <div>
-            <h4 className="text-sm font-bold text-primary">Limpiar Caché Local</h4>
+            <h4 className="text-sm font-bold text-primary">Limpiar caché del navegador</h4>
             <p className="text-xs text-muted mt-1">
-              Úsalo si la aplicación presenta errores de sincronización o comportamiento inesperado.
+              Limpia recursos temporales del navegador sin borrar ventas, inventario ni la información operativa guardada.
             </p>
           </div>
           <div className="flex gap-2">
@@ -1927,15 +2272,14 @@ export default function Settings() {
                 <button
                   onClick={async () => {
                     try {
-                      localStorage.clear();
                       sessionStorage.clear();
-                      if ('serviceWorker' in navigator) {
-                        const registrations = await navigator.serviceWorker.getRegistrations();
-                        for (const reg of registrations) {
-                          await reg.unregister();
-                        }
+                      if ('caches' in window) {
+                        const cacheNames = await caches.keys();
+                        await Promise.all(cacheNames.map(name => caches.delete(name)));
                       }
-                    } catch (e) {}
+                    } catch (e) {
+                      console.error('Error limpiando caché:', e);
+                    }
                     window.location.href = "/";
                   }}
                   className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-95"
@@ -2007,8 +2351,8 @@ export default function Settings() {
             )}
           </div>
         </div>
+        </div>
       </div>
     </div>
-  </div>
   );
 }

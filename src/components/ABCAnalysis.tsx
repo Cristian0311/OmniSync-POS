@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { formatMoney, cn } from '../lib/utils';
@@ -5,7 +6,7 @@ import { TrendingUp, TrendingDown, AlertCircle, Minus } from 'lucide-react';
 import { InfoTooltip } from './InfoTooltip';
 
 export function ABCAnalysis() {
-  const { products, inventory, transactions, getBaseCurrency } = useStore();
+  const { products, inventory, transactions, getBaseCurrency } = useStore(useShallow((state) => ({ products: state.products, inventory: state.inventory, transactions: state.transactions, getBaseCurrency: state.getBaseCurrency })));
   const baseCurrency = getBaseCurrency();
 
   // ABC Analysis logic

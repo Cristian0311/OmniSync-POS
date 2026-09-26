@@ -1,287 +1,109 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { Branch, Category, Product, InventoryLevel, CartItem, Transaction, ReturnItem, Currency, Customer, CashRegisterSession, User, PendingOrder, SalarySettlement, InventoryTransfer, Warranty, CashMovement, Supplier, SupplierOrder, InventoryAudit, FiscalConfig, DemandForecast, BankCard, BankTransaction, IDNSettlementPrice } from '../types';
 import { generateId, generateReadableId } from '../lib/utils';
 import { 
-  pullAllFromSupabase, pushProductToSupabase, pushInventoryToSupabase, 
+  pullAllFromSupabase, pullPosBootstrapFromSupabase, pullBranchInventoryFromSupabase, pushProductToSupabase, 
   pushTransactionToSupabase, pushCashSessionToSupabase, pushUserToSupabase, deleteUserFromSupabase, 
   pushIDNSettlementPriceToSupabase, deleteIDNSettlementPriceFromSupabase, SyncResult,
   pushBranchToSupabase, deleteBranchFromSupabase, pushCategoryToSupabase, deleteCategoryFromSupabase, deleteProductFromSupabase,
   pushCurrencyToSupabase, clearSupabaseData, pushBankCardToSupabase, deleteBankCardFromSupabase, pushBankTransactionToSupabase, pushAllToSupabase,
   pushSupplierToSupabase, deleteSupplierFromSupabase, pushSupplierOrderToSupabase, pushCustomerToSupabase,
-  pushReceiptConfigToSupabase, pushStoreConfigToSupabase, deleteTransactionFromSupabase, deleteCashSessionFromSupabase,
-  deleteBankTransactionFromSupabase, callOpenSessionRPC, callProcessTransactionRPC, callCloseSessionRPC
+  applyInventoryAdjustmentToSupabase, reconcileInventoryToSupabase,
+  pushReceiptConfigToSupabase, pushStoreConfigToSupabase, pushCatalogConfigToSupabase, deleteTransactionFromSupabase, deleteCustomerFromSupabase,
+  deleteBankTransactionFromSupabase, callOpenSessionRPC, callProcessTransactionRPC, callVoidTransactionRPC, callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC, callCompleteInventoryAuditRPC, callCloseSessionRPC, callCancelSessionRPC
 } from '../services/supabaseSync';
 import { getSupabaseCredentials } from '../lib/supabase';
 import { getOfflineQueue, enqueueOfflineItem } from '../services/offlineSync';
 import { normalizeSemanticText, areSemanticallyEqual } from '../utils/textUtils';
+import { localStateStorage, clearLocalStateStorage } from '../services/localStateStorage';
+import type { AppState } from './storeTypes';
 
-// --- Datos Iniciales y Catálogo Pre-cargado ---
-const INITIAL_USERS: User[] = [
-  {
-    id: 'admin-1',
-    name: 'Administrador Cristian',
-    email: 'cristianmarco2003@gmail.com',
-    role: 'admin',
-    password: '03111166702',
-    baseSalary: 0,
-    salesGoal: 0,
-    branchId: '',
-    allowedBranches: [],
-    permissions: ['pos_access', 'reports_access', 'inventory_access', 'admin_access', 'cash_audit'],
-    isActive: true
-  },
-  {
-    id: 'employee-1',
-    name: 'Trabajador',
-    email: 'trabajador@gmail.com',
-    role: 'employee',
-    password: '03111166702',
-    baseSalary: 0,
-    salesGoal: 0,
-    branchId: '',
-    allowedBranches: [],
-    permissions: ['pos_access'],
-    isActive: true
-  }
-];
-
-const INITIAL_BRANCHES: Branch[] = [];
-
-const INITIAL_CATEGORIES: Category[] = [];
-
-const INITIAL_PRODUCTS: Product[] = [];
-
-const INITIAL_INVENTORY: InventoryLevel[] = [];
-
-const INITIAL_BANK_CARDS: BankCard[] = [];
-
-const INITIAL_FISCAL_CONFIGS: FiscalConfig[] = [
-  { id: crypto.randomUUID(), type: 'B01', name: 'Crédito Fiscal', prefix: 'B01', current: 1, limit: 1000, active: true },
-  { id: crypto.randomUUID(), type: 'B02', name: 'Consumo', prefix: 'B02', current: 1, limit: 10000, active: true },
-];
-
-const BASE_CURRENCY_CODE = import.meta.env.VITE_BASE_CURRENCY || 'CUP';
-
-const INITIAL_CURRENCIES: Currency[] = [
-  { 
-    code: 'CUP', 
-    name: 'Peso Cubano', 
-    symbol: '$', 
-    rateToBase: 1, 
-    isBase: true 
-  },
-  { 
-    code: 'USD', 
-    name: 'Dólar Estadounidense', 
-    symbol: '$', 
-    rateToBase: 320, 
-    isBase: false 
-  },
-  { 
-    code: 'EUR', 
-    name: 'Euro', 
-    symbol: '€', 
-    rateToBase: 350, 
-    isBase: false 
-  }
-];
-
+import {
+  INITIAL_USERS, INITIAL_BRANCHES, INITIAL_CATEGORIES, INITIAL_PRODUCTS,
+  INITIAL_INVENTORY, INITIAL_BANK_CARDS, INITIAL_FISCAL_CONFIGS,
+  BASE_CURRENCY_CODE, INITIAL_CURRENCIES
+} from './storeInitialData';
 
 // --- Definición del Store ---
-interface AppState {
-  // Auth
-  users: User[];
-  currentUser: User | null;
-  login: (email: string, pass: string) => Promise<boolean>;
-  logout: () => void;
-  clearAllData: () => Promise<void>;
-  clearReportsHistory: () => Promise<void>;
-  exportData: () => string;
-  importData: (jsonData: string) => Promise<{ success: boolean; error?: string }>;
-  addUser: (user: User) => void;
-  registerEmployee: (name: string, password: string) => User;
-  updateUser: (id: string, user: Partial<User>) => void;
-  deleteUser: (id: string) => void;
+function applyLocalVoidTransaction(transaction: Transaction) {
+  useStore.setState((state: any) => {
+    const updatedInventory = [...state.inventory];
+    const restore = (productId: string, qty: number, variantLabel?: string) => {
+      if (!productId) return;
+      const idx = updatedInventory.findIndex((i: any) => i.productId === productId && i.branchId === transaction.branchId && (i.variantLabel || '') === (variantLabel || ''));
+      if (idx !== -1) {
+        updatedInventory[idx] = { ...updatedInventory[idx], quantity: updatedInventory[idx].quantity + qty };
+      }
+    };
+    
+    (transaction.items || []).forEach((item: any) => {
+      if (!item) return;
+      const prod = item.product;
+      if (!prod) return;
+      if (typeof prod === 'object' && prod.isKit && Array.isArray(prod.kitComponents)) {
+        prod.kitComponents.forEach((c: any) => restore(c.productId, c.quantity * (item.quantity || 1)));
+      } else if (typeof prod === 'object') {
+        restore(prod.id, item.quantity || 1, item.variantLabel);
+      } else if (typeof prod === 'string') {
+        restore(prod, item.quantity || 1, item.variantLabel);
+      }
+    });
+    
+    return { inventory: updatedInventory };
+  });
+}
 
-  // Configuración
-  currencies: Currency[];
-  updateCurrencyRate: (code: string, newRate: number) => void;
-  getBaseCurrency: () => Currency;
-  storeConfig: import('../types').StoreConfig;
-  updateStoreConfig: (config: import('../types').StoreConfig) => void;
-  catalogConfig: import('../types').CatalogConfig;
-  updateCatalogConfig: (config: import('../types').CatalogConfig) => void;
+function applyLocalCompletedSale(transaction: Transaction) {
+  useStore.setState((state: any) => {
+    const newWarranties: any[] = [];
+    const updatedInventory = [...state.inventory];
+    const finalItems = (transaction.items || []).map((item: any) => {
+      if (!item) return item;
+      const finalItem = { ...item };
+      const prod = item.product;
+      if (prod && typeof prod === 'object' && prod.warrantyDays && prod.warrantyDays > 0) {
+        const expiryDate = new Date(transaction.date);
+        expiryDate.setDate(expiryDate.getDate() + prod.warrantyDays);
+        const customer = state.customers.find((c: any) => c.id === transaction.customerId);
+        const wrnId = generateReadableId('GDA', state.warranties.length + newWarranties.length);
+        newWarranties.push({
+          id: wrnId, productId: prod.id, productName: prod.name,
+          transactionId: transaction.id, customerId: transaction.customerId,
+          customerName: customer?.name || 'Cliente Genérico', purchaseDate: transaction.date,
+          expiryDate: expiryDate.toISOString(), serialNumber: item.serialNumber, status: 'active'
+        });
+        finalItem.warrantyCode = wrnId;
+      }
+      return finalItem;
+    });
 
-  // Sucursales
-  branches: Branch[];
-  currentBranchId: string;
-  setCurrentBranch: (id: string) => void;
-  addBranch: (branch: Branch) => void;
-  updateBranch: (id: string, branch: Partial<Branch>) => void;
-  deleteBranch: (id: string) => void;
-  
-  // Catálogo
-  categories: Category[];
-  addCategory: (category: Category) => void;
-  updateCategory: (id: string, category: Partial<Category>) => void;
-  deleteCategory: (id: string) => void;
-  products: Product[];
-  inventory: InventoryLevel[];
-  addProduct: (product: Product, initialQuantity?: number, branchId?: string, variantLabel?: string, initialVariantQuantities?: { [key: string]: number }) => void;
-  updateProduct: (id: string, product: Partial<Product>) => void;
-  deleteProduct: (id: string) => void;
-  batchDeleteProducts: (ids: string[]) => void;
-  batchUpdateProducts: (ids: string[], updates: Partial<Product>) => void;
-  transferInventory: (productId: string, fromBranchId: string, toBranchId: string, quantity: number, variantLabel?: string, transactionId?: string) => Promise<{ success: boolean; error?: string } | boolean>;
-  transferInventoryBatch: (productId: string, fromBranchId: string, toBranchId: string, variants: { variantLabel: string; quantity: number }[], transactionId?: string, batchId?: string) => Promise<{ success: boolean; error?: string }>;
-  reconcileProductStock: (productId: string, corrections: { branchId: string; variantLabel?: string; quantity: number; minQuantity?: number }[]) => Promise<{ success: boolean; error?: string }>;
-  repairOrphanedInventoryLevels: () => Promise<{ repaired: number; message: string }>;
-  adjustInventory: (productId: string, branchId: string, delta: number, variantLabel?: string, minQuantity?: number) => void;
-  setInventoryQuantity: (productId: string, branchId: string, quantity: number, variantLabel?: string, minQuantity?: number) => void;
-  transferProductsBulk: (fromBranchId: string, toBranchId: string, items: { productId: string; quantity: number; variant?: string }[]) => Promise<{ success: boolean; error?: string }>;
-  
-  // Carrito POS
-  cart: CartItem[];
-  currentCustomerId?: string;
-  addToCart: (product: Product, serialNumber?: string, attributes?: { size?: string, color?: string, variantLabel?: string }) => void;
-  updateCartQty: (cartItemId: string, delta: number) => void;
-  updateCartSerial: (cartItemId: string, serialNumber: string) => void;
-  setCartCustomer: (customerId?: string) => void;
-  clearCart: () => void;
+    const consume = (productId: string, qty: number, variantLabel?: string) => {
+      if (!productId) return;
+      const idx = updatedInventory.findIndex((i: any) => i.productId === productId && i.branchId === transaction.branchId && (i.variantLabel || '') === (variantLabel || ''));
+      if (idx !== -1) updatedInventory[idx] = { ...updatedInventory[idx], quantity: Math.max(0, updatedInventory[idx].quantity - qty) };
+    };
 
-  // Transacciones y Devoluciones
-  transactions: Transaction[];
-  timeShifts: import("../types").TimeShift[];
-  addTimeShift: (shift: import("../types").TimeShift) => void;
-  updateTimeShift: (id: string, updates: Partial<import("../types").TimeShift>) => void;
-  quotes: import("../types").Quote[];
-  addQuote: (quote: import("../types").Quote) => void;
-  updateQuote: (id: string, updates: Partial<import("../types").Quote>) => void;
-  returns: ReturnItem[];
-  processTransaction: (transaction: Transaction) => void;
-  updateTransaction: (id: string, updates: Partial<Transaction>) => void;
-  deleteTransaction: (id: string, reason?: string) => void;
-  createReturn: (returnItem: ReturnItem) => void;
-  updateReturn: (id: string, returnItem: Partial<ReturnItem>) => void;
-  processReturn: (id: string, action: 'complete' | 'reject') => void;
+    (transaction.items || []).forEach((item: any) => {
+      if (!item) return;
+      const prod = item.product;
+      if (!prod) return;
+      if (typeof prod === 'object' && prod.isKit && Array.isArray(prod.kitComponents)) {
+        prod.kitComponents.forEach((c: any) => consume(c.productId, c.quantity * (item.quantity || 1)));
+      } else if (typeof prod === 'object') {
+        consume(prod.id, item.quantity || 1, item.variantLabel);
+      } else if (typeof prod === 'string') {
+        consume(prod, item.quantity || 1, item.variantLabel);
+      }
+    });
 
-  // Clientes
-  customers: Customer[];
-  addCustomer: (customer: Customer) => void;
-  updateCustomer: (id: string, customer: Partial<Customer>) => void;
-  deleteCustomer: (id: string) => void;
-
-  // Caja
-  cashSessions: CashRegisterSession[];
-  openSession: (session: CashRegisterSession) => void;
-  closeSession: (sessionId: string, closingBalances: import('../types').Payment[], workerName?: string, closingDate?: string, discrepancyDeduction?: number, sessionMeta?: Partial<CashRegisterSession>) => void;
-  updateCashSession: (id: string, updates: Partial<CashRegisterSession>) => void;
-  cancelSession: (sessionId: string) => void;
-  deleteCashSession: (id: string) => void;
-  updateCashSessionDateCascade: (sessionId: string, newDateYMD: string) => Promise<boolean>;
-  joinOpenSession: (sessionId: string, userId: string, workerName?: string) => void;
-  getCurrentSession: (branchId: string, userId: string) => CashRegisterSession | undefined;
-  addInformationalSoldProductToSession: (sessionId: string, itemData: {
-    productId: string;
-    productName: string;
-    quantity: number;
-    price: number;
-    userId?: string;
-    workerName?: string;
-    paymentMethod?: 'cash' | 'transfer';
-    currencyCode?: string;
-    variantLabel?: string;
-  }, affectStock?: boolean, isDeduction?: boolean) => Promise<{ success: boolean; transactionId?: string }>;
-  subtractInformationalProductFromSession: (sessionId: string, itemData: {
-    productId: string;
-    productName: string;
-    quantity: number;
-    price: number;
-    userId?: string;
-    workerName?: string;
-    paymentMethod?: 'cash' | 'transfer';
-    currencyCode?: string;
-    variantLabel?: string;
-  }, affectStock?: boolean) => Promise<{ success: boolean; transactionId?: string }>;
-  forceCloseSessionFromReports: (sessionId: string, closingBalances?: import('../types').Payment[], closingDate?: string, notes?: string) => Promise<{ success: boolean }>;
-
-  // Garantías
-  warranties: import('../types').Warranty[];
-  addWarranty: (warranty: import('../types').Warranty) => void;
-  updateWarranty: (id: string, warranty: Partial<import('../types').Warranty>) => void;
-
-  // Liquidaciones de Salario
-  salarySettlements: SalarySettlement[];
-  addSalarySettlement: (settlement: SalarySettlement) => void;
-  updateSalarySettlement: (id: string, settlement: Partial<SalarySettlement>) => void;
-  addCashMovement: (sessionId: string, movement: CashMovement) => void;
-  removeCashMovement: (sessionId: string, movementId: string) => void;
-  transfers: InventoryTransfer[];
-  addTransfer: (transfer: InventoryTransfer) => void;
-
-  // Pedidos QR
-  pendingOrders: PendingOrder[];
-  createPendingOrder: (order: PendingOrder) => void;
-  removePendingOrder: (id: string) => void;
-
-  // Enterprise Modules
-  suppliers: Supplier[];
-  addSupplier: (supplier: Supplier) => void;
-  updateSupplier: (id: string, supplier: Partial<Supplier>) => void;
-  deleteSupplier: (id: string) => void;
-  
-  supplierOrders: SupplierOrder[];
-  createSupplierOrder: (order: SupplierOrder) => void;
-  updateSupplierOrder: (id: string, order: Partial<SupplierOrder>) => void;
-  
-  inventoryAudits: InventoryAudit[];
-  createInventoryAudit: (audit: InventoryAudit) => void;
-  completeInventoryAudit: (id: string, items: any[], notes?: string) => void;
-  
-  fiscalConfigs: FiscalConfig[];
-  updateFiscalConfig: (id: string, config: Partial<FiscalConfig>) => void;
-  getNextNCF: (type: string) => string | undefined;
-
-  demandForecasts: DemandForecast[];
-  updateForecasts: (forecasts: DemandForecast[]) => void;
-
-  receiptConfig: import('../types').ReceiptConfig;
-  updateReceiptConfig: (config: Partial<import('../types').ReceiptConfig>) => void;
-
-  lastTurnNumber: number;
-
-  // IDN Settlement
-  idnSettlementPrices: IDNSettlementPrice[];
-  addIDNSettlementPrice: (price: IDNSettlementPrice) => void;
-  updateIDNSettlementPrice: (id: string, price: Partial<IDNSettlementPrice>) => void;
-  deleteIDNSettlementPrice: (id: string) => void;
-
-  // Banks Module
-  bankCards: import('../types').BankCard[];
-  addBankCard: (card: import('../types').BankCard) => void;
-  updateBankCard: (id: string, card: Partial<import('../types').BankCard>) => void;
-  deleteBankCard: (id: string) => void;
-  
-  bankTransactions: import('../types').BankTransaction[];
-  addBankTransaction: (transaction: import('../types').BankTransaction) => void;
-  deleteBankTransaction: (id: string) => void;
-  reconcileBankBalances: () => Promise<{ removedDuplicates: number; totalSales?: number; totalMovements?: number; message: string }>;
-
-  // Supabase Sync
-  isSyncing: boolean;
-  lastSyncTime: string | null;
-  syncResult: SyncResult | null;
-  syncWithSupabase: () => Promise<SyncResult>;
-  seedDemoProducts: () => void;
-  restoreTransactionsFromBackup: () => void;
-
-  isInitialized: boolean;
-  
-  // Notificaciones Globales
-  notifications: { id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }[];
-  addNotification: (message: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
-  removeNotification: (id: string) => void;
+    return {
+      transactions: [{ ...transaction, items: finalItems }, ...state.transactions.filter((t: any) => t.id !== transaction.id)],
+      inventory: updatedInventory,
+      warranties: [...newWarranties, ...state.warranties],
+      cart: [], currentCustomerId: undefined
+    };
+  });
 }
 
 export const useStore = create<AppState>()(
@@ -350,18 +172,23 @@ export const useStore = create<AppState>()(
     try {
       // Give supabase 10 seconds max, but don't block the UI forever
       await Promise.race([
-        clearSupabaseData(),
+        clearSupabaseData('ELIMINAR'),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout Supabase')), 12000))
       ]).catch(err => console.warn("Supabase clear warning (continuing locally):", err));
     } catch (err) {
       console.warn("Supabase clear failed (continuing locally):", err);
     }
 
-    // Clear local storage cache
+    // Clear local storage/IndexedDB cache.
+    await clearLocalStateStorage().catch(() => {});
     try {
-      localStorage.clear();
+      const protectedKeys = new Set(['pos_offline_sync_queue', 'mare_sales_backup_v1', 'mare_supabase_url', 'mare_supabase_anon_key', 'omnisync_device_id']);
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && !protectedKeys.has(key)) localStorage.removeItem(key);
+      }
     } catch (e) {
-      /* ignore */
+      console.error('[clearAllData] Error limpiando caché local:', e);
     }
 
     // 2. Reset local state to absolute minimal (only first admin)
@@ -547,9 +374,10 @@ export const useStore = create<AppState>()(
   },
   deleteUser: (id) => {
     set((state) => ({
-      users: state.users.filter(u => u.id !== id)
+      users: state.users.map(u => u.id === id ? { ...u, isActive: false } : u)
     }));
-    deleteUserFromSupabase(id);
+    const updated = get().users.find(u => u.id === id);
+    if (updated) pushUserToSupabase(updated);
   },
 
   addIDNSettlementPrice: (price) => {
@@ -591,7 +419,7 @@ export const useStore = create<AppState>()(
     return list.find(c => c.isBase) || list.find(c => c.code === 'CUP') || INITIAL_CURRENCIES[0];
   },
   
-  storeConfig: { storeName: 'Mi Tienda POS', address: 'Calle Principal 123', phone: '+53 51234567', receiptNotes: '¡Gracias por su compra!', darkMode: false },
+  storeConfig: { storeName: 'Mi Tienda POS', address: 'Calle Principal 123', phone: '+53 51234567', receiptNotes: '¡Gracias por su compra!', darkMode: false, manualOfflineSync: true },
   
   updateStoreConfig: (config) => {
     set({ storeConfig: config });
@@ -609,6 +437,7 @@ export const useStore = create<AppState>()(
   
   updateCatalogConfig: (config) => {
     set({ catalogConfig: config });
+    pushCatalogConfigToSupabase(config).catch(() => {});
   },
 
 
@@ -718,14 +547,15 @@ export const useStore = create<AppState>()(
     
     if (initialVariantQuantities && Object.keys(initialVariantQuantities).length > 0) {
       Object.entries(initialVariantQuantities).forEach(([vLabel, qty]) => {
-        if (qty > 0) {
-          newInventoryEntries.push({ id: crypto.randomUUID(), productId: product.id, branchId: targetBranch, quantity: qty, minQuantity: 5, variantLabel: vLabel });
+        if (Number(qty) > 0) {
+          newInventoryEntries.push({ id: crypto.randomUUID(), productId: product.id, branchId: targetBranch, quantity: Number(qty), minQuantity: 5, variantLabel: vLabel });
         }
       });
     } else if (initialQuantity && initialQuantity > 0) {
       newInventoryEntries.push({ id: crypto.randomUUID(), productId: product.id, branchId: targetBranch, quantity: initialQuantity, minQuantity: 5, variantLabel });
     }
 
+    let added = false;
     set((state) => {
       // Deduplicación por ID, SKU o Nombre (ignoring case)
       const isDuplicate = state.products.some(p => 
@@ -734,15 +564,22 @@ export const useStore = create<AppState>()(
         (p.name.toLowerCase().trim() === product.name.toLowerCase().trim())
       );
       if (isDuplicate) return state;
+      added = true;
       return {
         products: [product, ...state.products],
         inventory: [...state.inventory, ...newInventoryEntries]
       };
     });
 
-    // Async push to Supabase
+    if (!added) return;
+
+    // Producto y stock inicial se sincronizan como operaciones independientes.
     pushProductToSupabase(product).catch(() => {});
-    newInventoryEntries.forEach(inv => pushInventoryToSupabase(inv).catch(() => {}));
+    for (const inv of newInventoryEntries) {
+      const op = { operationId: `invrec:${crypto.randomUUID()}`, productId: inv.productId, branchId: inv.branchId, variantLabel: inv.variantLabel || '', expectedQuantity: 0, newQuantity: inv.quantity, quantity: inv.quantity, minQuantity: inv.minQuantity, userId: get().currentUser?.id || undefined };
+      if (typeof navigator !== 'undefined' && !navigator.onLine) enqueueOfflineItem('inventory_reconcile', op, op.operationId);
+      else reconcileInventoryToSupabase(op).then(res => { if (!res.success || res.conflict) enqueueOfflineItem('inventory_reconcile', op, op.operationId); }).catch(() => enqueueOfflineItem('inventory_reconcile', op, op.operationId));
+    }
   },
   updateProduct: (id, product) => {
     set((state) => ({
@@ -753,10 +590,10 @@ export const useStore = create<AppState>()(
   },
   deleteProduct: (id) => {
     set((state) => ({
-      products: state.products.filter(p => p.id !== id),
-      inventory: state.inventory.filter(i => i.productId !== id)
+      products: state.products.map(p => p.id === id ? { ...p, status: 'discontinued' } : p)
     }));
-    deleteProductFromSupabase(id);
+    const updated = get().products.find(p => p.id === id);
+    if (updated) pushProductToSupabase(updated);
   },
   transferInventory: async (productId, fromBranchId, toBranchId, quantity, variantLabel, transactionId) => {
     const res = await get().transferInventoryBatch(
@@ -770,147 +607,81 @@ export const useStore = create<AppState>()(
   },
 
   transferInventoryBatch: async (productId, fromBranchId, toBranchId, variants, transactionId, batchId) => {
-    if (!productId || !fromBranchId || !toBranchId) {
-      return { success: false, error: 'Información incompleta para realizar la transferencia.' };
-    }
-    if (fromBranchId === toBranchId) {
-      return { success: false, error: 'La sucursal de origen y destino no pueden ser la misma.' };
-    }
-    const activeVariants = variants.filter(v => v.quantity > 0);
-    if (activeVariants.length === 0) {
-      return { success: false, error: 'Debes indicar una cantidad mayor a 0 para transferir.' };
-    }
+    if (!productId || !fromBranchId || !toBranchId) return { success: false, error: 'Información incompleta para realizar la transferencia.' };
+    if (fromBranchId === toBranchId) return { success: false, error: 'La sucursal de origen y destino no pueden ser la misma.' };
+    const activeVariants = variants.filter(v => v.quantity > 0).map(v => ({ variantLabel: v.variantLabel || '', quantity: v.quantity }));
+    if (activeVariants.length === 0) return { success: false, error: 'Debes indicar una cantidad mayor a 0 para transferir.' };
 
-    const currentLevels = get().inventory.filter(i => i.productId === productId);
+    const operationId = batchId || transactionId || crypto.randomUUID();
+    const userId = (get().currentUser?.id && get().users.some(u => u.id === get().currentUser?.id)) ? get().currentUser!.id : 'system';
+    const serverPayload = { operationId, productId, fromBranchId, toBranchId, variants: activeVariants, userId };
 
-    for (const v of activeVariants) {
-      const vLabel = v.variantLabel || '';
-      const sourceLevel = currentLevels.find(
-        i => i.branchId === fromBranchId && (i.variantLabel || '') === vLabel
-      );
-      const availableQty = sourceLevel ? sourceLevel.quantity : 0;
-      if (availableQty < v.quantity) {
-        const variantDesc = vLabel ? ` (Variante: "${vLabel}")` : '';
-        return {
-          success: false,
-          error: `Stock insuficiente en la sucursal de origen${variantDesc}. Stock disponible: ${availableQty} uds, intentas transferir: ${v.quantity} uds.`
-        };
+    // Online: DB performs one atomic move and owns the inventory mutation.
+    if (navigator.onLine) {
+      const res = await callTransferInventoryRPC(serverPayload);
+      if (!res.success) {
+        if (!res.errorCode) enqueueOfflineItem('transfer', serverPayload, `transfer:${operationId}`);
+        return { success: !res.errorCode, error: res.error };
       }
+    } else {
+      enqueueOfflineItem('transfer', serverPayload, `transfer:${operationId}`);
     }
 
-    let totalQuantity = 0;
+    // Mirror the confirmed/offline operation locally exactly once.
     const newInventory = [...get().inventory];
-
+    let totalQuantity = 0;
     for (const v of activeVariants) {
       totalQuantity += v.quantity;
-      const vLabel = v.variantLabel || '';
-
-      const sourceIdx = newInventory.findIndex(
-        i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === vLabel
-      );
-      if (sourceIdx !== -1) {
-        newInventory[sourceIdx] = { 
-          ...newInventory[sourceIdx], 
-          quantity: Math.max(0, newInventory[sourceIdx].quantity - v.quantity) 
-        };
-      }
-
-      const targetIdx = newInventory.findIndex(
-        i => i.productId === productId && i.branchId === toBranchId && (i.variantLabel || '') === vLabel
-      );
-      if (targetIdx !== -1) {
-        newInventory[targetIdx] = { 
-          ...newInventory[targetIdx], 
-          quantity: newInventory[targetIdx].quantity + v.quantity 
-        };
-      } else {
-        newInventory.push({
-          id: crypto.randomUUID(),
-          productId,
-          branchId: toBranchId,
-          variantLabel: vLabel || undefined,
-          quantity: v.quantity,
-          minQuantity: 5
-        });
-      }
+      const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === v.variantLabel);
+      if (sourceIdx !== -1) newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: Math.max(0, newInventory[sourceIdx].quantity - v.quantity) };
+      const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && (i.variantLabel || '') === v.variantLabel);
+      if (targetIdx !== -1) newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newInventory[targetIdx].quantity + v.quantity };
+      else newInventory.push({ id: crypto.randomUUID(), productId, branchId: toBranchId, variantLabel: v.variantLabel || undefined, quantity: v.quantity, minQuantity: 5 });
     }
-
     set({ inventory: newInventory });
-
-    // Sync inventory to Supabase
-    activeVariants.forEach(v => {
-      const vLabel = v.variantLabel || '';
-      const source = newInventory.find(i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === vLabel);
-      const target = newInventory.find(i => i.productId === productId && i.branchId === toBranchId && (i.variantLabel || '') === vLabel);
-      if (source) pushInventoryToSupabase(source).catch(() => {});
-      if (target) pushInventoryToSupabase(target).catch(() => {});
-    });
 
     const product = get().products.find(p => p.id === productId);
     const fromBranch = get().branches.find(b => b.id === fromBranchId);
     const toBranch = get().branches.find(b => b.id === toBranchId);
-    const variantSummary = activeVariants.length === 1 
-      ? (activeVariants[0].variantLabel || 'Producto Base') 
-      : activeVariants.map(v => `${v.variantLabel || 'Base'}: ${v.quantity}`).join(', ');
-
     const transferRecord: import('../types').InventoryTransfer = {
-      id: crypto.randomUUID(),
-      productId,
-      productName: product?.name || 'Producto',
-      fromBranchId,
-      fromBranchName: fromBranch?.name || 'Sucursal Origen',
-      toBranchId,
-      toBranchName: toBranch?.name || 'Sucursal Destino',
-      quantity: totalQuantity,
-      variants: activeVariants,
-      date: new Date().toISOString(),
-      userId: (get().currentUser?.id && get().users.some(u => u.id === get().currentUser?.id)) ? get().currentUser!.id : 'system',
-      status: 'completed',
-      variantLabel: variantSummary,
-      transactionId,
-      batchId
+      id: operationId, operationId, productId, productName: product?.name || 'Producto',
+      fromBranchId, fromBranchName: fromBranch?.name || 'Sucursal Origen',
+      toBranchId, toBranchName: toBranch?.name || 'Sucursal Destino',
+      quantity: totalQuantity, variants: activeVariants, date: new Date().toISOString(),
+      userId, status: 'completed', variantLabel: activeVariants.length === 1 ? (activeVariants[0].variantLabel || 'Producto Base') : activeVariants.map(v => `${v.variantLabel || 'Base'}: ${v.quantity}`).join(', '),
+      transactionId, batchId
     };
-
     get().addTransfer(transferRecord);
     return { success: true };
   },
 
   reconcileProductStock: async (productId, corrections) => {
-    const newInventory = [...get().inventory];
+    const currentInventory = get().inventory;
+    const newInventory = [...currentInventory];
+    const operations: any[] = [];
 
     for (const item of corrections) {
       const vLabel = item.variantLabel || '';
-      const idx = newInventory.findIndex(
-        i => i.productId === productId && i.branchId === item.branchId && (i.variantLabel || '') === vLabel
-      );
-
-      if (idx !== -1) {
-        newInventory[idx] = {
-          ...newInventory[idx],
-          quantity: Math.max(0, item.quantity),
-          minQuantity: item.minQuantity ?? newInventory[idx].minQuantity ?? 5
-        };
-      } else {
-        newInventory.push({
-          id: crypto.randomUUID(),
-          productId,
-          branchId: item.branchId,
-          variantLabel: vLabel || undefined,
-          quantity: Math.max(0, item.quantity),
-          minQuantity: item.minQuantity ?? 5
-        });
-      }
+      const existing = currentInventory.find(i => i.productId === productId && i.branchId === item.branchId && (i.variantLabel || '') === vLabel);
+      const expectedQuantity = Number(existing?.quantity || 0);
+      const nextQuantity = Math.max(0, item.quantity);
+      const idx = newInventory.findIndex(i => i.productId === productId && i.branchId === item.branchId && (i.variantLabel || '') === vLabel);
+      const next = idx !== -1
+        ? { ...newInventory[idx], quantity: nextQuantity, minQuantity: item.minQuantity ?? newInventory[idx].minQuantity ?? 5 }
+        : { id: crypto.randomUUID(), productId, branchId: item.branchId, variantLabel: vLabel || undefined, quantity: nextQuantity, minQuantity: item.minQuantity ?? 5 };
+      if (idx !== -1) newInventory[idx] = next as InventoryLevel; else newInventory.push(next as InventoryLevel);
+      operations.push({ operationId: `invrec:${crypto.randomUUID()}`, productId, branchId: item.branchId, variantLabel: vLabel, expectedQuantity, newQuantity: nextQuantity, quantity: nextQuantity, minQuantity: next.minQuantity, userId: get().currentUser?.id || undefined });
     }
 
     set({ inventory: newInventory });
-    
-    // Sync to Supabase
-    corrections.forEach(c => {
-      const vLabel = c.variantLabel || '';
-      const inv = newInventory.find(i => i.productId === productId && i.branchId === c.branchId && (i.variantLabel || '') === vLabel);
-      if (inv) pushInventoryToSupabase(inv).catch(() => {});
-    });
-
+    for (const op of operations) {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        enqueueOfflineItem('inventory_reconcile', op, op.operationId);
+        continue;
+      }
+      const res = await reconcileInventoryToSupabase(op);
+      if (!res.success || res.conflict) enqueueOfflineItem('inventory_reconcile', op, op.operationId);
+    }
     return { success: true };
   },
 
@@ -933,13 +704,11 @@ export const useStore = create<AppState>()(
   },
   batchDeleteProducts: (ids) => {
     set((state) => ({
-      products: state.products.filter(p => !ids.includes(p.id)),
-      inventory: state.inventory.filter(i => !ids.includes(i.productId))
+      products: state.products.map(p => ids.includes(p.id) ? { ...p, status: 'discontinued' } : p)
     }));
-    
-    // Sync to Supabase
     ids.forEach(id => {
-      deleteProductFromSupabase(id);
+      const updated = get().products.find(p => p.id === id);
+      if (updated) pushProductToSupabase(updated);
     });
   },
   batchUpdateProducts: (ids, updates) => {
@@ -948,56 +717,54 @@ export const useStore = create<AppState>()(
     }));
   },
   adjustInventory: (productId, branchId, delta, variantLabel, minQuantity) => {
+    const current = get().inventory.find(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
+    const currentQty = Number(current?.quantity || 0);
+    const nextQty = Math.max(0, currentQty + delta);
+    const operationId = `invadj:${crypto.randomUUID()}`;
+    const payload = {
+      operationId, productId, branchId, variantLabel: variantLabel || '', delta,
+      minQuantity: minQuantity ?? current?.minQuantity ?? 5,
+      userId: get().currentUser?.id || undefined, movementType: delta >= 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT'
+    };
     set((state) => {
       const newInventory = [...state.inventory];
       const idx = newInventory.findIndex(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
-      if (idx !== -1) {
-        newInventory[idx] = { 
-          ...newInventory[idx], 
-          quantity: Math.max(0, newInventory[idx].quantity + delta),
-          minQuantity: minQuantity !== undefined ? minQuantity : newInventory[idx].minQuantity
-        };
-      } else if (delta > 0) {
-        newInventory.push({ 
-          id: crypto.randomUUID(), 
-          productId, 
-          branchId, 
-          quantity: delta, 
-          minQuantity: minQuantity ?? 5, 
-          variantLabel 
-        });
-      } else {
-        return state;
-      }
+      if (idx !== -1) newInventory[idx] = { ...newInventory[idx], quantity: nextQty, minQuantity: payload.minQuantity };
+      else if (nextQty > 0) newInventory.push({ id: crypto.randomUUID(), productId, branchId, quantity: nextQty, minQuantity: payload.minQuantity, variantLabel });
       return { inventory: newInventory };
     });
-    const inv = get().inventory.find(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
-    if (inv) pushInventoryToSupabase(inv).catch(() => {});
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      enqueueOfflineItem('inventory_adjustment', payload, operationId);
+      return;
+    }
+    applyInventoryAdjustmentToSupabase(payload).then(res => {
+      if (!res.success || res.conflict) enqueueOfflineItem('inventory_adjustment', payload, operationId);
+    }).catch(() => enqueueOfflineItem('inventory_adjustment', payload, operationId));
   },
   setInventoryQuantity: (productId, branchId, quantity, variantLabel, minQuantity) => {
+    const current = get().inventory.find(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
+    const expectedQuantity = Number(current?.quantity || 0);
+    const newQuantity = Math.max(0, quantity);
+    const operationId = `invrec:${crypto.randomUUID()}`;
+    const payload = {
+      operationId, productId, branchId, variantLabel: variantLabel || '', expectedQuantity,
+      quantity: newQuantity, minQuantity: minQuantity ?? current?.minQuantity ?? 5,
+      userId: get().currentUser?.id || undefined
+    };
     set((state) => {
       const newInventory = [...state.inventory];
       const idx = newInventory.findIndex(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
-      if (idx !== -1) {
-        newInventory[idx] = { 
-          ...newInventory[idx], 
-          quantity: Math.max(0, quantity),
-          minQuantity: minQuantity !== undefined ? minQuantity : newInventory[idx].minQuantity
-        };
-      } else {
-        newInventory.push({ 
-          id: crypto.randomUUID(), 
-          productId, 
-          branchId, 
-          quantity: Math.max(0, quantity), 
-          minQuantity: minQuantity ?? 5, 
-          variantLabel 
-        });
-      }
+      if (idx !== -1) newInventory[idx] = { ...newInventory[idx], quantity: newQuantity, minQuantity: payload.minQuantity };
+      else newInventory.push({ id: crypto.randomUUID(), productId, branchId, quantity: newQuantity, minQuantity: payload.minQuantity, variantLabel });
       return { inventory: newInventory };
     });
-    const inv = get().inventory.find(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
-    if (inv) pushInventoryToSupabase(inv).catch(() => {});
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      enqueueOfflineItem('inventory_reconcile', payload, operationId);
+      return;
+    }
+    reconcileInventoryToSupabase({ ...payload, newQuantity }).then(res => {
+      if (!res.success || res.conflict) enqueueOfflineItem('inventory_reconcile', payload, operationId);
+    }).catch(() => enqueueOfflineItem('inventory_reconcile', payload, operationId));
   },
 
   transferProductsBulk: async (fromBranchId, toBranchId, items) => {
@@ -1159,269 +926,150 @@ export const useStore = create<AppState>()(
     }
   },
   processTransaction: async (transaction) => {
-    // 1. Optimistic Update (Local State)
-    set((state) => {
-      let newWarranties: any[] = [];
-      const updatedInventory = [...state.inventory];
-      
-      const finalItems = transaction.items.map(item => {
-        let finalItem = { ...item };
-        
-        if (item.product.warrantyDays && item.product.warrantyDays > 0) {
-          const purchaseDate = new Date(transaction.date);
-          const expiryDate = new Date(purchaseDate);
-          expiryDate.setDate(expiryDate.getDate() + item.product.warrantyDays);
-
-          const customer = state.customers.find(c => c.id === transaction.customerId);
-          const wrnId = generateReadableId('GDA', state.warranties.length + newWarranties.length);
-
-          newWarranties.push({
-            id: wrnId,
-            productId: item.product.id,
-            productName: item.product.name,
-            transactionId: transaction.id,
-            customerId: transaction.customerId,
-            customerName: customer?.name || 'Cliente Genérico',
-            purchaseDate: transaction.date,
-            expiryDate: expiryDate.toISOString(),
-            serialNumber: item.serialNumber,
-            status: 'active'
-          });
-          
-          finalItem.warrantyCode = wrnId;
-        }
-        return finalItem;
-      });
-
-      transaction.items.forEach(item => {
-        if (item.product.isKit && item.product.kitComponents) {
-          item.product.kitComponents.forEach(comp => {
-            const compIdx = updatedInventory.findIndex(i => 
-              i.productId === comp.productId && 
-              i.branchId === transaction.branchId
-            );
-            if (compIdx !== -1) {
-              updatedInventory[compIdx] = {
-                ...updatedInventory[compIdx],
-                quantity: Math.max(0, updatedInventory[compIdx].quantity - (comp.quantity * item.quantity))
-              };
-            }
-          });
-        } else {
-          const idx = updatedInventory.findIndex(i => 
-            i.productId === item.product.id && 
-            i.branchId === transaction.branchId &&
-            (i.variantLabel || '') === (item.variantLabel || '')
-          );
-          if (idx !== -1) {
-            updatedInventory[idx] = { 
-              ...updatedInventory[idx], 
-              quantity: Math.max(0, updatedInventory[idx].quantity - item.quantity) 
-            };
-          }
-        }
-      });
-
-      const newTransaction = { ...transaction, items: finalItems };
-
-      return {
-        transactions: [newTransaction, ...state.transactions],
-        inventory: updatedInventory,
-        warranties: [...newWarranties, ...state.warranties],
-        cart: [],
-        currentCustomerId: undefined
-      };
-    });
-
-    // Save backup of the completed sale immediately to independent localStorage key
-    try {
-      const backupRaw = localStorage.getItem('mare_sales_backup_v1');
-      const backupList = backupRaw ? JSON.parse(backupRaw) : [];
-      if (!backupList.some((t: any) => t.id === transaction.id)) {
-        backupList.unshift(transaction);
-        localStorage.setItem('mare_sales_backup_v1', JSON.stringify(backupList));
-      }
-    } catch (e) {
-      console.error("[Backup Safety] Error saving safety backup:", e);
-    }
-
-    // 2. RPC Atómico si hay conexión
+    // Online: Supabase is the single authority for stock mutation. Only after the
+    // atomic RPC commits do we mirror the result locally. This prevents the old
+    // double-decrement (local optimistic update + RPC update).
     if (navigator.onLine) {
       try {
         const res = await callProcessTransactionRPC(transaction);
-        if (res.success) return;
+        if (!res.success) {
+          // PostgreSQL business errors (stock, closed shift, invalid data) are not
+          // retryable. Only transport/configuration failures enter the offline queue.
+          if (res.errorCode) {
+            console.error('[processTransaction] Operación rechazada por servidor:', res.error);
+            return false;
+          }
+          throw new Error(res.error || 'No se pudo procesar la venta');
+        }
+        applyLocalCompletedSale(transaction);
+        return true;
       } catch (err) {
-        console.warn("[processTransaction] RPC call failed/errored, falling back to offline queue:", err);
+        console.warn('[processTransaction] Venta no confirmada online; se encola para reintento idempotente:', err);
+        // Do not apply stock locally a second time here. Queue the exact operation.
+        enqueueOfflineItem('transaction', transaction, transaction.id);
+        return true;
       }
     }
 
-    // 3. Fallback a cola offline (si falló RPC o no hay red)
-    pushTransactionToSupabase(transaction).catch(() => {});
+    // Offline: apply once to the local model and persist the exact operation for
+    // later RPC execution. The transaction id is the idempotency key.
+    applyLocalCompletedSale(transaction);
+    enqueueOfflineItem('transaction', transaction, transaction.id);
+    return true;
   },
 
-  deleteTransaction: (id: string, reason?: string) => {
-    set((state) => {
-      const transactionToDelete = (state.transactions || []).find(t => t.id === id);
-      if (!transactionToDelete || transactionToDelete.deletedAt) return state;
+  deleteTransaction: async (id: string, reason?: string) => {
+    const state = get();
+    const tx = (state.transactions || []).find(t => t.id === id);
+    if (!tx || tx.deletedAt) return;
+    const userId = state.currentUser?.id || 'system';
 
-      const updatedInventory = [...state.inventory];
-      
-      // SOLO restauramos stock si no estaba ya eliminado
-      transactionToDelete.items.forEach(item => {
-        if (item.product.isKit && item.product.kitComponents) {
-          item.product.kitComponents.forEach(comp => {
-            const compIdx = updatedInventory.findIndex(i => 
-              i.productId === comp.productId && 
-              i.branchId === transactionToDelete.branchId
-            );
-            if (compIdx !== -1) {
-              updatedInventory[compIdx] = {
-                ...updatedInventory[compIdx],
-                quantity: updatedInventory[compIdx].quantity + (comp.quantity * item.quantity)
-              };
-              pushInventoryToSupabase(updatedInventory[compIdx]).catch(() => {});
-            }
-          });
-        } else {
-          const idx = updatedInventory.findIndex(i => 
-            i.productId === item.product.id && 
-            i.branchId === transactionToDelete.branchId &&
-            (i.variantLabel || '') === (item.variantLabel || '')
-          );
-          if (idx !== -1) {
-            updatedInventory[idx] = { 
-              ...updatedInventory[idx], 
-              quantity: updatedInventory[idx].quantity + item.quantity 
-            };
-            pushInventoryToSupabase(updatedInventory[idx]).catch(() => {});
-          }
-        }
-      });
-
+    // Restore stock locally
+    applyLocalVoidTransaction(tx);
+    
+    set((current) => {
       const deletedAt = new Date().toISOString();
-      const deletedBy = state.currentUser?.id || 'system';
-
-      const updatedTransaction: Transaction = {
-        ...transactionToDelete,
-        deletedAt,
-        deletedBy,
-        deleteReason: reason || 'Anulación de venta'
-      };
-
-      // En lugar de borrar físicamente, actualizamos el registro en Supabase
-      pushTransactionToSupabase(updatedTransaction).catch(() => {});
-
-      // Revert associated bank transactions and bank card balances
-      const relatedBankTxs = (state.bankTransactions || []).filter(bt => 
-        bt.transactionId === id || 
-        bt.reference === id || 
-        (bt.description && bt.description.includes(id))
-      );
-
-      let updatedBankCards = [...state.bankCards];
-
-      relatedBankTxs.forEach(bt => {
-        // Soft delete bank transaction too? For now we'll just keep them but they might need marking.
-        // Actually it's better to just delete them from the visible list if they were generated by this sale
-        
-        const cardIdx = updatedBankCards.findIndex(c => c.id === bt.cardId);
-        if (cardIdx !== -1) {
-          const card = updatedBankCards[cardIdx];
-          let revertedBalance = card.balance;
-          if (bt.type === 'deposit' || bt.type === 'payment_received') {
-            revertedBalance = Math.max(0, revertedBalance - bt.amount);
-          } else if (bt.type === 'withdrawal' || bt.type === 'supplier_payment') {
-            revertedBalance = revertedBalance + bt.amount;
-          }
-          const updatedCard = { ...card, balance: revertedBalance };
-          updatedBankCards[cardIdx] = updatedCard;
-          pushBankCardToSupabase(updatedCard).catch(() => {});
-        }
-      });
-
-      // Update warranties status
-      const updatedWarranties = state.warranties.map(w => 
-        w.transactionId === id ? { ...w, status: 'refunded' as const } : w
-      );
-      updatedWarranties.forEach(w => {
-        if (w.transactionId === id) {
-          import('../services/supabaseSync').then(({ pushWarrantyToSupabase }) => {
-            pushWarrantyToSupabase(w).catch(() => {});
-          });
-        }
-      });
-
       return {
-        transactions: state.transactions.map(t => t.id === id ? updatedTransaction : t),
-        inventory: updatedInventory,
-        warranties: updatedWarranties,
-        bankCards: updatedBankCards,
-        // We filter out deleted bank transactions for now to not clutter bank history
-        bankTransactions: state.bankTransactions.filter(bt => bt.transactionId !== id)
+        transactions: current.transactions.map(t => t.id === id ? {
+          ...t, deletedAt, deletedBy: userId, deleteReason: reason || 'Anulación de venta'
+        } : t)
       };
     });
-  },
 
-  updateTransaction: (id: string, updates: Partial<Transaction>) => {
-    set((state) => ({
-      transactions: (state.transactions || []).map(t => t.id === id ? { ...t, ...updates } : t)
-    }));
-    const updated = get().transactions.find(t => t.id === id);
-    if (updated) {
-      pushTransactionToSupabase(updated).catch(() => {});
+    // Online: server reverses the exact original stock consumption atomically.
+    if (navigator.onLine) {
+      try {
+        const res = await callVoidTransactionRPC(id, userId, reason || 'Anulación de venta');
+        if (!res.success) throw new Error(res.error || 'No se pudo anular la venta');
+      } catch (err) {
+        console.warn('[deleteTransaction] No se pudo confirmar la anulación; se encola:', err);
+        enqueueOfflineItem('void_transaction', { id, userId, reason }, `void:${id}`);
+        return;
+      }
+    } else {
+      enqueueOfflineItem('void_transaction', { id, userId, reason }, `void:${id}`);
     }
   },
 
-  cancelSession: (sessionId: string) => {
-    const session = get().cashSessions.find(s => s.id === sessionId);
-    if (!session) return;
-
-    // 1. Find all transactions from this session
-    const sessionTxs = get().transactions.filter(t => 
-      t.sessionId === session.id || 
-      (t.branchId === session.branchId && 
-       new Date(t.date).getTime() >= new Date(session.openedAt).getTime() &&
-       (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
-    );
-
-    // 2. Void each transaction (restores stock)
-    sessionTxs.forEach(tx => {
-      get().deleteTransaction(tx.id);
-    });
-
-    // 3. Delete the session
-    get().deleteCashSession(sessionId);
+  updateTransaction: (id: string, updates: Partial<Transaction>) => {
+    const existing = get().transactions.find(t => t.id === id);
+    if (!existing) return;
+    // Completed sales are immutable. A post-sale correction must go through
+    // the void/return workflow so inventory, cash and audit history stay aligned.
+    if (existing.status === 'completed' || existing.status === 'refunded' || existing.deletedAt) {
+      get().addNotification('La venta completada no se puede editar. Usa devolución/anulación para corregirla.', 'warning');
+      return;
+    }
+    const updated = { ...existing, ...updates };
+    set((state) => ({ transactions: (state.transactions || []).map(t => t.id === id ? updated : t) }));
+    pushTransactionToSupabase(updated).catch(() => {});
   },
 
-  deleteCashSession: (id: string, reason?: string) => {
-    set((state) => {
-      const sessionToDelete = state.cashSessions.find(s => s.id === id);
-      if (!sessionToDelete || sessionToDelete.deletedAt) return state;
+  cancelSession: async (sessionId: string, reason = 'Cancelación de turno') => {
+    const state = get();
+    const session = state.cashSessions.find(s => s.id === sessionId);
+    if (!session) return false;
+    if (session.status !== 'open') {
+      state.addNotification('El turno ya no está abierto.', 'warning');
+      return false;
+    }
 
-      const deletedAt = new Date().toISOString();
-      const deletedBy = state.currentUser?.id || 'system';
+    const userId = state.currentUser?.id || 'system';
+    const cancelledAt = new Date().toISOString();
 
-      const updatedSession: CashRegisterSession = {
-        ...sessionToDelete,
-        deletedAt,
-        deletedBy,
-        deleteReason: reason || 'Cancelación de turno'
-      };
+    // Restore stock of all transactions in the session locally
+    const sessionTxs = (state.transactions || []).filter(t => t.sessionId === sessionId && !t.deletedAt);
+    sessionTxs.forEach(tx => applyLocalVoidTransaction(tx));
 
-      // En lugar de borrar físicamente, actualizamos el registro en Supabase
-      pushCashSessionToSupabase(updatedSession).catch(() => {});
-
+    set(current => {
       return {
-        cashSessions: state.cashSessions.map(s => s.id === id ? updatedSession : s)
+        cashSessions: (current.cashSessions || []).map(s => s.id === sessionId ? {
+          ...s,
+          status: 'cancelled',
+          closedAt: cancelledAt,
+          closingDate: cancelledAt,
+          deletedAt: undefined,
+          deletedBy: undefined,
+          deleteReason: reason
+        } : s),
+        transactions: (current.transactions || []).map(t =>
+          t.sessionId === sessionId && !t.deletedAt
+            ? { ...t, deletedAt: cancelledAt, deletedBy: userId, deleteReason: reason, status: 'refunded' as const }
+            : t
+        ),
+        cart: []
       };
     });
+
+    if (navigator.onLine) {
+      try {
+        const res = await callCancelSessionRPC(sessionId, userId, reason);
+        if (!res.success) throw new Error(res.error || 'No se pudo cancelar el turno');
+        return true;
+      } catch (err) {
+        console.warn('[cancelSession] No se pudo confirmar en Supabase; se encola:', err);
+      }
+    }
+
+    enqueueOfflineItem('cash_session', { 
+      id: sessionId, 
+      branchId: session.branchId,
+      userId,
+      status: 'cancelled',
+      closedAt: cancelledAt,
+      closingDate: cancelledAt,
+      deleteReason: reason,
+      __operation: 'cancel' 
+    }, `cash-cancel:${sessionId}`);
+    return true;
   },
+
+
 
   createReturn: (returnItem) => {
-    const readableId = generateReadableId('DEV', get().returns.length);
-    const newReturn = { ...returnItem, id: readableId };
+    const newReturn = { ...returnItem, id: returnItem.id || generateReadableId('DEV', get().returns.length) };
     set((state) => ({
-      returns: [newReturn, ...state.returns]
+      returns: [newReturn, ...state.returns.filter(r => r.id !== newReturn.id)]
     }));
     import('../services/supabaseSync').then(({ pushReturnToSupabase }) => {
       pushReturnToSupabase(newReturn).catch(() => {});
@@ -1438,49 +1086,55 @@ export const useStore = create<AppState>()(
       }).catch(() => {});
     }
   },
-  processReturn: (id, action) => {
-    set((state) => {
-      const returnReq = state.returns.find(r => r.id === id);
-      if (!returnReq || returnReq.status !== 'pending') return state;
-      
-      let updatedInventory = [...state.inventory];
-      let updatedWarranties = [...state.warranties];
-      
-      if (action === 'complete') {
-        const branchId = state.currentBranchId;
-        const idx = updatedInventory.findIndex(i => i.productId === returnReq.productId && i.branchId === branchId);
-        
-        if (returnReq.type === 'warranty_exchange') {
-          if (idx !== -1) {
-            updatedInventory[idx] = { 
-              ...updatedInventory[idx], 
-              quantity: Math.max(0, updatedInventory[idx].quantity - returnReq.quantity) 
-            };
-          }
-        } else if (returnReq.type === 'refund') {
-          if (idx !== -1) {
-            updatedInventory[idx] = { 
-              ...updatedInventory[idx], 
-              quantity: updatedInventory[idx].quantity + returnReq.quantity 
-            };
-          }
-        }
+  processReturn: async (id, action) => {
+    const state = get();
+    const returnReq = state.returns.find(r => r.id === id);
+    if (!returnReq || returnReq.status !== 'pending') return false;
+    const userId = state.currentUser?.id || 'system';
 
-        const warrantyIdx = updatedWarranties.findIndex(w => w.transactionId === returnReq.transactionId && w.productId === returnReq.productId);
-        if (warrantyIdx !== -1) {
-          updatedWarranties[warrantyIdx] = {
-            ...updatedWarranties[warrantyIdx],
-            status: returnReq.type === 'warranty_exchange' ? 'exchanged' : 'refunded'
-          };
+    if (action === 'complete') {
+      if (navigator.onLine) {
+        try {
+          const res = await callCompleteReturnRPC(id, userId);
+          if (!res.success) throw new Error(res.error || 'No se pudo completar la devolución');
+        } catch (err) {
+          console.warn('[processReturn] Devolución no confirmada; se encola:', err);
+          enqueueOfflineItem('return_complete', { id, userId }, `return:${id}`);
+          return true;
         }
+      } else {
+        enqueueOfflineItem('return_complete', { id, userId }, `return:${id}`);
       }
-      
+    }
+
+    set((current) => {
+      const req = current.returns.find(r => r.id === id);
+      if (!req || req.status !== 'pending') return current;
+      let updatedInventory = [...current.inventory];
+      let updatedWarranties = [...current.warranties];
+      const originalTx = current.transactions.find(t => t.id === req.transactionId);
+      const branchId = req.branchId || originalTx?.branchId || current.currentBranchId;
+
+      const adjustLocal = (productId: string, delta: number, variantLabel?: string) => {
+        const idx = updatedInventory.findIndex(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
+        if (idx !== -1) updatedInventory[idx] = { ...updatedInventory[idx], quantity: Math.max(0, updatedInventory[idx].quantity + delta) };
+      };
+
+      if (action === 'complete') {
+        if (req.type === 'refund') adjustLocal(req.productId, req.quantity, req.variantLabel);
+        if (req.type === 'warranty_exchange' && req.replacementProductId) {
+          adjustLocal(req.replacementProductId, -(req.replacementQuantity || req.quantity));
+        }
+        const warrantyIdx = updatedWarranties.findIndex(w => w.transactionId === req.transactionId && w.productId === req.productId);
+        if (warrantyIdx !== -1) updatedWarranties[warrantyIdx] = { ...updatedWarranties[warrantyIdx], status: req.type === 'warranty_exchange' ? 'exchanged' : 'refunded' };
+      }
       return {
-        returns: state.returns.map(r => r.id === id ? { ...r, status: action === 'complete' ? 'completed' : 'rejected' } : r),
+        returns: current.returns.map(r => r.id === id ? { ...r, status: action === 'complete' ? 'completed' : 'rejected', processedBy: userId } : r),
         inventory: updatedInventory,
         warranties: updatedWarranties
       };
     });
+    return true;
   },
 
   customers: [],
@@ -1509,6 +1163,13 @@ export const useStore = create<AppState>()(
       customers: state.customers.filter(c => c.id !== id),
       currentCustomerId: state.currentCustomerId === id ? undefined : state.currentCustomerId
     }));
+    if (navigator.onLine) {
+      deleteCustomerFromSupabase(id).then((ok) => {
+        if (!ok) enqueueOfflineItem('customer_delete', { id }, `customer-delete:${id}`);
+      }).catch(() => enqueueOfflineItem('customer_delete', { id }, `customer-delete:${id}`));
+    } else {
+      enqueueOfflineItem('customer_delete', { id }, `customer-delete:${id}`);
+    }
   },
 
   cashSessions: [],
@@ -1560,7 +1221,9 @@ export const useStore = create<AppState>()(
       lastTurnNumber: nextTurn,
       cart: [] // ASEGURAR QUE EL CARRITO ESTÉ VACÍO AL ABRIR NUEVO TURNO
     }));
-    pushCashSessionToSupabase(sessionWithSequentialId).catch(() => {});
+    // Offline-first: never fire-and-forget a master write. The session must
+    // survive a reload and be retried through the operation queue.
+    enqueueOfflineItem('cash_session', sessionWithSequentialId, `cash-open:${sessionWithSequentialId.id}`);
   },
   closeSession: async (sessionId, closingBalances, workerName, closingDate, discrepancyDeduction, sessionMeta) => {
     const finalClosingDate = closingDate || new Date().toISOString();
@@ -1640,10 +1303,16 @@ export const useStore = create<AppState>()(
       cart: [] // ASEGURAR QUE EL CARRITO ESTÉ VACÍO AL CERRAR TURNO
     }));
 
-    pushCashSessionToSupabase(updatedSession).catch(() => {});
-    import('../services/supabaseSync').then(({ pushSalarySettlementToSupabase }) => {
-      pushSalarySettlementToSupabase(settlement).catch(() => {});
-    });
+    // Preserve the complete close operation offline. The queue replays the
+    // atomic close RPC and the settlement, rather than fire-and-forget upserts.
+    enqueueOfflineItem('cash_session', { ...updatedSession, __operation: 'close', settlement }, `cash-close:${sessionId}`);
+    enqueueOfflineItem('salary_settlement', settlement, `salary:${settlement.id}`);
+    if (navigator.onLine) {
+      pushCashSessionToSupabase(updatedSession).catch(() => {});
+      import('../services/supabaseSync').then(({ pushSalarySettlementToSupabase }) => {
+        pushSalarySettlementToSupabase(settlement).catch(() => {});
+      });
+    }
   },
   updateCashSession: (id, updates) => {
     set((state) => ({
@@ -2044,41 +1713,69 @@ export const useStore = create<AppState>()(
     set(state => ({ supplierOrders: [o, ...state.supplierOrders] }));
     pushSupplierOrderToSupabase(o).catch(() => {});
   },
-  updateSupplierOrder: (id, o) => {
+  updateSupplierOrder: async (id, o) => {
+    const previous = get().supplierOrders.find(x => x.id === id);
+    const requestedReceived = o.status === 'received' && previous?.status !== 'received';
+    if (requestedReceived && navigator.onLine) {
+      const userId = get().currentUser?.id || 'system';
+      const res = await callReceiveSupplierOrderRPC(id, userId);
+      if (!res.success) return;
+    } else if (requestedReceived && !navigator.onLine) {
+      // Offline receive remains local; the final cloud application is idempotent.
+      enqueueOfflineItem('supplier_receive', { id, userId: get().currentUser?.id || 'system' }, `supplier:${id}`);
+    }
+
     set(state => {
+      const current = state.supplierOrders.find(x => x.id === id);
       const updated = state.supplierOrders.map(x => x.id === id ? { ...x, ...o } : x);
       const order = updated.find(x => x.id === id);
-      if (order && order.status === 'received' && o.status === 'received') {
-        order.items.forEach((item: any) => {
-          get().adjustInventory(item.productId, order.branchId, item.quantity, item.variantLabel);
-        });
+      if (order && current?.status !== 'received' && order.status === 'received' && !navigator.onLine) {
+        // El RPC de recepción es la única autoridad para modificar stock. En offline
+        // actualizamos solo el espejo local para evitar una segunda operación de inventario.
+        const nextInventory = [...state.inventory];
+        for (const item of order.items || []) {
+          const qty = Number(item.quantity) || 0;
+          const idx = nextInventory.findIndex(i => i.productId === item.productId && i.branchId === order.branchId && (i.variantLabel || '') === (item.variantLabel || ''));
+          if (idx >= 0) nextInventory[idx] = { ...nextInventory[idx], quantity: Math.max(0, Number(nextInventory[idx].quantity || 0) + qty) };
+          else if (qty > 0) nextInventory.push({ id: crypto.randomUUID(), productId: item.productId, branchId: order.branchId, quantity: qty, minQuantity: 5, variantLabel: item.variantLabel || '' });
+        }
+        return { supplierOrders: updated, inventory: nextInventory };
       }
       return { supplierOrders: updated };
     });
     const updatedOrder = get().supplierOrders.find(x => x.id === id);
-    if (updatedOrder) {
-      pushSupplierOrderToSupabase(updatedOrder).catch(() => {});
-    }
+    if (updatedOrder) pushSupplierOrderToSupabase(updatedOrder).catch(() => {});
   },
 
   inventoryAudits: [],
   createInventoryAudit: (a) => {
     set(state => ({ inventoryAudits: [a, ...state.inventoryAudits] }));
   },
-  completeInventoryAudit: (id, items, notes) => {
+  completeInventoryAudit: async (id, items, notes) => {
+    const audit = get().inventoryAudits.find(a => a.id === id);
+    if (!audit || audit.status === 'completed') return;
+    const userId = get().currentUser?.id || audit.userId || 'system';
+    if (navigator.onLine) {
+      const res = await callCompleteInventoryAuditRPC(id, audit.branchId, userId, items, notes);
+      if (!res.success) return;
+    } else {
+      enqueueOfflineItem('audit_complete', { id, branchId: audit.branchId, userId, items, notes }, `audit:${id}`);
+    }
+
     set(state => {
-      const updatedAudits = state.inventoryAudits.map(a => 
-        a.id === id ? { ...a, status: 'completed' as 'completed', items, notes, date: new Date().toISOString() } : a
-      );
-      const audit = updatedAudits.find(a => a.id === id);
-      if (audit) {
-        audit.items.forEach((item: any) => {
-          if (item.difference !== 0) {
-            get().adjustInventory(item.productId, audit.branchId, item.difference, item.variantLabel);
-          }
-        });
+      const currentAudit = state.inventoryAudits.find(a => a.id === id);
+      if (!currentAudit || currentAudit.status === 'completed') return state;
+      // Local mirror uses actual - expected. The server remains authoritative and
+      // will reconcile this state on the next sync.
+      const normalizedItems = items.map((item: any) => ({ ...item, difference: (Number(item.counted ?? item.actual) || 0) - (Number(item.expected) || 0) }));
+      const updatedAudits = state.inventoryAudits.map(a => a.id === id ? { ...a, status: 'completed' as const, items: normalizedItems, notes, date: new Date().toISOString() } : a);
+      let inventory = [...state.inventory];
+      for (const item of normalizedItems) {
+        if (!item.difference) continue;
+        const idx = inventory.findIndex(i => i.productId === item.productId && i.branchId === audit.branchId && (i.variantLabel || '') === (item.variantLabel || ''));
+        if (idx !== -1) inventory[idx] = { ...inventory[idx], quantity: Math.max(0, inventory[idx].quantity + item.difference) };
       }
-      return { inventoryAudits: updatedAudits };
+      return { inventoryAudits: updatedAudits, inventory };
     });
   },
 
@@ -2131,6 +1828,12 @@ export const useStore = create<AppState>()(
     set((state) => ({
       salarySettlements: state.salarySettlements.map(s => s.id === id ? { ...s, ...settlement } : s)
     }));
+    const updated = get().salarySettlements.find(s => s.id === id);
+    if (updated) {
+      import('../services/supabaseSync').then(({ pushSalarySettlementToSupabase }) => {
+        pushSalarySettlementToSupabase(updated).catch(() => {});
+      }).catch(() => {});
+    }
   },
   addCashMovement: (sessionId, movement) => {
     set((state) => ({
@@ -2140,7 +1843,8 @@ export const useStore = create<AppState>()(
     }));
     const updated = get().cashSessions.find(s => s.id === sessionId);
     if (updated) {
-      pushCashSessionToSupabase(updated).catch(() => {});
+      enqueueOfflineItem('cash_session', updated, `cash-movement:${sessionId}:${movement.id}`);
+      if (navigator.onLine) pushCashSessionToSupabase(updated).catch(() => {});
     }
   },
   removeCashMovement: (sessionId, movementId) => {
@@ -2151,18 +1855,19 @@ export const useStore = create<AppState>()(
     }));
     const updated = get().cashSessions.find(s => s.id === sessionId);
     if (updated) {
-      pushCashSessionToSupabase(updated).catch(() => {});
+      enqueueOfflineItem('cash_session', updated, `cash-movement-remove:${sessionId}:${movementId}:${Date.now()}`);
+      if (navigator.onLine) pushCashSessionToSupabase(updated).catch(() => {});
     }
   },
 
   transfers: [],
   addTransfer: (transfer) => {
+    // The transfer RPC is the only authority for inventory transfers. Calling a
+    // second upsert here used to duplicate/overwrite a transfer after the RPC
+    // had already committed it. This action only updates the local ledger.
     set((state) => ({
-      transfers: [transfer, ...state.transfers]
+      transfers: [transfer, ...state.transfers.filter(t => t.id !== transfer.id && t.operationId !== transfer.operationId)]
     }));
-    import('../services/supabaseSync').then(({ pushInventoryTransferToSupabase }) => {
-      pushInventoryTransferToSupabase(transfer).catch(() => {});
-    }).catch(() => {});
   },
 
   warranties: [],
@@ -2325,6 +2030,61 @@ export const useStore = create<AppState>()(
     };
   },
 
+  refreshBranchInventory: async () => {
+    const branchId = get().currentBranchId;
+    if (!branchId || (typeof navigator !== 'undefined' && !navigator.onLine)) return false;
+    try {
+      const res = await pullBranchInventoryFromSupabase(branchId);
+      if (!res.success) return false;
+      const byKey = new Map<string, InventoryLevel>();
+      for (const item of get().inventory || []) {
+        if (item.branchId !== branchId) byKey.set(`${item.productId}:${item.branchId}:${item.variantLabel || ''}`, item);
+      }
+      for (const item of res.inventory) byKey.set(`${item.productId}:${item.branchId}:${item.variantLabel || ''}`, item);
+      set({ inventory: Array.from(byKey.values()) });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  bootstrapPosFromSupabase: async () => {
+    const branchId = get().currentBranchId;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
+    const res = await pullPosBootstrapFromSupabase(branchId);
+    if (!res.success || !res.data) return false;
+    const d = res.data;
+    set((state) => {
+      const mergeById = <T extends { id: string }>(remote: T[] | undefined, local: T[]) => {
+        const map = new Map(local.map(x => [x.id, x]));
+        for (const item of remote || []) map.set(item.id, item);
+        return Array.from(map.values());
+      };
+      const branchInv = d.inventory || [];
+      const invMap = new Map<string, InventoryLevel>();
+      for (const item of state.inventory || []) {
+        if (branchId && item.branchId === branchId) continue;
+        invMap.set(`${item.productId}:${item.branchId}:${item.variantLabel || ''}`, item);
+      }
+      for (const item of branchInv) invMap.set(`${item.productId}:${item.branchId}:${item.variantLabel || ''}`, item);
+      return {
+        branches: mergeById(d.branches, state.branches || []),
+        categories: mergeById(d.categories, state.categories || []),
+        products: mergeById(d.products, state.products || []),
+        inventory: Array.from(invMap.values()),
+        users: mergeById(d.users, state.users || []),
+        customers: mergeById(d.customers, state.customers || []),
+        currencies: d.currencies?.length ? d.currencies : state.currencies,
+        idnSettlementPrices: mergeById(d.idnSettlementPrices, state.idnSettlementPrices || []),
+        transactions: mergeById(d.transactions, state.transactions || []),
+        cashSessions: mergeById(d.cashSessions, state.cashSessions || []),
+        lastSyncTime: new Date().toISOString(),
+        syncResult: { success: true, message: 'Caché POS actualizado de forma incremental.' }
+      };
+    });
+    return true;
+  },
+
   syncWithSupabase: async () => {
     set({ isSyncing: true });
     try {
@@ -2393,11 +2153,7 @@ export const useStore = create<AppState>()(
           const offlineQueuedBranchItems = getOfflineQueue().filter(i => i.type === 'branch');
           const offlineQueuedBranchIds = new Set(offlineQueuedBranchItems.map(i => i.data.id));
           
-          const mergedBranches = mergeUnique(data.branches, state.branches || [], { 
-            offlineIds: offlineQueuedBranchIds, 
-            semanticDedupe: true,
-            semanticKeys: ['name']
-          });
+          const mergedBranches = mergeUnique(data.branches, state.branches || [], { offlineIds: offlineQueuedBranchIds });
           
           // Purge: Si recibimos datos de Supabase, eliminar locales que no estén en Supabase Y no estén en la cola offline
           const finalBranches = (data.branches && data.branches.length > 0)
@@ -2416,101 +2172,77 @@ export const useStore = create<AppState>()(
 
           // --- 2. Transacciones ---
           const offlineQueuedTxIds = new Set(
-            getOfflineQueue().filter(i => i.type === 'transaction').map(i => i.data.id)
+            getOfflineQueue().filter(i => i.type === 'transaction' || i.type === 'void_transaction').map(i => i.data.id)
           );
-          const mergedTransactions = mergeUnique(data.transactions, state.transactions || [], { offlineIds: offlineQueuedTxIds });
+          const mergedTransactionsRaw = mergeUnique(data.transactions, state.transactions || [], { offlineIds: offlineQueuedTxIds });
+          const mergedTransactions = data.transactions
+            ? mergedTransactionsRaw.filter(t => data.transactions.some((st: any) => st.id === t.id) || offlineQueuedTxIds.has(t.id))
+            : mergedTransactionsRaw;
 
           // --- 3. Sesiones ---
           const offlineQueuedSessionIds = new Set(
             getOfflineQueue().filter(i => i.type === 'cash_session').map(i => i.data.id)
           );
-          const mergedCashSessions = mergeUnique(data.cashSessions, state.cashSessions || [], { offlineIds: offlineQueuedSessionIds });
+          const mergedCashSessionsRaw = mergeUnique(data.cashSessions, state.cashSessions || [], { offlineIds: offlineQueuedSessionIds });
+          const mergedCashSessions = data.cashSessions
+            ? mergedCashSessionsRaw.filter(cs => data.cashSessions.some((ss: any) => ss.id === cs.id) || offlineQueuedSessionIds.has(cs.id))
+            : mergedCashSessionsRaw;
 
           // --- 4. Clientes ---
           const offlineQueuedCustomerIds = new Set(
             getOfflineQueue().filter(i => i.type === 'customer').map(i => i.data.id)
           );
-          const mergedCustomers = mergeUnique(data.customers, state.customers || [], { 
-            offlineIds: offlineQueuedCustomerIds,
-            semanticDedupe: true,
-            semanticKeys: ['phone', 'email']
-          });
+          const mergedCustomers = mergeUnique(data.customers, state.customers || [], { offlineIds: offlineQueuedCustomerIds });
 
           // --- 5. Devoluciones ---
           const offlineQueuedReturnIds = new Set(
-            getOfflineQueue().filter(i => i.type === 'return').map(i => i.data.id)
+            getOfflineQueue().filter(i => i.type === 'return' || i.type === 'return_complete').map(i => i.data.id)
           );
-          const mergedReturns = mergeUnique(data.returns, state.returns || [], { offlineIds: offlineQueuedReturnIds });
+          const mergedReturnsRaw = mergeUnique(data.returns, state.returns || [], { offlineIds: offlineQueuedReturnIds });
+          const mergedReturns = data.returns
+            ? mergedReturnsRaw.filter(r => data.returns.some((sr: any) => sr.id === r.id) || offlineQueuedReturnIds.has(r.id))
+            : mergedReturnsRaw;
 
           // --- 6. Inventario (Deduplicación por combinación única) ---
-          const offlineQueuedInventory = getOfflineQueue()
-            .filter(i => i.type === 'inventory')
-            .map(i => i.data as InventoryLevel);
-            
           const baseInv = data.inventory !== undefined ? data.inventory : state.inventory;
           const invMap = new Map<string, InventoryLevel>();
-          
-          // 1. Cargar inventario base (Supabase o Local si falló fetch)
           baseInv.forEach(inv => {
             const key = `${inv.productId}_${inv.branchId}_${inv.variantLabel || ''}`;
             invMap.set(key, inv);
           });
-          
-          // 2. Sobrescribir con cambios pendientes offline
-          offlineQueuedInventory.forEach(inv => {
-            const key = `${inv.productId}_${inv.branchId}_${inv.variantLabel || ''}`;
-            invMap.set(key, inv);
-          });
-          
+          // Las operaciones offline pendientes son deltas/reconciliaciones y no deben
+          // sobrescribir aquí el snapshot remoto. El motor de cola las aplica primero.
           // Purge Inventario: Si recibimos de Supabase, quitar los que no estén en Supabase y no estén en cola offline
           let mergedInventory = Array.from(invMap.values()).filter(inv => !inv.branchId || validBranchIds.has(inv.branchId));
           if (data.inventory && data.inventory.length > 0) {
             const supabaseInvKeys = new Set(data.inventory.map((si: any) => `${si.product_id || si.productId}_${si.branch_id || si.branchId}_${si.variant_label || si.variantLabel || ''}`));
-            const offlineInvKeys = new Set(offlineQueuedInventory.map(oi => `${oi.productId}_${oi.branchId}_${oi.variantLabel || ''}`));
-            
             mergedInventory = mergedInventory.filter(inv => {
               const key = `${inv.productId}_${inv.branchId}_${inv.variantLabel || ''}`;
-              return supabaseInvKeys.has(key) || offlineInvKeys.has(key);
+              return supabaseInvKeys.has(key);
             });
           }
 
           // --- 7. Otros (Deduplicación simple por ID o clave única) ---
-          const mergedProducts = mergeUnique(data.products, state.products || [], {
-            semanticDedupe: true,
-            semanticKeys: ['sku', 'name']
-          });
+          const mergedProducts = mergeUnique(data.products, state.products || []);
           // Purge Productos
           const finalProducts = (data.products && data.products.length > 0) 
             ? mergedProducts.filter(p => data.products.some((sp: any) => sp.id === p.id))
             : mergedProducts;
 
-          const mergedCategories = mergeUnique(data.categories, state.categories || [], { 
-            semanticDedupe: true,
-            semanticKeys: ['name']
-          });
+          const mergedCategories = mergeUnique(data.categories, state.categories || []);
           // Purge Categorías
           const finalCategories = (data.categories && data.categories.length > 0)
             ? mergedCategories.filter(c => data.categories.some((sc: any) => sc.id === c.id))
             : mergedCategories;
 
-          const mergedUsers = mergeUnique(data.users, state.users || [], {
-            semanticDedupe: true,
-            semanticKeys: ['email']
-          });
+          const mergedUsers = mergeUnique(data.users, state.users || []);
           // Purge Users (except initial admins)
           const finalUsers = (data.users && data.users.length > 0)
             ? mergedUsers.filter(u => data.users.some((su: any) => su.id === u.id) || u.id.startsWith('admin-') || u.id.startsWith('employee-'))
             : mergedUsers;
 
-          const mergedBankCards = mergeUnique(data.bankCards, state.bankCards || [], {
-            semanticDedupe: true,
-            semanticKeys: ['accountNumber']
-          });
-          const mergedBankTransactions = mergeUnique(data.bankTransactions, state.bankTransactions || [], {
-            idKey: 'id',
-            semanticDedupe: true,
-            semanticKeys: ['reference']
-          });
+          const mergedBankCards = mergeUnique(data.bankCards, state.bankCards || []);
+          const mergedBankTransactions = mergeUnique(data.bankTransactions, state.bankTransactions || []);
           const mergedSuppliers = mergeUnique(data.suppliers, state.suppliers || []);
           const mergedSupplierOrders = mergeUnique(data.supplierOrders, state.supplierOrders || []);
           const mergedCurrencies = mergeUnique(data.currencies, state.currencies || [], { idKey: 'code' });
@@ -2598,9 +2330,10 @@ export const useStore = create<AppState>()(
           transactions: [...missingTxs, ...(state.transactions || [])]
         }));
         
-        // Sincronizar de forma segura las ventas recuperadas
+        // Nunca insertar directamente una venta recuperada: debe pasar por la RPC
+        // idempotente para que inventario/caja se mantengan coherentes.
         missingTxs.forEach(tx => {
-          pushTransactionToSupabase(tx).catch(() => {});
+          enqueueOfflineItem('transaction', tx, tx.id);
         });
 
         get().addNotification(`¡Garantía de Seguridad! Se recuperaron ${missingTxs.length} tickets de venta de forma automática.`, 'success');
@@ -2632,5 +2365,21 @@ export const useStore = create<AppState>()(
 }),
 {
   name: 'pos-store-storage',
+  storage: createJSONStorage(() => localStateStorage),
+  // El estado operativo sigue persistiendo para poder trabajar offline, pero
+  // evitamos guardar datos puramente transitorios y el historial bancario pesado
+  // en cada cambio de UI.
+  partialize: (state) => ({
+    users: state.users, currentUser: state.currentUser,
+    currencies: state.currencies, storeConfig: state.storeConfig, catalogConfig: state.catalogConfig,
+    branches: state.branches, currentBranchId: state.currentBranchId, categories: state.categories,
+    products: state.products, inventory: state.inventory, cart: state.cart, currentCustomerId: state.currentCustomerId,
+    transactions: state.transactions, returns: state.returns, warranties: state.warranties,
+    cashSessions: state.cashSessions, transfers: state.transfers, suppliers: state.suppliers,
+    supplierOrders: state.supplierOrders, inventoryAudits: state.inventoryAudits, salarySettlements: state.salarySettlements,
+    quotes: state.quotes, timeShifts: state.timeShifts, pendingOrders: state.pendingOrders,
+    idnSettlementPrices: state.idnSettlementPrices, receiptConfig: state.receiptConfig,
+    fiscalConfigs: state.fiscalConfigs, bankCards: state.bankCards
+  })
 }
 ));

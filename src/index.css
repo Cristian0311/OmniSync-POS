@@ -1,10 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&family=Outfit:wght@400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Outfit", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
@@ -37,6 +36,9 @@
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
 }
 
 .dark {
@@ -85,7 +87,7 @@ html, body, #root {
   body {
     background-color: var(--bg-primary);
     color: var(--text-primary);
-    @apply font-sans antialiased;
+    @apply font-sans antialiased tabular-nums;
   }
   
   h1, h2, h3, h4, h5, h6 {
@@ -105,25 +107,6 @@ html, body, #root {
   .border-base { border-color: var(--border-base); }
   .border-subtle { border-color: var(--border-subtle); }
 
-  /* Apply tokens to existing generic Tailwind classes in Dark Mode via Layer overrides */
-  .dark .bg-white { background-color: var(--bg-secondary) !important; }
-  .dark .bg-slate-50 { background-color: var(--bg-primary) !important; }
-  .dark .bg-slate-100 { background-color: var(--bg-subtle) !important; }
-  .dark .bg-slate-200 { background-color: var(--bg-elevated) !important; }
-  
-  .dark .border-slate-100, 
-  .dark .border-slate-200,
-  .dark .border-slate-300 { border-color: var(--border-base) !important; }
-
-  .dark .text-slate-900, 
-  .dark .text-slate-800, 
-  .dark .text-slate-700 { color: var(--text-primary) !important; }
-  
-  .dark .text-slate-600, 
-  .dark .text-slate-500 { color: var(--text-secondary) !important; }
-  
-  .dark .text-slate-400 { color: var(--text-muted) !important; }
-
   /* Interactive Elements */
   input, textarea, select {
     background-color: var(--bg-secondary);
@@ -142,7 +125,166 @@ html, body, #root {
   }
 }
 
+@layer components {
+  /* Unified Compact Button Styles - pure CSS for Tailwind v4 compatibility */
+  .btn-compact {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.75rem;
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all 0.15s ease-in-out;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .btn-compact:active {
+    transform: scale(0.96);
+  }
+  .btn-compact:disabled {
+    opacity: 0.45;
+    pointer-events: none;
+  }
+
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.75rem;
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all 0.15s ease-in-out;
+    cursor: pointer;
+    white-space: nowrap;
+    background-color: var(--primary);
+    color: var(--primary-fg);
+    box-shadow: 0 2px 4px rgba(79, 70, 229, 0.2);
+  }
+  .btn-primary:hover {
+    background-color: var(--primary-hover);
+  }
+  .btn-primary:active {
+    transform: scale(0.96);
+  }
+
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.75rem;
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all 0.15s ease-in-out;
+    cursor: pointer;
+    white-space: nowrap;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-base);
+    color: var(--text-primary);
+  }
+  .btn-secondary:hover {
+    background-color: var(--bg-subtle);
+  }
+  .btn-secondary:active {
+    transform: scale(0.96);
+  }
+
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.75rem;
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all 0.15s ease-in-out;
+    cursor: pointer;
+    white-space: nowrap;
+    color: var(--text-muted);
+  }
+  .btn-ghost:hover {
+    color: var(--text-primary);
+    background-color: var(--bg-subtle);
+  }
+
+  .btn-success {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.75rem;
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all 0.15s ease-in-out;
+    cursor: pointer;
+    white-space: nowrap;
+    background-color: var(--success);
+    color: #ffffff;
+  }
+  .btn-success:hover {
+    filter: brightness(0.92);
+  }
+
+  .btn-danger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.75rem;
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all 0.15s ease-in-out;
+    cursor: pointer;
+    white-space: nowrap;
+    background-color: var(--danger);
+    color: #ffffff;
+  }
+  .btn-danger:hover {
+    filter: brightness(0.92);
+  }
+
+  /* Badge styles that avoid "pill islands" */
+  .badge-quiet {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 8px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    background-color: var(--bg-subtle);
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--border-base);
+  }
+}
+
 @layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
   /* Disable expensive backdrop blur shaders on tablet/mobile GPUs to avoid lag & overheating */
   .backdrop-blur-xs,
   .backdrop-blur-sm,
@@ -206,14 +348,12 @@ html, body, #root {
   [class*="overflow-y-auto"] {
     -webkit-overflow-scrolling: touch !important;
     touch-action: pan-y;
-    will-change: transform;
   }
 
   [class*="overflow-x-auto"],
   [class*="overflow-auto"] {
     -webkit-overflow-scrolling: touch !important;
     touch-action: pan-x pan-y !important;
-    will-change: transform;
   }
 
   .overscroll-none {
@@ -240,6 +380,53 @@ html, body, #root {
   /* Simplify shadows to save GPU cycles */
   .shadow-xl, .shadow-2xl {
     box-shadow: var(--shadow-lg) !important;
+  }
+}
+
+/* Responsive baseline for mobile, tablet and desktop */
+@media (max-width: 1023px) {
+  html, body, #root {
+    font-size: 15px;
+  }
+
+  /* Form inputs maintain 16px to prevent iOS auto-zoom on focus */
+  input, textarea, select {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 767px) {
+  html, body, #root {
+    min-width: 0;
+  }
+
+  .safe-area-bottom {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1279px) {
+  .tablet-compact {
+    gap: 0.5rem !important;
+  }
+}
+
+/* Reportes: tipografía nítida y tabular */
+.reportes-page button {
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.reportes-page table {
+  min-width: 720px;
+}
+@media (max-width: 767px) {
+  .reportes-page table {
+    min-width: 600px;
+  }
+  .reportes-page .reportes-toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 

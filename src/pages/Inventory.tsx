@@ -1,5 +1,6 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useMemo, useState } from "react";
-import { ArrowLeftRight, PackagePlus, AlertCircle, Search, ShieldCheck, X, DollarSign, Trash2, Edit, History, Package, TrendingUp, Filter, Download, Plus, ArrowRightLeft, LayoutGrid, List, Settings2, Tag, Building2, Save, RefreshCw, Minus } from "lucide-react";
+import { ArrowLeftRight, PackagePlus, AlertCircle, Search, ShieldCheck, X, DollarSign, Trash2, Edit, History, Package, TrendingUp, Filter, Download, Plus, ArrowRightLeft, LayoutGrid, List, Settings2, Tag, Building2, Save, RefreshCw, Minus, ChevronDown } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { cn, generateId } from "../lib/utils";
 import { Product, Category } from "../types";
@@ -16,7 +17,7 @@ export default function Inventory() {
     transferInventory, setInventoryQuantity, deleteProduct, deleteCategory,
     transfers, categories, batchDeleteProducts, batchUpdateProducts, getBaseCurrency, currencies,
     currentUser, addNotification, users
-  } = useStore();
+  } = useStore(useShallow((state) => ({ products: state.products, inventory: state.inventory, branches: state.branches, addProduct: state.addProduct, updateProduct: state.updateProduct, transferInventory: state.transferInventory, setInventoryQuantity: state.setInventoryQuantity, deleteProduct: state.deleteProduct, deleteCategory: state.deleteCategory, transfers: state.transfers, categories: state.categories, batchDeleteProducts: state.batchDeleteProducts, batchUpdateProducts: state.batchUpdateProducts, getBaseCurrency: state.getBaseCurrency, currencies: state.currencies, currentUser: state.currentUser, addNotification: state.addNotification, users: state.users })));
   const currentBranchId = currentUser?.branchId || branches[0]?.id || '';
   const baseCurrency = getBaseCurrency();
 
@@ -150,13 +151,6 @@ export default function Inventory() {
       addNotification("Error al guardar cambios masivos", 'error');
     } finally {
       setIsSavingBulk(false);
-    }
-  };
-
-  const handleBatchDelete = () => {
-    if (window.confirm(`¿Seguro que deseas eliminar ${selectedItems.length} productos?`)) {
-      batchDeleteProducts(selectedItems);
-      setSelectedItems([]);
     }
   };
 
@@ -448,7 +442,7 @@ export default function Inventory() {
         <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide w-full sm:w-auto py-1">
           <button 
             onClick={exportToCSV}
-            className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 bg-secondary border border-base text-muted rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-subtle transition-all shadow-sm active:scale-95"
+            className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 bg-secondary border border-base text-muted rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-subtle transition-all shadow-sm active:scale-95"
           >
             <Download className="w-3 h-3" />
             <span>CSV</span>
@@ -507,74 +501,85 @@ export default function Inventory() {
         </div>
       </div>
 
-      {/* Advanced Unified Toolbar - Linear & Compact */}
-      <div className="bg-secondary p-1.5 rounded-2xl border border-base shadow-sm flex flex-col lg:flex-row gap-2 items-center justify-between shrink-0">
-        <div className="flex flex-wrap gap-2 items-center w-full lg:w-auto">
-            <div className="flex-1 relative flex items-center gap-1.5">
-              <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted group-focus-within:text-indigo-500 transition-colors" />
-                <input 
-                  type="text" 
-                  placeholder="Buscar productos..." 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 bg-subtle border border-base text-primary rounded-xl text-[11px] font-bold focus:bg-secondary focus:ring-1 focus:ring-indigo-500 outline-none transition-all placeholder:text-muted"
-                />
-              </div>
-              <InfoTooltip text="Busca productos por nombre, SKU o código de barras." position="bottom" />
+      {/* Advanced Unified Toolbar - Compact & Responsive for Mobile/Tablet */}
+      <div className="bg-secondary p-2 sm:p-2.5 rounded-2xl border border-base shadow-sm flex flex-col md:flex-row gap-2 items-stretch md:items-center justify-between shrink-0">
+        <div className="flex flex-col sm:flex-row gap-1.5 sm:gap-2 items-stretch sm:items-center flex-1 min-w-0">
+          {/* Search bar */}
+          <div className="relative flex-1 min-w-[140px] group">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted group-focus-within:text-indigo-500 transition-colors" />
+            <input 
+              type="text" 
+              placeholder="Buscar por nombre, SKU, código..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-3 h-8 bg-subtle border border-base text-primary rounded-xl text-[11px] font-semibold focus:bg-secondary focus:ring-1 focus:ring-indigo-500 outline-none transition-all placeholder:text-muted/60"
+            />
+          </div>
+          
+          {/* Filters: Sucursal, Categoría, Stock y Gestión */}
+          <div className="grid grid-cols-[1fr_1fr_1fr_auto] sm:flex sm:items-center gap-1.5">
+            {/* Sucursal */}
+            <div className="relative group min-w-0 sm:min-w-[110px] sm:max-w-[140px]">
+              <Building2 className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted pointer-events-none" />
+              <select 
+                value={selectedBranch}
+                onChange={(e) => setSelectedBranch(e.target.value)}
+                className="w-full pl-6 pr-5 h-8 bg-subtle border border-base text-primary rounded-xl text-[10px] font-bold outline-none hover:bg-secondary transition-colors cursor-pointer appearance-none truncate"
+                title="Filtrar por sucursal"
+              >
+                <option value="all">📍 Sucursal</option>
+                {branches.map(b => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted pointer-events-none" />
             </div>
-            
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <div className="flex items-center gap-1">
-                <select 
-                  value={selectedBranch}
-                  onChange={(e) => setSelectedBranch(e.target.value)}
-                  className="px-2.5 py-1.5 bg-subtle border border-base text-primary rounded-xl text-[10px] font-bold outline-none hover:bg-secondary transition-colors cursor-pointer appearance-none min-w-[110px]"
-                >
-                  <option value="all">Sucs: Todas</option>
-                  {branches.map(b => (
-                    <option key={b.id} value={b.id}>{getBranchDisplayName(b)}</option>
-                  ))}
-                </select>
-                <InfoTooltip text="Filtra por una sucursal específica para ver su stock local." position="bottom" />
-              </div>
 
-              <div className="flex items-center gap-1">
-                <select 
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="px-2.5 py-1.5 bg-subtle border border-base text-primary rounded-xl text-[10px] font-bold outline-none hover:bg-secondary transition-colors cursor-pointer appearance-none min-w-[110px]"
-                >
-                  <option value="all">Cats: Todas</option>
-                  {categories.map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                  ))}
-                </select>
-                <InfoTooltip text="Filtra los productos por su categoría o departamento." position="bottom" />
-              </div>
+            {/* Categoría */}
+            <div className="relative group min-w-0 sm:min-w-[110px] sm:max-w-[140px]">
+              <Tag className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted pointer-events-none" />
+              <select 
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="w-full pl-6 pr-5 h-8 bg-subtle border border-base text-primary rounded-xl text-[10px] font-bold outline-none hover:bg-secondary transition-colors cursor-pointer appearance-none truncate"
+                title="Filtrar por categoría"
+              >
+                <option value="all">📁 Categoría</option>
+                {categories.map(cat => (
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted pointer-events-none" />
+            </div>
 
+            {/* Stock */}
+            <div className="relative group min-w-0 sm:min-w-[90px] sm:max-w-[120px]">
+              <select 
+                value={stockFilter}
+                onChange={(e) => setStockFilter(e.target.value as any)}
+                className="w-full px-2 h-8 bg-subtle border border-base text-primary rounded-xl text-[10px] font-bold outline-none hover:bg-secondary transition-colors cursor-pointer appearance-none text-center truncate"
+                title="Filtrar por stock"
+              >
+                <option value="all">📊 Stock</option>
+                <option value="in_stock">Vivos</option>
+                <option value="low">Bajos</option>
+                <option value="out">Ceros</option>
+              </select>
+              <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted pointer-events-none" />
+            </div>
+
+            {/* Botón Gestión Categorías */}
             <button 
               onClick={() => setShowCategoryModal(true)}
-              className="p-1.5 bg-subtle border border-base rounded-xl text-muted hover:text-indigo-600 hover:bg-secondary transition-all shadow-sm"
+              className="w-8 h-8 flex items-center justify-center bg-subtle border border-base rounded-xl text-muted hover:text-indigo-600 hover:bg-secondary transition-all cursor-pointer shrink-0"
               title="Gestionar Categorías"
             >
               <Settings2 className="w-3.5 h-3.5" />
             </button>
-
-            <select 
-              value={stockFilter}
-              onChange={(e) => setStockFilter(e.target.value as any)}
-              className="px-2.5 py-1.5 bg-subtle border border-base text-primary rounded-xl text-[10px] font-bold outline-none hover:bg-secondary transition-colors cursor-pointer appearance-none min-w-[100px]"
-            >
-              <option value="all">Stock: Todo</option>
-              <option value="in_stock">Solo con Stock (&gt;0)</option>
-              <option value="low">Bajo Stock</option>
-              <option value="out">Sin Exist. (0)</option>
-            </select>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 w-full lg:w-auto justify-end border-t lg:border-t-0 pt-2 lg:pt-0">
+        <div className="flex items-center gap-2 self-end md:self-auto justify-end border-t md:border-t-0 pt-1.5 md:pt-0">
           <div className="bg-subtle p-0.5 rounded-lg flex gap-0.5 border border-base">
             <button 
               onClick={() => setViewMode('table')}
@@ -601,9 +606,10 @@ export default function Inventory() {
       </div>
 
       {/* Tabs - High contrast and modern segmented design */}
-      <div className="flex items-center gap-1.5 bg-secondary p-1 rounded-xl border border-base shrink-0 w-fit shadow-xs">
-        {(['products', 'restock', 'bulk'] as const)
-          .map(tab => {
+      <div className="flex items-center gap-1.5 bg-secondary p-1 rounded-xl border border-base shrink-0 w-full overflow-x-auto custom-scrollbar shadow-xs scroll-smooth">
+        <div className="flex items-center gap-1.5 min-w-max">
+          {(['products', 'restock', 'bulk'] as const)
+            .map(tab => {
             const isActive = activeTab === tab;
             return (
               <button 
@@ -620,6 +626,7 @@ export default function Inventory() {
               </button>
             );
         })}
+        </div>
       </div>
 
 
@@ -794,7 +801,7 @@ export default function Inventory() {
                                 e.currentTarget.src = '';
                                 e.currentTarget.style.display = 'none';
                               }}
-                            />
+                             loading="lazy" decoding="async" />
                           ) : (
                             <div className={cn("w-full h-full opacity-20", item.color)} />
                           )}
@@ -881,7 +888,7 @@ export default function Inventory() {
                           <Edit className="w-3.5 h-3.5" />
                         </button>
                         <button 
-                          onClick={() => window.confirm("¿Seguro que deseas eliminar este producto?") && deleteProduct(item.id)}
+                          onClick={() => window.confirm("¿Marcar este producto como descontinuado?\n\nSe conservarán sus ventas e inventario histórico.") && deleteProduct(item.id)}
                           className="text-muted hover:text-rose-600 transition-colors p-1.5 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-base shadow-sm"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -928,12 +935,6 @@ export default function Inventory() {
                     className="text-xs font-black uppercase tracking-widest hover:text-emerald-200 transition-colors"
                   >
                     Ajustar Precios
-                  </button>
-                  <button 
-                    onClick={handleBatchDelete}
-                    className="text-xs font-black uppercase tracking-widest hover:text-rose-200 transition-colors"
-                  >
-                    Eliminar
                   </button>
                 </div>
                 <button onClick={() => setSelectedItems([])} className="text-xs font-black uppercase tracking-widest hover:text-indigo-200">Cancelar</button>
@@ -1050,7 +1051,7 @@ export default function Inventory() {
                         <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 text-center">Imagen de Producto</label>
                         <div className="relative group w-full aspect-square bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden hover:border-indigo-300 transition-all">
                           {formData.image ? (
-                            <img src={formData.image} alt="Product" className="w-full h-full object-cover" />
+                            <img src={formData.image} alt="Product" className="w-full h-full object-cover"  loading="lazy" decoding="async" />
                           ) : (
                             <div className="flex flex-col items-center gap-2">
                               <Plus className="w-8 h-8 text-slate-300" />
@@ -1589,7 +1590,7 @@ export default function Inventory() {
               </div>
               <div className="max-h-60 overflow-y-auto space-y-2 px-1 custom-scrollbar">
                 {products
-                  .filter(p => !p.isKit && (p.name.toLowerCase().includes(kitQuery.toLowerCase()) || p.sku.toLowerCase().includes(kitQuery.toLowerCase())))
+                  .filter(p => p && !p.isKit && (p.name.toLowerCase().includes(kitQuery.toLowerCase()) || p.sku.toLowerCase().includes(kitQuery.toLowerCase())))
                   .slice(0, 10)
                   .map(p => (
                     <button 
@@ -1690,12 +1691,12 @@ export default function Inventory() {
                         <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
                           <Tag className="w-4 h-4" />
                         </div>
-                        <div>
-                          <p className="text-[10px] font-black text-slate-900 uppercase tracking-tighter">{cat.name}</p>
-                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{cat.department}</p>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-black text-slate-900 uppercase tracking-tight break-words">{cat.name}</p>
+                          <p className="text-[8px] font-bold text-slate-400 uppercase tracking-wider">{cat.department}</p>
                         </div>
                       </div>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                         <button 
                           onClick={() => {
                             setEditingCategory(cat);

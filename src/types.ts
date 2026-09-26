@@ -99,6 +99,7 @@ export interface StoreConfig {
   latitude?: number;
   longitude?: number;
   darkMode?: boolean;
+  manualOfflineSync?: boolean;
 }
 
 export interface CatalogConfig {
@@ -147,6 +148,10 @@ export interface ReturnItem {
   type: 'refund' | 'warranty_exchange';
   notes?: string;
   variantLabel?: string;
+  branchId?: string;
+  replacementProductId?: string;
+  replacementQuantity?: number;
+  processedBy?: string;
 }
 
 export interface Customer {
@@ -166,7 +171,7 @@ export interface CashRegisterSession {
   openingAmount?: number;
   closingBalances?: Payment[];
   expectedBalance?: number;
-  status: 'open' | 'closed';
+  status: 'open' | 'closed' | 'cancelled';
   userId: string; // The user who opened it
   workerName?: string; // Custom name for the shift (e.g., worker name)
   workingEmployeeIds?: string[]; // IDs of employees working this session
@@ -291,6 +296,7 @@ export interface InventoryTransfer {
   transactionId?: string;
   batchId?: string; // For grouping multiple products in a single operation
   status: 'completed' | 'cancelled' | 'pending';
+  operationId?: string;
 }
 
 export interface Supplier {

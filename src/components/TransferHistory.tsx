@@ -1,8 +1,9 @@
+import { useShallow } from 'zustand/react/shallow';
 import React from 'react';
 import { useStore } from '../store/useStore';
 
 export const TransferHistory = () => {
-  const { transfers, products, branches, categories } = useStore();
+  const { transfers, products, branches, categories } = useStore(useShallow((state) => ({ transfers: state.transfers, products: state.products, branches: state.branches, categories: state.categories })));
   const sortedTransfers = [...transfers].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   return (

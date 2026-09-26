@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { generateId, cn } from '../lib/utils';
@@ -17,7 +18,7 @@ export default function Banks() {
     deleteBankTransaction,
     reconcileBankBalances,
     addNotification
-  } = useStore();
+  } = useStore(useShallow((state) => ({ bankCards: state.bankCards, bankTransactions: state.bankTransactions, addBankCard: state.addBankCard, updateBankCard: state.updateBankCard, deleteBankCard: state.deleteBankCard, getBaseCurrency: state.getBaseCurrency, addBankTransaction: state.addBankTransaction, deleteBankTransaction: state.deleteBankTransaction, reconcileBankBalances: state.reconcileBankBalances, addNotification: state.addNotification })));
   
   const [showAddModal, setShowAddModal] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -219,7 +220,7 @@ export default function Banks() {
               </button>
               <button 
                 onClick={handleConfirmDeleteMovement}
-                className="py-2 bg-rose-600 text-white rounded-xl font-black text-[9px] uppercase tracking-wider shadow-lg shadow-rose-200 dark:shadow-none cursor-pointer"
+                className="py-2 bg-rose-600 text-white rounded-xl font-black text-[10px] uppercase tracking-wider shadow-lg shadow-rose-200 dark:shadow-none cursor-pointer"
               >
                 Eliminar
               </button>
@@ -240,7 +241,7 @@ export default function Banks() {
             onClick={handleReconcile}
             disabled={isReconciling}
             title="Buscar datos en Supabase, comparar y reconciliar saldos y ventas"
-            className="bg-secondary border border-base text-primary hover:bg-subtle px-3 py-1.5 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            className="bg-secondary border border-base text-primary hover:bg-subtle px-3 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             {isReconciling ? (
               <RefreshCw size={13} className="animate-spin text-indigo-500" />
@@ -274,10 +275,10 @@ export default function Banks() {
                <div>
                  <h3 className="text-[7.5px] font-black uppercase tracking-wider opacity-80">{card.bank}</h3>
                </div>
-               <div className="flex gap-1.5">
-                 <button onClick={(e) => { e.stopPropagation(); setEditingCard(card); setFormData(card); setShowAddModal(true); }} className="text-white opacity-50 hover:opacity-100 transition-opacity text-[6.5px] font-black uppercase tracking-wider">Editar</button>
-                 <button onClick={(e) => { e.stopPropagation(); setTransferData({...transferData, fromCardId: card.id}); setShowTransferModal(true); }} className="text-emerald-400 hover:text-emerald-300 transition-colors text-[6.5px] font-black uppercase tracking-wider">Transferir</button>
-                 <button onClick={(e) => { e.stopPropagation(); setCardToDelete(card.id); }} className="text-rose-400 hover:text-rose-300 transition-colors text-[6.5px] font-black uppercase tracking-wider">Eliminar</button>
+               <div className="flex gap-1 items-center">
+                 <button onClick={(e) => { e.stopPropagation(); setEditingCard(card); setFormData(card); setShowAddModal(true); }} className="text-white opacity-70 hover:opacity-100 transition-opacity text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 inline-flex items-center cursor-pointer">Editar</button>
+                 <button onClick={(e) => { e.stopPropagation(); setTransferData({...transferData, fromCardId: card.id}); setShowTransferModal(true); }} className="text-emerald-300 hover:text-emerald-200 transition-colors text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 inline-flex items-center cursor-pointer">Transferir</button>
+                 <button onClick={(e) => { e.stopPropagation(); setCardToDelete(card.id); }} className="text-rose-300 hover:text-rose-200 transition-colors text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 inline-flex items-center cursor-pointer">Eliminar</button>
                </div>
              </div>
              
@@ -482,7 +483,7 @@ export default function Banks() {
               </div>
 
               <div className="pt-1.5">
-                <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded-xl font-black text-[9px] uppercase tracking-wider hover:bg-indigo-700 transition-all shadow-md shadow-indigo-600/20 active:scale-98 cursor-pointer">
+                <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded-xl font-black text-[10px] uppercase tracking-wider hover:bg-indigo-700 transition-all shadow-md shadow-indigo-600/20 active:scale-98 cursor-pointer">
                   {editingCard ? 'Guardar Cambios' : 'Crear Cuenta'}
                 </button>
               </div>
@@ -608,7 +609,7 @@ export default function Banks() {
               </div>
 
               <div className="pt-1.5">
-                <button type="submit" className="w-full bg-emerald-600 text-white py-2 rounded-xl font-black text-[9px] uppercase tracking-wider hover:bg-emerald-700 transition-all shadow-md shadow-emerald-600/20 active:scale-98 cursor-pointer">
+                <button type="submit" className="w-full bg-emerald-600 text-white py-2 rounded-xl font-black text-[10px] uppercase tracking-wider hover:bg-emerald-700 transition-all shadow-md shadow-emerald-600/20 active:scale-98 cursor-pointer">
                   Transferir Ahora
                 </button>
               </div>

@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState } from "react";
 import { Users, Search, Plus, Star, Phone, Mail, Edit, Trash2, History, X, Package, Clock, DollarSign, ShoppingBag, HelpCircle } from "lucide-react";
 import { useStore } from "../store/useStore";
@@ -6,7 +7,7 @@ import { cn } from "../lib/utils";
 import { InfoTooltip } from "../components/InfoTooltip";
 
 export default function Customers() {
-  const { customers, addCustomer, updateCustomer, deleteCustomer, transactions, getBaseCurrency } = useStore();
+  const { customers, addCustomer, updateCustomer, deleteCustomer, transactions, getBaseCurrency } = useStore(useShallow((state) => ({ customers: state.customers, addCustomer: state.addCustomer, updateCustomer: state.updateCustomer, deleteCustomer: state.deleteCustomer, transactions: state.transactions, getBaseCurrency: state.getBaseCurrency })));
   const baseCurrency = getBaseCurrency();
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
@@ -139,7 +140,14 @@ export default function Customers() {
                         <Edit size={14} />
                       </button>
                       <button 
-                        onClick={() => window.confirm("¿Eliminar cliente?") && deleteCustomer(customer.id)}
+                        onClick={() => {
+                          const hasHistory = (transactions || []).some(t => t.customerId === customer.id);
+                          if (hasHistory) {
+                            window.alert("Este cliente tiene ventas registradas y no puede eliminarse. Conserva el historial para mantener la trazabilidad.");
+                            return;
+                          }
+                          if (window.confirm("¿Eliminar cliente? Esta acción solo está disponible si no tiene historial de ventas.")) deleteCustomer(customer.id);
+                        }}
                         className="text-muted hover:text-rose-600 transition-colors p-1.5 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg border border-base"
                       >
                         <Trash2 size={14} />

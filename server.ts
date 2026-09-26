@@ -45,7 +45,14 @@ async function startServer() {
 
       if (apiKey && apiKey !== 'MY_GEMINI_API_KEY' && apiKey.trim().length > 10) {
         try {
-          const ai = new GoogleGenAI({ apiKey });
+          const ai = new GoogleGenAI({
+            apiKey,
+            httpOptions: {
+              headers: {
+                'User-Agent': 'aistudio-build',
+              }
+            }
+          });
           const prompt = `Analiza los siguientes datos financieros y operativos del negocio "${businessName}" (Filtro: ${dateFilterLabel}, Moneda base: ${baseCurrencyCode} ${baseCurrencySymbol}).
           
 DATOS FINANCIEROS:
@@ -230,7 +237,14 @@ Genera un informe ejecutivo de auditoría contable y operativa con recomendacion
         });
       }
 
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
       
       const sessionSummary = transactions.map((t: any) => ({
         id: t.id,
@@ -309,6 +323,57 @@ Responde ESTRICTAMENTE con un objeto JSON:
       res.status(500).json({
         success: false,
         error: error.message || 'Error al procesar el análisis de discrepancia'
+      });
+    }
+  });
+
+  // AI Business Summary for Dashboard
+  app.post('/api/ai-business-summary', async (req, res) => {
+    try {
+      const data = req.body;
+      const apiKey = process.env.GEMINI_API_KEY;
+
+      if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.trim().length < 10) {
+        return res.json({
+          success: true,
+          summary: "Configura una clave de API válida para activar el análisis por IA."
+        });
+      }
+
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+      const prompt = `
+        Eres un analista de negocios experto para una tienda minorista llamada MARÉ.
+        Analiza los siguientes datos de hoy y proporciona un resumen ejecutivo MUY breve (máximo 3 oraciones) y 2 recomendaciones tácticas.
+        Datos de hoy:
+        - Ventas totales: ${data.salesToday} ${data.baseCurrency}
+        - Cantidad de tickets: ${data.txCountToday}
+        - Productos con stock bajo: ${data.lowStockCount}
+        - Top categorías por venta: ${data.topCategories.map((c: any) => `${c.name}: ${c.value}`).join(", ")}
+
+        Responde en español, con un tono profesional pero motivador.
+      `;
+
+      const interaction = await ai.interactions.create({
+        model: 'gemini-3.8-flash',
+        input: prompt,
+      });
+
+      res.json({
+        success: true,
+        summary: interaction.output_text
+      });
+    } catch (error: any) {
+      console.error('[AI Summary Error]', error);
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Error al procesar el resumen con IA'
       });
     }
   });

@@ -1,10 +1,11 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState } from "react";
 import { Store, LogIn, Lock, Mail, ShieldCheck } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { motion } from "motion/react";
 
 export default function Login() {
-  const { login } = useStore();
+  const { login } = useStore(useShallow((state) => ({ login: state.login })));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");

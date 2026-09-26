@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -38,7 +39,7 @@ function PageLoading() {
 }
 
 export default function App() {
-  const { currentUser, isInitialized, restoreTransactionsFromBackup } = useStore();
+  const { currentUser, isInitialized, restoreTransactionsFromBackup, currentBranchId } = useStore(useShallow((state) => ({ currentUser: state.currentUser, isInitialized: state.isInitialized, restoreTransactionsFromBackup: state.restoreTransactionsFromBackup, currentBranchId: state.currentBranchId })));
 
   useEffect(() => {
     if (isInitialized) {
@@ -48,16 +49,15 @@ export default function App() {
   }, [isInitialized, restoreTransactionsFromBackup]);
 
   useEffect(() => {
-    // Inicializar el monitor y sincronizador automático offline
+    if (!currentUser) return;
+    // El login activa los motores; la pantalla de acceso no necesita sincronizar.
     const cleanupOfflineWatcher = initOfflineSyncWatcher();
-    // Inicializar sincronización multi-dispositivo y realtime de Supabase
     const cleanupRealtimeSync = initMultiDeviceRealtimeSync();
-
     return () => {
       cleanupOfflineWatcher();
       cleanupRealtimeSync();
     };
-  }, []);
+  }, [currentUser?.id, currentBranchId]);
 
   if (!isInitialized) {
     return (

@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState } from "react";
 import { useStore } from "../store/useStore";
 import { Supplier, SupplierOrder } from "../types";
@@ -16,6 +17,7 @@ import {
   FileText,
   X,
   CheckCircle2,
+  XCircle,
   AlertCircle,
   Trash2,
   Edit
@@ -24,7 +26,7 @@ import { cn } from "../lib/utils";
 import { InfoTooltip } from "../components/InfoTooltip";
 
 export default function Suppliers() {
-  const { suppliers, addSupplier, updateSupplier, deleteSupplier, supplierOrders, products, createSupplierOrder, updateSupplierOrder, branches, getBaseCurrency } = useStore();
+  const { suppliers, addSupplier, updateSupplier, deleteSupplier, supplierOrders, products, createSupplierOrder, updateSupplierOrder, branches, getBaseCurrency } = useStore(useShallow((state) => ({ suppliers: state.suppliers, addSupplier: state.addSupplier, updateSupplier: state.updateSupplier, deleteSupplier: state.deleteSupplier, supplierOrders: state.supplierOrders, products: state.products, createSupplierOrder: state.createSupplierOrder, updateSupplierOrder: state.updateSupplierOrder, branches: state.branches, getBaseCurrency: state.getBaseCurrency })));
   const baseCurrency = getBaseCurrency();
   const [searchTerm, setSearchTerm] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
@@ -237,7 +239,14 @@ export default function Suppliers() {
                   >
                     Editar
                   </button>
-                  <button onClick={() => deleteSupplier(s.id)} className="p-1.5 bg-subtle text-muted rounded-lg hover:bg-rose-50 dark:hover:bg-rose-900/20 hover:text-rose-600 transition-all border border-base">
+                  <button onClick={() => {
+                    const hasOrders = (supplierOrders || []).some(o => o.supplierId === s.id);
+                    if (hasOrders) {
+                      window.alert("Este proveedor tiene órdenes registradas y no puede eliminarse. Conserva el historial de compras.");
+                      return;
+                    }
+                    if (window.confirm("¿Eliminar proveedor? Esta acción solo está disponible si no tiene órdenes registradas.")) deleteSupplier(s.id);
+                  }} className="p-1.5 bg-subtle text-muted rounded-lg hover:bg-rose-50 dark:hover:bg-rose-900/20 hover:text-rose-600 transition-all border border-base">
                     <Trash2 size={12} />
                   </button>
                 </div>
@@ -285,9 +294,23 @@ export default function Suppliers() {
                         </button>
                         <button 
                           onClick={() => updateSupplierOrder(order.id, { status: 'received' })}
+                          title="Marcar como recibida"
+                          aria-label="Marcar orden como recibida"
                           className="p-1.5 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 rounded-lg border border-emerald-100 dark:border-emerald-800"
                         >
                           <CheckCircle2 size={10} />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            if (window.confirm('¿Cancelar esta orden de compra? La orden se conservará en el historial y no se agregará inventario.')) {
+                              updateSupplierOrder(order.id, { status: 'cancelled' });
+                            }
+                          }}
+                          title="Cancelar orden"
+                          aria-label="Cancelar orden de compra"
+                          className="p-1.5 bg-rose-50 dark:bg-rose-900/30 text-rose-600 rounded-lg border border-rose-100 dark:border-rose-800"
+                        >
+                          <XCircle size={10} />
                         </button>
                       </div>
                     )}

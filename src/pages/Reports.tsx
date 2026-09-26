@@ -1,9 +1,10 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { 
   TrendingUp, DollarSign, Calendar, Calculator, Package, User, Users, Smartphone, Eye,
   X, ArrowDownRight, ArrowUpRight, ArrowLeftRight, ArrowRight, History, Download, Printer, CheckCircle2, 
   Clock, AlertCircle, AlertTriangle, FileSpreadsheet, ChevronDown, Check, Plus, Search,
-  Sparkles, Brain, ListChecks, ShieldAlert, ShieldCheck, Loader2, Trash2, PieChart as PieChartIcon, BarChart3,
+  PieChart as PieChartIcon, BarChart3, Brain, ListChecks, ShieldAlert, Loader2, Trash2,
   HelpCircle, Edit3, Save, FileText, CheckCircle, Minus
 } from "lucide-react";
 import { 
@@ -14,13 +15,41 @@ import { useStore } from "../store/useStore";
 import { Transaction, Product, CashRegisterSession, CashMovement } from "../types";
 import { cn } from "../lib/utils";
 import { InfoTooltip } from "../components/InfoTooltip";
+import { useReportsAnalytics } from "../hooks/useReportsAnalytics";
 import { 
-  exportFullReportsToExcel, exportSingleSectionToExcel, ExcelExportData,
-  AIDiagnosticReport
+  exportFullReportsToExcel, exportSingleSectionToExcel, ExcelExportData
 } from "../utils/excelExport";
 
 export default function Reports() {
-  const store = useStore();
+  const store = useStore(useShallow((state) => ({
+    addInformationalSoldProductToSession: state.addInformationalSoldProductToSession,
+    addNotification: state.addNotification,
+    addSalarySettlement: state.addSalarySettlement,
+    bankCards: state.bankCards,
+    bankTransactions: state.bankTransactions,
+    branches: state.branches,
+    cashSessions: state.cashSessions,
+    categories: state.categories,
+    currencies: state.currencies,
+    customers: state.customers,
+    deleteTransaction: state.deleteTransaction,
+    forceCloseSessionFromReports: state.forceCloseSessionFromReports,
+    getBaseCurrency: state.getBaseCurrency,
+    inventory: state.inventory,
+    products: state.products,
+    receiptConfig: state.receiptConfig,
+    returns: state.returns,
+    salarySettlements: state.salarySettlements,
+    subtractInformationalProductFromSession: state.subtractInformationalProductFromSession,
+    supplierOrders: state.supplierOrders,
+    transactions: state.transactions,
+    transfers: state.transfers,
+    updateCashSession: state.updateCashSession,
+    updateCashSessionDateCascade: state.updateCashSessionDateCascade,
+    updateSalarySettlement: state.updateSalarySettlement,
+    users: state.users,
+    warranties: state.warranties,
+  })));
 
   const transactions = (store.transactions || []).filter(t => !t.deletedAt);
   const cashSessions = (store.cashSessions || []).filter(s => !s.deletedAt);
@@ -113,61 +142,6 @@ export default function Reports() {
     </div>
   );
 
-  // --- Chart Data Processing ---
-  
-  // 1. Sales by Category
-  const categoryData = useMemo(() => {
-    const data: Record<string, number> = {};
-    transactions.forEach(tx => {
-      (tx.items || []).forEach(item => {
-        const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
-        const prod = products.find(p => p.id === prodId);
-        const categoryId = prod?.categoryId || (typeof item.product === 'object' ? item.product?.categoryId : '') || 'unclassified';
-        const category = categories.find(c => c.id === categoryId);
-        const categoryName = category?.name || 'Otros';
-        
-        data[categoryName] = (data[categoryName] || 0) + (item.total || (item.price * item.quantity) || 0);
-      });
-    });
-    
-    return Object.entries(data)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 5); // Top 5
-  }, [transactions, products, categories]);
-
-  // 2. Sales by Hour
-  const hourData = useMemo(() => {
-    const data: Record<number, number> = {};
-    // Initialize 24 hours
-    for(let i=0; i<24; i++) data[i] = 0;
-    
-    transactions.forEach(tx => {
-      const hour = new Date(tx.date).getHours();
-      data[hour] += tx.total;
-    });
-    
-    return Object.entries(data).map(([hour, total]) => ({ 
-      hour: `${hour}:00`, 
-      total: Math.round(total) 
-    }));
-  }, [transactions]);
-
-  // 3. Sales by Branch
-  const branchData = useMemo(() => {
-    const data: Record<string, number> = {};
-    branches.forEach(b => data[b.name] = 0);
-    
-    transactions.forEach(tx => {
-      const branch = branches.find(b => b.id === tx.branchId);
-      if (branch) {
-        data[branch.name] += tx.total;
-      }
-    });
-    
-    return Object.entries(data).map(([name, total]) => ({ name, total }));
-  }, [transactions, branches]);
-
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -193,7 +167,7 @@ export default function Reports() {
     return itemProduct.name || 'Desconocido';
   };
 
-  const [activeTab, setActiveTab] = useState<'sales' | 'payroll' | 'sessions' | 'discrepancies' | 'movements' | 'products' | 'idn' | 'transfers' | 'audit'>('sales');
+  const [activeTab, setActiveTab] = useState<'sales' | 'payroll' | 'sessions' | 'discrepancies' | 'movements' | 'products' | 'idn' | 'transfers'>('sales');
   const [salesViewMode, setSalesViewMode] = useState<'by_shift' | 'all_tickets'>('by_shift');
   const [transferFromFilter, setTransferFromFilter] = useState<string>('all');
   const [transferToFilter, setTransferToFilter] = useState<string>('all');
@@ -209,7 +183,7 @@ export default function Reports() {
   const [selectedDiscrepancyDetailSession, setSelectedDiscrepancyDetailSession] = useState<CashRegisterSession | null>(null);
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
   const [sessionFilter, setSessionFilter] = useState<'all' | 'today' | 'yesterday' | 'custom'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'closed'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'closed' | 'cancelled'>('all');
   const [selectedWorkerFilter, setSelectedWorkerFilter] = useState<string>('all');
   const [selectedFilterDate, setSelectedFilterDate] = useState<string>('');
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>('all');
@@ -246,7 +220,7 @@ export default function Reports() {
     session: CashRegisterSession;
   } | null>(null);
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<{
-    type: 'transaction' | 'session';
+    type: 'transaction';
     id: string;
     label: string;
   } | null>(null);
@@ -263,6 +237,7 @@ export default function Reports() {
   const [sessionClosingDateInput, setSessionClosingDateInput] = useState<string>(new Date().toISOString().split('T')[0]);
   const [sessionClosingNotesInput, setSessionClosingNotesInput] = useState<string>("");
   const [isClosingShiftFromReports, setIsClosingShiftFromReports] = useState(false);
+  const [showChartsOnMobile, setShowChartsOnMobile] = useState(false);
 
   // Estados para Añadir Producto Vendido al Informe (Sin tocar stock físico)
   const [addItemToShiftModal, setAddItemToShiftModal] = useState<CashRegisterSession | null>(null);
@@ -287,181 +262,31 @@ export default function Reports() {
 
   const REQUIRED_DELETE_PIN = "03111166702";
 
-  // Filtro y resumen de transacciones de Vendedores Independientes (IDN/IDM)
-  const idnTransactions = useMemo(() => {
-    const todayYMD = getLocalDateYMD(new Date().toISOString());
-    const yesterdayDate = new Date();
-    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-    const yesterdayYMD = getLocalDateYMD(yesterdayDate.toISOString());
-
-    return (transactions || []).filter(t => {
-      if (t.deletedAt) return false;
-      if (selectedBranchFilter !== 'all' && t.branchId !== selectedBranchFilter) return false;
-      const tYMD = getLocalDateYMD(t.date);
-      if (selectedFilterDate) {
-        if (tYMD !== selectedFilterDate) return false;
-      } else if (sessionFilter === 'today') {
-        if (tYMD !== todayYMD) return false;
-      } else if (sessionFilter === 'yesterday') {
-        if (tYMD !== yesterdayYMD) return false;
-      }
-      const user = users.find(u => u.id === t.userId);
-      return t.id.startsWith('LIQ-IDN-') || t.notes === 'LIQUIDACION_IDN' || (t.notes && t.notes.includes('IDN')) || user?.isIndependent === true;
-    });
-  }, [transactions, selectedBranchFilter, selectedFilterDate, sessionFilter, users]);
-
-  // Filtro de Transferencias entre Sucursales
-  const filteredTransfers = useMemo(() => {
-    const todayYMD = getLocalDateYMD(new Date().toISOString());
-    const yesterdayDate = new Date();
-    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-    const yesterdayYMD = getLocalDateYMD(yesterdayDate.toISOString());
-
-    return (transfers || []).filter(t => {
-      if (transferFromFilter !== 'all' && t.fromBranchId !== transferFromFilter) return false;
-      if (transferToFilter !== 'all' && t.toBranchId !== transferToFilter) return false;
-      if (selectedBranchFilter !== 'all' && t.fromBranchId !== selectedBranchFilter && t.toBranchId !== selectedBranchFilter) return false;
-      
-      const tDateYMD = getLocalDateYMD(t.date);
-      if (selectedFilterDate) {
-        if (tDateYMD !== selectedFilterDate) return false;
-      } else if (sessionFilter === 'today') {
-        if (tDateYMD !== todayYMD) return false;
-      } else if (sessionFilter === 'yesterday') {
-        if (tDateYMD !== yesterdayYMD) return false;
-      }
-
-      if (transferSearch.trim()) {
-        const q = transferSearch.toLowerCase();
-        const pName = (t.productName || '').toLowerCase();
-        const vLabel = (t.variantLabel || '').toLowerCase();
-        const fromN = (branches.find(b => b.id === t.fromBranchId)?.name || t.fromBranchName || '').toLowerCase();
-        const toN = (branches.find(b => b.id === t.toBranchId)?.name || t.toBranchName || '').toLowerCase();
-        if (!pName.includes(q) && !vLabel.includes(q) && !fromN.includes(q) && !toN.includes(q) && !t.id.toLowerCase().includes(q)) {
-          return false;
-        }
-      }
-      return true;
-    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [transfers, transferFromFilter, transferToFilter, selectedBranchFilter, selectedFilterDate, sessionFilter, transferSearch, branches]);
-
-  // Estadísticas de Transferencias
-  const transferStats = useMemo(() => {
-    const totalCount = filteredTransfers.length;
-    const totalUnits = filteredTransfers.reduce((sum, t) => sum + (t.quantity || 0), 0);
-    
-    const originCounts: Record<string, number> = {};
-    filteredTransfers.forEach(t => {
-      const name = branches.find(b => b.id === t.fromBranchId)?.name || t.fromBranchName || 'Origen';
-      originCounts[name] = (originCounts[name] || 0) + t.quantity;
-    });
-    const topOrigin = Object.entries(originCounts).sort((a, b) => b[1] - a[1])[0] || ['Ninguna', 0];
-
-    const destCounts: Record<string, number> = {};
-    filteredTransfers.forEach(t => {
-      const name = branches.find(b => b.id === t.toBranchId)?.name || t.toBranchName || 'Destino';
-      destCounts[name] = (destCounts[name] || 0) + t.quantity;
-    });
-    const topDest = Object.entries(destCounts).sort((a, b) => b[1] - a[1])[0] || ['Ninguna', 0];
-
-    return { totalCount, totalUnits, topOrigin, topDest };
-  }, [filteredTransfers, branches]);
-
-  // Lista de Transacciones individuales lineales filtradas
-  const filteredTransactions = useMemo(() => {
-    const todayYMD = getLocalDateYMD(new Date().toISOString());
-    const yesterdayDate = new Date();
-    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-    const yesterdayYMD = getLocalDateYMD(yesterdayDate.toISOString());
-
-    return (transactions || []).filter(t => {
-      if (t.deletedAt) return false;
-      if (selectedBranchFilter !== 'all' && t.branchId !== selectedBranchFilter) return false;
-      if (selectedWorkerFilter !== 'all') {
-        const emp = users.find(u => u.id === t.userId || (u.name && t.cashierName && u.name.toLowerCase() === t.cashierName.toLowerCase()));
-        if (emp?.id !== selectedWorkerFilter && t.userId !== selectedWorkerFilter && t.cashierName !== selectedWorkerFilter) {
-          return false;
-        }
-      }
-      const tYMD = getLocalDateYMD(t.date);
-      if (selectedFilterDate) {
-        if (tYMD !== selectedFilterDate) return false;
-      } else if (sessionFilter === 'today') {
-        if (tYMD !== todayYMD) return false;
-      } else if (sessionFilter === 'yesterday') {
-        if (tYMD !== yesterdayYMD) return false;
-      }
-      return true;
-    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [transactions, selectedBranchFilter, selectedWorkerFilter, selectedFilterDate, sessionFilter, users]);
-
-  const idnWorkerStats = useMemo(() => {
-    const map = new Map<string, {
-      userId: string;
-      workerName: string;
-      branchName: string;
-      liquidationsCount: number;
-      unitsSold: number;
-      totalSettled: number;
-      estimatedPublic: number;
-      workerProfit: number;
-      companyProfit: number;
-    }>();
-
-    idnTransactions.forEach(tx => {
-      const worker = users.find(u => u.id === tx.userId);
-      const name = tx.cashierName || worker?.name || 'Vendedor IDN';
-      const branchName = branches.find(b => b.id === tx.branchId)?.name || 'Almacén Asignado';
-
-      if (!map.has(name)) {
-        map.set(name, {
-          userId: tx.userId,
-          workerName: name,
-          branchName,
-          liquidationsCount: 0,
-          unitsSold: 0,
-          totalSettled: 0,
-          estimatedPublic: 0,
-          workerProfit: 0,
-          companyProfit: 0
-        });
-      }
-
-      const itemStats = (tx.items || []).reduce((acc, item) => {
-        const prod = products.find(p => p.id === (typeof item.product === 'string' ? item.product : item.product?.id));
-        const qty = item.quantity || 0;
-        const settlementPrice = item.price || 0;
-        const publicPrice = prod?.price || item.product?.price || settlementPrice;
-        const costPrice = prod?.costPrice || item.product?.costPrice || 0;
-
-        acc.qty += qty;
-        acc.publicVal += (publicPrice * qty);
-        acc.costVal += (costPrice * qty);
-        return acc;
-      }, { qty: 0, publicVal: 0, costVal: 0 });
-
-      const entry = map.get(name)!;
-      entry.liquidationsCount += 1;
-      entry.unitsSold += itemStats.qty;
-      entry.totalSettled += (tx.total || 0);
-      entry.estimatedPublic += itemStats.publicVal;
-      entry.companyProfit += ((tx.total || 0) - itemStats.costVal);
-      entry.workerProfit += (itemStats.publicVal - (tx.total || 0));
-    });
-
-    return Array.from(map.values());
-  }, [idnTransactions, users, branches, products]);
-
-  const idnTotals = useMemo(() => {
-    return idnWorkerStats.reduce((acc, curr) => {
-      acc.totalSettled += curr.totalSettled;
-      acc.estimatedPublic += curr.estimatedPublic;
-      acc.unitsSold += curr.unitsSold;
-      acc.workerProfit += curr.workerProfit;
-      acc.companyProfit += curr.companyProfit;
-      return acc;
-    }, { totalSettled: 0, estimatedPublic: 0, unitsSold: 0, workerProfit: 0, companyProfit: 0 });
-  }, [idnWorkerStats]);
+  const {
+    categoryData,
+    hourData,
+    branchData,
+    idnTransactions,
+    filteredTransfers,
+    transferStats,
+    filteredTransactions,
+    idnWorkerStats,
+    idnTotals
+  } = useReportsAnalytics({
+    transactions,
+    products,
+    categories,
+    branches,
+    users,
+    transfers,
+    selectedBranchFilter,
+    selectedFilterDate,
+    sessionFilter,
+    selectedWorkerFilter,
+    transferFromFilter,
+    transferToFilter,
+    transferSearch
+  });
 
   const handlePrintIDNTicket = async (tx: any, preferRawBT = false) => {
     try {
@@ -1251,11 +1076,6 @@ export default function Reports() {
   const [exportSuccess, setExportSuccess] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
-  // State for AI Analysis & Diagnostic Modal
-  const [isAnalyzingAI, setIsAnalyzingAI] = useState(false);
-  const [showAIModal, setShowAIModal] = useState(false);
-  const [aiDiagnostic, setAIDiagnostic] = useState<AIDiagnosticReport | null>(null);
-
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
@@ -1292,8 +1112,7 @@ export default function Reports() {
       returns,
       warranties,
       baseCurrency,
-      dateFilterLabel,
-      aiDiagnostic
+      dateFilterLabel
     };
   };
 
@@ -1313,191 +1132,34 @@ export default function Reports() {
     setTimeout(() => setExportSuccess(false), 2500);
   };
 
-  const handleExportFullExcelWithAI = () => {
-    const data = getExportData();
-    data.aiDiagnostic = aiDiagnostic;
-    exportFullReportsToExcel(data);
-    setShowAIModal(false);
-    setExportSuccess(true);
-    setTimeout(() => setExportSuccess(false), 2500);
-  };
-
-  const handleRunAIDiagnostic = async () => {
-    setIsAnalyzingAI(true);
-    try {
-      // Compute top products for payload
-      const salesMap = new Map<string, { name: string, qty: number, revenue: number, margin: number }>();
-      (transactions || []).forEach(tx => {
-        (tx.items || []).forEach(item => {
-          const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
-          const prod = products.find(p => p.id === prodId);
-          const name = typeof item.product === 'object' ? item.product.name : (prod?.name || 'Producto');
-          const price = typeof item.product === 'object' ? (item.product.price || 0) : (prod?.price || 0);
-          const cost = prod?.costPrice || 0;
-          const current = salesMap.get(prodId || name) || { name, qty: 0, revenue: 0, margin: 0 };
-          current.qty += item.quantity;
-          current.revenue += price * item.quantity;
-          current.margin += (price - cost) * item.quantity;
-          salesMap.set(prodId || name, current);
-        });
-      });
-
-      const topProducts = Array.from(salesMap.values())
-        .sort((a, b) => b.revenue - a.revenue)
-        .slice(0, 8);
-
-      const stagnant = products
-        .filter(p => !salesMap.has(p.id))
-        .slice(0, 6)
-        .map(p => ({
-          name: p.name,
-          stock: (inventory || []).filter(inv => inv.productId === p.id).reduce((s, i) => s + (i.quantity || 0), 0),
-          sold: 0
-        }));
-
-      const discrepancies = cashSessions
-        .filter(s => s.status === 'closed' && s.expectedBalance !== undefined)
-        .map(s => {
-          const declared = (s.closingBalances || []).reduce((sum, b) => {
-            const rate = currencies.find(c => c.code === b.currencyCode)?.rateToBase || 1;
-            return sum + (b.amount * rate);
-          }, 0);
-          return {
-            session: s.id,
-            worker: s.workerName || 'Cajero',
-            discrepancy: declared - (s.expectedBalance || 0)
-          };
-        });
-
-      const payload = {
-        businessName: receiptConfig?.businessName || 'MARÉ POS',
-        dateFilterLabel: sessionFilter === 'today' ? 'Hoy' : (selectedFilterDate ? `Fecha: ${selectedFilterDate}` : 'Todo el historial'),
-        baseCurrencyCode: baseCurrency.code,
-        baseCurrencySymbol: baseCurrency.symbol,
-        kpis: {
-          totalSales,
-          salesCount: (transactions || []).length,
-          avgTicket: (transactions || []).length > 0 ? totalSales / (transactions || []).length : 0,
-          totalCashIncomes,
-          totalCashExpenses,
-          totalBankIncomes: totalBankDeposits,
-          totalBankExpenses: totalBankWithdrawals,
-          netFlow
-        },
-        topProducts,
-        lowStockOrStagnant: stagnant,
-        cashSessionsDiscrepancies: discrepancies,
-        currenciesSummary: currencies.map(c => ({
-          code: c.code,
-          rate: c.rateToBase || 1,
-          cash: (transactions || []).reduce((sum, tx) => {
-            const p = (tx.payments || []).find(pm => pm.currencyCode === c.code && pm.method === 'cash');
-            return sum + (p?.amount || 0);
-          }, 0),
-          transfer: (transactions || []).reduce((sum, tx) => {
-            const p = (tx.payments || []).find(pm => pm.currencyCode === c.code && pm.method === 'transfer');
-            return sum + (p?.amount || 0);
-          }, 0)
-        }))
-      };
-
-      const resp = await fetch('/api/ai-analyze-report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!resp.ok) throw new Error('Error al consultar el servicio de IA');
-      const json = await resp.json();
-      if (json.success && json.data) {
-        setAIDiagnostic(json.data);
-        setShowAIModal(true);
-      } else {
-        throw new Error(json.error || 'Respuesta inválida');
-      }
-    } catch (err) {
-      console.warn('AI Analysis fallback:', err);
-      // Instant intelligent audit fallback
-      const fallbackAudit: AIDiagnosticReport = {
-        executiveSummary: `Auditoría contable y operativa para ${receiptConfig?.businessName || 'MARÉ POS'}. Se registraron ${(transactions || []).length} transacciones con una facturación consolidada de ${totalSales.toLocaleString('es-CU')} ${baseCurrency.code}. Los cobros por transferencia se mantienen integrados con los arqueos de caja. Se recomienda monitorear diariamente la conciliación entre los depósitos en cuentas bancarias y los cierres de turno.`,
-        healthScore: 88,
-        topInsights: [
-          `Volumen total facturado: ${totalSales.toLocaleString('es-CU')} ${baseCurrency.code}.`,
-          `Flujo neto estimado: ${netFlow.toLocaleString('es-CU')} ${baseCurrency.code}.`,
-          `Diversificación de medios de pago activa en ${(currencies || []).length} monedas.`
-        ],
-        cashAlerts: [
-          `Verificar que todos los comprobantes de gastos operativos de caja estén respaldados con nota física.`,
-          `Efectuar doble verificación en los arqueos de turno con diferencias.`
-        ],
-        inventoryAdvice: [
-          `Priorizar el reaprovisionamiento de los artículos líderes en facturación.`,
-          `Revisar periódicamente los artículos con stock inmovilizado para ofertas especiales.`
-        ],
-        strategicActions: [
-          `Conciliar diariamente los cobros por transferencia bancaria frente a la confirmación de Transfermóvil.`,
-          `Mantener el control estricto de liquidaciones salariales por turno.`
-        ],
-        structuredAuditRows: [
-          ['Facturación', 'Ventas Totales', `${totalSales.toLocaleString('es-CU')} ${baseCurrency.code}`, 'Rendimiento comercial activo', 'Seguimiento por vendedor', 'Alta'],
-          ['Caja', 'Egresos Operativos', `${totalCashExpenses.toLocaleString('es-CU')} ${baseCurrency.code}`, 'Gastos de operación en efectivo', 'Verificar comprobantes', 'Media'],
-          ['Bancos', 'Cobros Transferencia', `${totalBankDeposits.toLocaleString('es-CU')} ${baseCurrency.code}`, 'Ingresos digitales en cuentas', 'Conciliación bancaria periódica', 'Alta'],
-          ['Flujo Neto', 'Balance Operativo', `${netFlow.toLocaleString('es-CU')} ${baseCurrency.code}`, 'Margen operativo neto', 'Optimizar costos fijos', 'Alta']
-        ]
-      };
-      setAIDiagnostic(fallbackAudit);
-      setShowAIModal(true);
-    } finally {
-      setIsAnalyzingAI(false);
-    }
-  };
-
   // Find printable shift data
   const printSession = cashSessions.find(s => s.id === printSessionId);
   const printPayrollItem = printSession ? payrollList.find(p => p.sessionId === printSession.id) : null;
   const printBranch = printSession ? branches.find(b => b.id === printSession.branchId) : null;
 
   return (
-    <div className="space-y-4 animate-in fade-in duration-300 max-w-[1400px] mx-auto pb-12">
+    <div className="reportes-page space-y-4 animate-in fade-in duration-300 max-w-[1400px] mx-auto pb-12">
       {/* Header */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-secondary p-3 rounded-2xl shadow-sm border border-base">
-        <div className="px-2">
-          <h2 className="text-base font-black text-primary tracking-tighter flex items-center gap-2 uppercase">
-            Panel de Reportes
+      <header className="flex items-center justify-between gap-3 bg-secondary p-2.5 sm:p-3 rounded-2xl shadow-sm border border-base">
+        <div className="px-1 sm:px-2 min-w-0">
+          <h2 className="text-sm sm:text-base font-black text-primary tracking-tight flex items-center gap-2 uppercase truncate">
+            Reportes
             <InfoTooltip text="Panel integral de reportes comerciales, registro de ventas por turno, nómina y liquidación diaria del personal." position="bottom" />
           </h2>
-          <p className="text-[8px] font-black text-muted uppercase tracking-[0.2em] mt-0.5">Control Financiero, Ventas y Nómina Operativa</p>
+          <p className="text-[8px] font-black text-muted uppercase tracking-[0.2em] mt-0.5 truncate">Control Financiero</p>
         </div>
         
-        {/* Navigation Tabs and Excel Export */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* AI Audit & Organize Button */}
-          <button
-            type="button"
-            onClick={handleRunAIDiagnostic}
-            disabled={isAnalyzingAI}
-            className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm shadow-indigo-200 active:scale-95 transition-all disabled:opacity-60"
-            title="Analizar, auditar y organizar con IA (Gemini) antes de exportar"
-          >
-            {isAnalyzingAI ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-200" />
-            ) : (
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            )}
-            <span>{isAnalyzingAI ? 'Auditando...' : 'Organizar con IA'}</span>
-          </button>
-
-          {/* Excel Export Menu */}
-          <div className="relative" ref={exportMenuRef}>
-            <div className="flex items-center rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm shadow-emerald-200 transition-all">
+        {/* Excel Export Menu */}
+        <div className="relative shrink-0" ref={exportMenuRef}>
+            <div className="flex items-center h-9 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm shadow-emerald-200 transition-all">
               <button 
                 type="button"
                 onClick={handleExportFullExcel}
-                className="px-3 py-1.5 text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 active:scale-95"
+                className="btn-compact !bg-transparent !shadow-none hover:!bg-emerald-700 active:scale-95 text-white"
                 title="Exportar todo el reporte completo a Excel (.xlsx) con tablas estructuradas"
               >
-                {exportSuccess ? <Check className="w-3.5 h-3.5 text-emerald-200" /> : <FileSpreadsheet className="w-3.5 h-3.5" />}
-                <span>{exportSuccess ? '¡Exportado!' : 'Exportar a Excel'}</span>
+                {exportSuccess ? <Check className="w-3.5 h-3.5" /> : <FileSpreadsheet className="w-3.5 h-3.5" />}
+                <span>{exportSuccess ? '¡Listo!' : 'Excel'}</span>
               </button>
               <button
                 type="button"
@@ -1527,18 +1189,6 @@ export default function Reports() {
                       <span>Reporte Completo (8 Hojas Estructuradas)</span>
                     </span>
                     <span className="text-[8px] bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200 font-bold px-1.5 py-0.5 rounded">Multi-Hoja</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleRunAIDiagnostic}
-                    className="w-full text-left px-2.5 py-1.5 rounded-xl text-[9px] font-black text-purple-700 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30 transition-colors flex items-center justify-between"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Sparkles className="w-3.5 h-3.5 text-purple-600 dark:text-purple-500" />
-                      <span>Auditar & Organizar con IA (Gemini)</span>
-                    </span>
-                    <span className="text-[7px] bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-200 font-black px-1.5 py-0.5 rounded uppercase">IA</span>
                   </button>
 
                   <div className="border-t border-subtle my-1"></div>
@@ -1655,22 +1305,25 @@ export default function Reports() {
               </div>
             )}
           </div>
+      </header>
 
-          <div className="w-px h-6 bg-subtle mx-1 hidden sm:block" />
+      {/* Navigation Tabs - Dedicated full-width horizontal segmented bar */}
+      <div className="bg-secondary p-1 rounded-2xl border border-base shadow-xs overflow-x-auto custom-scrollbar scroll-smooth">
+        <div className="flex items-center gap-1.5 min-w-max p-0.5">
           {[
-            { id: 'sales', label: 'Ventas por Turno', icon: TrendingUp },
-            { id: 'payroll', label: 'Nómina y Liquidación', icon: Calculator },
-            { id: 'sessions', label: 'Historial de Cajas', icon: History },
+            { id: 'sales', label: 'Ventas', icon: TrendingUp },
+            { id: 'payroll', label: 'Nómina', icon: Calculator },
+            { id: 'sessions', label: 'Cajas', icon: History },
             { 
               id: 'discrepancies', 
-              label: 'Descuadres y Cierres Forzados', 
+              label: 'Descuadres', 
               icon: AlertTriangle, 
               badge: allDiscrepancySessions.length,
               badgeClass: 'bg-rose-600 text-white shadow-xs'
             },
             { 
               id: 'movements', 
-              label: 'Egresos e Ingresos POS', 
+              label: 'Movimientos', 
               icon: ArrowDownRight, 
               badge: allDetailedMovements.length,
               badgeClass: 'bg-slate-700 text-white'
@@ -1682,15 +1335,8 @@ export default function Reports() {
               badge: filteredTransfers.length,
               badgeClass: 'bg-blue-600 text-white'
             },
-            { id: 'products', label: 'Productos Vendidos', icon: Package },
-            { id: 'idn', label: 'Vendedores IDN', icon: Users, badge: idnTransactions.length },
-            { 
-              id: 'audit', 
-              label: 'Integridad de Datos', 
-              icon: ShieldAlert, 
-              badge: (transactions.filter(t => !t.sessionId).length + (store.cashSessions || []).filter(s => s.deletedAt).length) || undefined,
-              badgeClass: 'bg-amber-600 text-white'
-            }
+            { id: 'products', label: 'Inventario', icon: Package },
+            { id: 'idn', label: 'IDN', icon: Users, badge: idnTransactions.length },
           ].map(tab => {
             const Icon = tab.icon;
             return (
@@ -1698,17 +1344,17 @@ export default function Reports() {
                 key={tab.id} 
                 onClick={() => setActiveTab(tab.id as any)} 
                 className={cn(
-                  "px-3 py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 shrink-0",
+                  "btn-compact h-8 shrink-0 whitespace-nowrap !text-[11px] font-black",
                   activeTab === tab.id 
                     ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" 
-                    : "bg-subtle text-secondary hover:text-primary hover:bg-subtle"
+                    : "bg-subtle text-secondary hover:text-primary hover:bg-slate-200 dark:hover:bg-slate-800 border-none"
                 )}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <Icon className="w-3 h-3" />
                 {tab.label}
                 {tab.badge !== undefined && tab.badge > 0 && (
                   <span className={cn(
-                    "px-1.5 py-0.2 text-[8px] font-black rounded-full ml-1",
+                    "px-1.5 py-0.2 text-[7px] font-black rounded-full ml-1",
                     activeTab === tab.id ? "bg-white/30 text-white" : (tab.badgeClass || "bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300")
                   )}>
                     {tab.badge}
@@ -1718,10 +1364,24 @@ export default function Reports() {
             );
           })}
         </div>
-      </header>
+      </div>
+
+      {/* Visual Analytics Toggle for Mobile */}
+      <div className="md:hidden flex items-center justify-between p-2.5 bg-secondary rounded-2xl border border-base shadow-xs">
+        <span className="text-[11px] font-black text-primary uppercase tracking-tight flex items-center gap-1.5">
+          <BarChart3 className="w-3.5 h-3.5 text-indigo-600" />
+          Gráficos y Tendencias
+        </span>
+        <button
+          onClick={() => setShowChartsOnMobile(!showChartsOnMobile)}
+          className="px-2.5 py-1 text-[9px] font-black uppercase tracking-wider rounded-lg bg-subtle hover:bg-secondary border border-base text-primary transition-all cursor-pointer"
+        >
+          {showChartsOnMobile ? 'Ocultar' : 'Ver Gráficos'}
+        </button>
+      </div>
 
       {/* Visual Analytics Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className={cn("grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4", !showChartsOnMobile && "hidden md:grid")}>
         {/* Sales by Hour Bar Chart */}
         <div className="lg:col-span-2 bg-secondary rounded-[2rem] p-5 shadow-sm border border-base flex flex-col gap-4">
           <div className="flex items-center justify-between">
@@ -1960,6 +1620,15 @@ export default function Reports() {
             >
               Cerrados
             </button>
+            <button
+              onClick={() => setStatusFilter('cancelled')}
+              className={cn(
+                "px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all",
+                statusFilter === 'cancelled' ? "bg-rose-600 text-white shadow-sm" : "text-secondary hover:text-primary hover:bg-secondary"
+              )}
+            >
+              Cancelados
+            </button>
           </div>
 
           {/* Filtro Fecha */}
@@ -2113,11 +1782,13 @@ export default function Reports() {
                           <td className="px-3 py-2 text-center whitespace-nowrap">
                             <span className={cn(
                               "px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest",
-                              session.status === 'open' 
-                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800" 
-                                : "bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700"
+                              session.status === 'open'
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
+                                : session.status === 'cancelled'
+                                  ? "bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800"
+                                  : "bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700"
                             )}>
-                              {session.status === 'open' ? 'Abierto' : 'Cerrado'}
+                              {session.status === 'open' ? 'Abierto' : session.status === 'cancelled' ? 'Cancelado' : 'Cerrado'}
                             </span>
                           </td>
 
@@ -2193,17 +1864,6 @@ export default function Reports() {
                                 className="h-7 w-7 p-0 inline-flex items-center justify-center bg-subtle text-primary rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-all active:scale-95 border border-base cursor-pointer shadow-2xs"
                               >
                                 <Printer className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setDeleteConfirmTarget({ 
-                                  type: 'session', 
-                                  id: session.id, 
-                                  label: `Turno ${sequentialTurn} - ${workerName} (${branchName})` 
-                                })}
-                                title="Eliminar Turno"
-                                className="h-7 w-7 p-0 inline-flex items-center justify-center bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 dark:text-rose-400 rounded-lg transition-all active:scale-95 border border-rose-200 dark:border-rose-800/40 cursor-pointer shadow-2xs"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </td>
@@ -2353,7 +2013,7 @@ export default function Reports() {
                                   id: tx.id, 
                                   label: `Ticket #${tx.id} - ${workerName}` 
                                 })}
-                                title="Eliminar Venta"
+                                title="Anular Venta"
                                 className="h-7 w-7 p-0 inline-flex items-center justify-center bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-all border border-rose-200 active:scale-95 cursor-pointer shadow-2xs"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -2671,9 +2331,9 @@ export default function Reports() {
                     <td className="px-3 py-2 whitespace-nowrap">
                       <span className={cn(
                         "px-2 py-0.5 rounded text-[7px] font-black uppercase tracking-widest",
-                        session.status === 'open' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-100 text-slate-600 border border-slate-200/50"
+                        session.status === 'open' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : session.status === 'cancelled' ? "bg-rose-50 text-rose-700 border border-rose-100" : "bg-slate-100 text-slate-600 border border-slate-200/50"
                       )}>
-                        {session.status === 'open' ? 'Abierta' : 'Cerrada'}
+                        {session.status === 'open' ? 'Abierta' : session.status === 'cancelled' ? 'Cancelada' : 'Cerrada'}
                       </span>
                     </td>
                     <td className="px-3 py-2 text-center whitespace-nowrap">
@@ -2697,17 +2357,6 @@ export default function Reports() {
                             </button>
                           </>
                         )}
-                        <button
-                          onClick={() => setDeleteConfirmTarget({ 
-                            type: 'session', 
-                            id: session.id, 
-                            label: `Sesión de Caja #${session.id} (${branches.find(b => b.id === session.branchId)?.name || 'Caja'})` 
-                          })}
-                          title="Eliminar Sesión"
-                          className="h-7 w-7 p-0 inline-flex items-center justify-center bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 dark:text-rose-400 rounded-lg transition-all active:scale-95 border border-rose-200 dark:border-rose-800/40 cursor-pointer shadow-2xs"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
                         <button
                           onClick={() => {
                             setEditingSessionDateId(session.id);
@@ -3436,6 +3085,7 @@ export default function Reports() {
                   <th className="px-3 py-2.5">Categoría</th>
                   <th className="px-3 py-2.5 text-center">Cantidad</th>
                   <th className="px-3 py-2.5 text-right">Ingresos Brutos ({baseCurrency.code})</th>
+                  <th className="px-3 py-2.5 text-center">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -3494,7 +3144,7 @@ export default function Reports() {
                       ))}
                       {productStats.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="px-6 py-8 text-center text-slate-400 text-[10px] font-bold uppercase">
+                          <td colSpan={5} className="px-6 py-8 text-center text-slate-400 text-[11px] font-medium">
                             No hay productos vendidos para el filtro seleccionado.
                           </td>
                         </tr>
@@ -4039,7 +3689,7 @@ export default function Reports() {
                     });
                   }}
                   className="px-3 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border border-rose-200"
-                  title="Eliminar este Ticket"
+                  title="Anular este Ticket"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -4536,21 +4186,6 @@ export default function Reports() {
                           <span>Cerrar Turno Ahora</span>
                         </button>
                       )}
-                      <button
-                        onClick={() => {
-                          const idToDelete = session.id;
-                          setExpandedSession(null);
-                          setDeleteConfirmTarget({
-                            type: 'session',
-                            id: idToDelete,
-                            label: `Turno ${sequentialTurn} (${session.workerName || 'Vendedor'})`
-                          });
-                        }}
-                        className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400 rounded-xl transition-all border border-rose-200 dark:border-rose-900 active:scale-95 cursor-pointer"
-                        title="Eliminar este Turno"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
                       <button
                         onClick={() => {
                           setEditingSessionDateId(session.id);
@@ -5513,294 +5148,87 @@ export default function Reports() {
         </div>
       )}
 
-      {/* AI Financial & Operational Diagnostic Modal */}
-      {showAIModal && aiDiagnostic && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-3xl rounded-3xl shadow-2xl border border-slate-100 max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
-            {/* Modal Header */}
-            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-purple-50 via-indigo-50/50 to-white">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-purple-200">
-                  <Sparkles className="w-5 h-5 text-amber-300" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-black text-slate-900 tracking-tight">Auditoría Inteligente & Organización IA</h3>
-                    <span className="text-[9px] bg-purple-100 text-purple-800 font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Gemini Flash</span>
-                  </div>
-                  <p className="text-[10px] font-bold text-slate-500 mt-0.5">Diagnóstico financiero, conciliación de caja y optimización de datos para Excel</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAIModal(false)}
-                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 text-slate-800">
-              {/* Score & KPI Strip */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-2xl bg-slate-50 border border-slate-200/70">
-                <div className="flex items-center gap-3">
-                  <div className="w-14 h-14 rounded-2xl bg-white shadow-xs border border-slate-200 flex flex-col items-center justify-center">
-                    <span className="text-lg font-black text-indigo-600">{aiDiagnostic.healthScore}</span>
-                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider">/ 100</span>
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-wide">Puntaje de Salud Contable</h4>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      {aiDiagnostic.healthScore >= 80 
-                        ? 'Operación saludable y con adecuado control de efectivo y márgenes.'
-                        : 'Atención requerida en arqueos o márgenes de inventario.'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 w-full sm:w-auto">
-                  <button
-                    type="button"
-                    onClick={handleExportFullExcelWithAI}
-                    className="w-full sm:w-auto px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm transition-all"
-                  >
-                    <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
-                    <span>Descargar Excel con Diagnóstico IA</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Executive Summary */}
-              <div className="p-4 rounded-2xl bg-indigo-50/40 border border-indigo-100/60">
-                <h4 className="text-[10px] font-black text-indigo-900 uppercase tracking-widest flex items-center gap-1.5 mb-2">
-                  <Brain className="w-3.5 h-3.5 text-indigo-600" />
-                  Resumen Ejecutivo Financiero
-                </h4>
-                <p className="text-xs leading-relaxed text-slate-700 font-medium">
-                  {aiDiagnostic.executiveSummary}
-                </p>
-              </div>
-
-              {/* Grid: Cash Alerts & Insights */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* Cash & Turn Discrepancies Alerts */}
-                <div className="p-4 rounded-2xl bg-rose-50/40 border border-rose-100">
-                  <h4 className="text-[10px] font-black text-rose-900 uppercase tracking-widest flex items-center gap-1.5 mb-2">
-                    <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
-                    Control de Caja y Arqueos
-                  </h4>
-                  <ul className="space-y-1.5">
-                    {(aiDiagnostic.cashAlerts || []).map((alert, idx) => (
-                      <li key={idx} className="text-[11px] text-rose-950 font-medium flex items-start gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 shrink-0" />
-                        <span>{alert}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {/* Commercial Insights */}
-                <div className="p-4 rounded-2xl bg-blue-50/40 border border-blue-100">
-                  <h4 className="text-[10px] font-black text-blue-900 uppercase tracking-widest flex items-center gap-1.5 mb-2">
-                    <TrendingUp className="w-3.5 h-3.5 text-blue-600" />
-                    Rendimiento Comercial & Facturación
-                  </h4>
-                  <ul className="space-y-1.5">
-                    {(aiDiagnostic.topInsights || []).map((insight, idx) => (
-                      <li key={idx} className="text-[11px] text-blue-950 font-medium flex items-start gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 shrink-0" />
-                        <span>{insight}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-
-              {/* Inventory & Actions Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* Inventory Advice */}
-                <div className="p-4 rounded-2xl bg-amber-50/40 border border-amber-100">
-                  <h4 className="text-[10px] font-black text-amber-900 uppercase tracking-widest flex items-center gap-1.5 mb-2">
-                    <Package className="w-3.5 h-3.5 text-amber-600" />
-                    Gestión de Inventario & Rotación
-                  </h4>
-                  <ul className="space-y-1.5">
-                    {(aiDiagnostic.inventoryAdvice || []).map((adv, idx) => (
-                      <li key={idx} className="text-[11px] text-amber-950 font-medium flex items-start gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 shrink-0" />
-                        <span>{adv}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {/* Strategic Actions */}
-                <div className="p-4 rounded-2xl bg-emerald-50/40 border border-emerald-100">
-                  <h4 className="text-[10px] font-black text-emerald-900 uppercase tracking-widest flex items-center gap-1.5 mb-2">
-                    <ListChecks className="w-3.5 h-3.5 text-emerald-600" />
-                    Acciones Operativas Prioritarias
-                  </h4>
-                  <ul className="space-y-1.5">
-                    {(aiDiagnostic.strategicActions || []).map((act, idx) => (
-                      <li key={idx} className="text-[11px] text-emerald-950 font-medium flex items-start gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
-                        <span>{act}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-
-              {/* Structured Audit Table Matrix */}
-              {aiDiagnostic.structuredAuditRows && aiDiagnostic.structuredAuditRows.length > 0 && (
-                <div className="rounded-2xl border border-slate-200 overflow-hidden">
-                  <div className="bg-slate-50 px-3 py-2 border-b border-slate-200">
-                    <h4 className="text-[10px] font-black text-slate-700 uppercase tracking-wider">
-                      Matriz de Control y Auditoría (Incluida en Excel)
-                    </h4>
-                  </div>
-                  <div className="overflow-x-auto max-h-48">
-                    <table className="w-full text-left text-[10px]">
-                      <thead className="bg-slate-100/70 text-slate-500 font-bold border-b border-slate-200 uppercase tracking-wider sticky top-0">
-                        <tr>
-                          <th className="p-2">Área</th>
-                          <th className="p-2">Métrica</th>
-                          <th className="p-2">Estado</th>
-                          <th className="p-2">Diagnóstico</th>
-                          <th className="p-2">Acción Recomendada</th>
-                          <th className="p-2 text-right">Prioridad</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 font-medium">
-                        {(aiDiagnostic.structuredAuditRows || []).map((row, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/80">
-                            <td className="p-2 font-bold text-slate-900 whitespace-nowrap">{row[0]}</td>
-                            <td className="p-2 text-slate-700 whitespace-nowrap">{row[1]}</td>
-                            <td className="p-2 text-indigo-700 font-bold whitespace-nowrap">{row[2]}</td>
-                            <td className="p-2 text-slate-600">{row[3]}</td>
-                            <td className="p-2 text-slate-800 font-medium">{row[4]}</td>
-                            <td className="p-2 text-right">
-                              <span className={cn(
-                                "px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider",
-                                row[5]?.toLowerCase().includes('urgente') || row[5]?.toLowerCase().includes('alta')
-                                  ? "bg-rose-100 text-rose-800"
-                                  : "bg-blue-100 text-blue-800"
-                              )}>
-                                {row[5]}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-3 sm:p-4 border-t border-slate-100 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-[9px] font-bold text-slate-400">
-                El archivo descargado contendrá todas las pestañas organizadas con formato numérico y filtros.
-              </span>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => setShowAIModal(false)}
-                  className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 text-[10px] font-bold uppercase tracking-wider"
-                >
-                  Cerrar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExportFullExcelWithAI}
-                  className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm transition-all"
-                >
-                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
-                  <span>Descargar Excel (.xlsx)</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Modal: Detalle de Ventas por Producto */}
       {selectedProductStatsDetail && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 border border-white/20">
-            <div className="bg-slate-900 p-5 text-white flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-white/10 rounded-2xl backdrop-blur-md">
-                  <Package className="w-6 h-6 text-white" />
+        <div className="fixed inset-0 bg-slate-950/55 z-[100] flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90dvh] overflow-hidden border border-slate-200 dark:border-slate-700 flex flex-col">
+            <div className="bg-slate-900 dark:bg-slate-950 px-4 sm:px-5 py-4 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
+                  <Package className="w-5 h-5" />
                 </div>
-                <div>
-                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">
-                    Historial de Ventas
-                  </span>
-                  <h3 className="text-base font-black text-white uppercase tracking-tight">
+                <div className="min-w-0">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Historial de ventas</span>
+                  <h3 className="text-sm sm:text-base font-black truncate" title={selectedProductStatsDetail.productName}>
                     {selectedProductStatsDetail.productName}
                   </h3>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setSelectedProductStatsDetail(null)}
-                className="p-2 hover:bg-white/10 rounded-xl transition-all text-white/80 hover:text-white cursor-pointer"
+                aria-label="Cerrar detalle del producto"
+                title="Cerrar"
+                className="w-10 h-10 shrink-0 inline-flex items-center justify-center rounded-xl hover:bg-white/10 text-white transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
-              <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden">
-                {selectedProductStatsDetail.transactions.map((tx, idx) => {
-                  const item = tx.items.find(i => (typeof i.product === 'string' ? i.product : i.product.id) === selectedProductStatsDetail.productId);
-                  if (!item) return null;
-
-                  return (
-                    <div key={idx} className="p-3 hover:bg-slate-50 transition-colors flex items-center justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
-                            {tx.id}
-                          </span>
-                          <span className="text-[9px] font-bold text-slate-500 uppercase">
-                            {new Date(tx.date).toLocaleString('es-CU')}
-                          </span>
-                        </div>
-                        <p className="text-[11px] font-black text-slate-900 uppercase mt-1">
-                          Vendido por: {tx.cashierName || 'Vendedor'}
-                        </p>
-                        <p className="text-[9px] font-bold text-slate-400 uppercase">
-                          Sucursal: {branches.find(b => b.id === tx.branchId)?.name || 'Almacén'}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-black text-slate-900">
-                          {item.quantity} {item.variantLabel ? `(${item.variantLabel})` : 'uds'}
-                        </p>
-                        <p className="text-[10px] font-black text-emerald-600">
-                          {formatMoney(item.total)}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-                {selectedProductStatsDetail.transactions.length === 0 && (
-                  <div className="p-10 text-center text-slate-400 text-xs font-bold uppercase">
-                    No se encontraron transacciones individuales.
-                  </div>
-                )}
+            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Ventas</span>
+                  <p className="text-base font-black text-slate-900">{selectedProductStatsDetail.transactions.length}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Unidades</span>
+                  <p className="text-base font-black text-indigo-700">{selectedProductStatsDetail.transactions.reduce((sum, tx) => {
+                    const item = tx.items.find(i => (typeof i.product === 'string' ? i.product : i.product.id) === selectedProductStatsDetail.productId);
+                    return sum + (item?.quantity || 0);
+                  }, 0)}</p>
+                </div>
+                <div className="col-span-2 sm:col-span-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Ingresos</span>
+                  <p className="text-base font-black text-emerald-700">{formatMoney(selectedProductStatsDetail.transactions.reduce((sum, tx) => {
+                    const item = tx.items.find(i => (typeof i.product === 'string' ? i.product : i.product.id) === selectedProductStatsDetail.productId);
+                    return sum + (item?.total || 0);
+                  }, 0))}</p>
+                </div>
               </div>
 
-              <div className="flex justify-end pt-2">
-                <button
-                  onClick={() => setSelectedProductStatsDetail(null)}
-                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-md"
-                >
-                  Entendido
-                </button>
+              <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+                <div className="px-3 sm:px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-600 dark:text-slate-300">Movimientos de venta</span>
+                </div>
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {selectedProductStatsDetail.transactions.map((tx, idx) => {
+                    const item = tx.items.find(i => (typeof i.product === 'string' ? i.product : i.product.id) === selectedProductStatsDetail.productId);
+                    if (!item) return null;
+                    const branchName = branches.find(b => b.id === tx.branchId)?.name || 'Almacén';
+                    return (
+                      <div key={tx.id || idx} className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 sm:items-center hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[10px] font-black text-indigo-700 bg-indigo-50 px-2 py-1 rounded-md border border-indigo-100">{tx.id}</span>
+                            <span className="text-[10px] font-medium text-slate-500">{new Date(tx.date).toLocaleString('es-ES')}</span>
+                          </div>
+                          <p className="text-[11px] sm:text-xs font-bold text-slate-800 dark:text-slate-100 mt-1.5">{tx.cashierName || 'Vendedor'}</p>
+                          <p className="text-[10px] font-medium text-slate-500 mt-0.5">{branchName}</p>
+                        </div>
+                        <div className="flex sm:block items-center justify-between gap-3 sm:text-right">
+                          <div className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                            {item.quantity} {item.variantLabel ? `· ${item.variantLabel}` : 'uds'}
+                          </div>
+                          <div className="text-xs font-black text-emerald-700">{formatMoney(item.total)}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {selectedProductStatsDetail.transactions.length === 0 && (
+                    <div className="p-8 text-center text-slate-500 text-xs font-medium">No se encontraron transacciones individuales.</div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -5815,12 +5243,12 @@ export default function Reports() {
               <Trash2 className="w-6 h-6" />
             </div>
             <div className="text-center">
-              <h3 className="text-sm font-black text-slate-900 uppercase">¿Eliminar Registro?</h3>
+              <h3 className="text-sm font-black text-slate-900 uppercase">¿Anular Venta?</h3>
               <p className="text-xs font-semibold text-slate-600 mt-1">
                 {deleteConfirmTarget.label}
               </p>
               <p className="text-[10px] text-slate-400 mt-2">
-                Esta acción es irreversible y restaurará el stock al almacén original.
+                La venta quedará anulada, se conservará en el historial y el inventario será revertido.
               </p>
             </div>
 
@@ -5860,11 +5288,6 @@ export default function Reports() {
                   if (deletePin === REQUIRED_DELETE_PIN) {
                     if (deleteConfirmTarget.type === 'transaction') {
                       store.deleteTransaction(deleteConfirmTarget.id);
-                    } else if (deleteConfirmTarget.type === 'session') {
-                      store.deleteCashSession(deleteConfirmTarget.id);
-                    }
-                    if (expandedSession === deleteConfirmTarget.id) {
-                      setExpandedSession(null);
                     }
                     setDeleteConfirmTarget(null);
                     setDeletePin("");

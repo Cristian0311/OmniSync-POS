@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useRef, useState } from 'react';
 import { Product } from '../types';
 import { QRCodeSVG } from 'qrcode.react';
@@ -6,7 +7,7 @@ import { useStore } from '../store/useStore';
 import { formatMoney } from '../lib/utils';
 
 export function PrintLabels() {
-  const { products, getBaseCurrency } = useStore();
+  const { products, getBaseCurrency } = useStore(useShallow((state) => ({ products: state.products, getBaseCurrency: state.getBaseCurrency })));
   const baseCurrency = getBaseCurrency();
   const [selectedProduct, setSelectedProduct] = useState<string>('');
   const [quantity, setQuantity] = useState(1);

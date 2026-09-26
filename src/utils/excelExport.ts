@@ -426,7 +426,7 @@ export function generateSessionsSheet(data: ExcelExportData): any[][] {
       s.expectedBalance !== undefined ? Number(s.expectedBalance.toFixed(2)) : 0,
       Number(diff.toFixed(2)),
       diffStatus,
-      s.status === 'closed' ? 'CERRADA' : 'ABIERTA',
+      s.status === 'cancelled' ? 'CANCELADA' : (s.status === 'closed' ? 'CERRADA' : 'ABIERTA'),
       declaredBreakdown,
       movementsText
     ]);
@@ -1107,7 +1107,7 @@ export function generateCashMovementsSheet(data: ExcelExportData): any[][] {
         Number(m.amount.toFixed(2)),
         m.currencyCode,
         Number(cupEquiv.toFixed(2)),
-        session.status === 'closed' ? 'Turno Cerrado' : 'Turno Abierto'
+        session.status === 'cancelled' ? 'Turno Cancelado' : (session.status === 'closed' ? 'Turno Cerrado' : 'Turno Abierto')
       ]);
     });
   });

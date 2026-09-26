@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useState, useMemo, useEffect } from "react";
 import {
   ShoppingCart,
@@ -37,7 +38,7 @@ export default function CustomerShop() {
     branches,
     catalogConfig,
     storeConfig
-  } = useStore();
+  } = useStore(useShallow((state) => ({ products: state.products, categories: state.categories, getBaseCurrency: state.getBaseCurrency, inventory: state.inventory, branches: state.branches, catalogConfig: state.catalogConfig, storeConfig: state.storeConfig })));
   const baseCurrency = getBaseCurrency();
   const [cart, setCart] = useState<CartItem[]>([]);
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
@@ -414,7 +415,7 @@ export default function CustomerShop() {
                             alt={product.name}
                             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                             referrerPolicy="no-referrer"
-                          />
+                           loading="lazy" decoding="async" />
                         ) : (
                           <>
                             <div className={cn("absolute inset-0 opacity-10 transition-transform duration-700 group-hover:scale-105", product.color)}></div>
@@ -494,7 +495,7 @@ export default function CustomerShop() {
           <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-300">
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="h-48 sm:h-64 bg-slate-100 relative">
-                 <img src="https://images.unsplash.com/photo-1556740738-b6a63e27c4df?w=800&h=400&fit=crop" className="w-full h-full object-cover" alt="Store front" />
+                 <img src="https://images.unsplash.com/photo-1556740738-b6a63e27c4df?w=800&h=400&fit=crop" className="w-full h-full object-cover" alt="Store front"  loading="lazy" decoding="async" />
                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900/80 via-slate-900/20 to-transparent"></div>
                  <h2 className="absolute bottom-6 left-6 text-2xl sm:text-3xl font-bold text-white">Nuestra Tienda</h2>
               </div>
@@ -729,7 +730,7 @@ export default function CustomerShop() {
                           alt={item.product.name}
                           className="w-full h-full object-cover"
                           referrerPolicy="no-referrer"
-                        />
+                         loading="lazy" decoding="async" />
                       ) : (
                         <span className="font-bold text-xl text-slate-900 opacity-50">
                           {item.product.name.charAt(0)}

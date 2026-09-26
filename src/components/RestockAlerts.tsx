@@ -1,10 +1,11 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { AlertTriangle, Clock, TrendingUp, Calendar, AlertCircle, HelpCircle } from 'lucide-react';
 import { InfoTooltip } from './InfoTooltip';
 
 export function RestockAlerts() {
-  const { products, inventory, transactions, currentBranchId } = useStore();
+  const { products, inventory, transactions, currentBranchId } = useStore(useShallow((state) => ({ products: state.products, inventory: state.inventory, transactions: state.transactions, currentBranchId: state.currentBranchId })));
 
   const restockData = useMemo(() => {
     // Calcular ventas por día en los últimos 30 días

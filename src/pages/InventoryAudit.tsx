@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useMemo } from "react";
 import { useStore } from "../store/useStore";
 import { InventoryAudit, Product } from "../types";
@@ -11,8 +12,6 @@ import {
   Eye, 
   X, 
   ArrowRight,
-  TrendingDown,
-  TrendingUp,
   History,
   Lock,
   Unlock
@@ -29,13 +28,10 @@ export default function InventoryAuditPage() {
     branches, 
     currentBranchId, 
     currentUser,
-    transfers,
-    transactions
-  } = useStore();
+  } = useStore(useShallow((state) => ({ products: state.products, inventory: state.inventory, inventoryAudits: state.inventoryAudits, createInventoryAudit: state.createInventoryAudit, completeInventoryAudit: state.completeInventoryAudit, branches: state.branches, currentBranchId: state.currentBranchId, currentUser: state.currentUser })));
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedAudit, setSelectedAudit] = useState<InventoryAudit | null>(null);
   const [auditStep, setAuditStep] = useState<'setup' | 'counting'>('setup');
-  const [showIntelligence, setShowIntelligence] = useState<string | null>(null);
   
   // State for new audit
   const [auditBranchId, setAuditBranchId] = useState(currentBranchId);
@@ -88,7 +84,7 @@ export default function InventoryAuditPage() {
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Auditoría de Inventario</h1>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ajustes y Cuentas Ciegas</p>
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Conteo físico y ajuste controlado</p>
         </div>
         {!activeAudit ? (
           <button 
@@ -113,18 +109,18 @@ export default function InventoryAuditPage() {
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="p-4 bg-slate-50/50 border-b border-slate-100 flex items-center gap-2">
           <History className="w-4 h-4 text-indigo-600" />
-          <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Historial de Ajustes</h3>
+          <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Historial de Auditorías</h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-50">
-                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">ID / Fecha</th>
+                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Auditoría / Fecha</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sucursal</th>
-                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Items</th>
-                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Discrepancias</th>
+                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Artículos</th>
+                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Diferencia</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado</th>
-                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Acción</th>
+                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ver</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -279,7 +275,7 @@ export default function InventoryAuditPage() {
                       <div>
                         <h4 className="text-[10px] font-black text-rose-900 uppercase">Discrepancias Críticas Detectadas</h4>
                         <p className="text-[8px] font-bold text-rose-600 uppercase leading-tight">
-                          Hay productos con más de 5 unidades de diferencia. Revise el rastreo inteligente.
+                          Hay productos con más de 5 unidades de diferencia. Revise el conteo físico y la diferencia registrada.
                         </p>
                       </div>
                     </div>
@@ -352,87 +348,16 @@ export default function InventoryAuditPage() {
                                   </span>
                                   
                                   {diff !== 0 && selectedAudit?.status !== 'completed' && (
-                                    <button 
-                                      onClick={() => setShowIntelligence(showIntelligence === item.productId ? null : item.productId)}
-                                      className="p-1 hover:bg-amber-50 rounded-lg text-amber-500 transition-colors"
-                                      title="Analizar posible causa"
+                                    <span
+                                      className={cn(
+                                        "inline-flex items-center rounded-full px-1.5 py-0.5 text-[7px] font-black uppercase tracking-wide",
+                                        diff < 0 ? "bg-rose-50 text-rose-700 border border-rose-100" : "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                                      )}
                                     >
-                                      <AlertTriangle className="w-3.5 h-3.5" />
-                                    </button>
+                                      {diff < 0 ? 'Faltante' : 'Sobrante'}
+                                    </span>
                                   )}
-                                </div>
-
-                                {showIntelligence === item.productId && (
-                                  <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-[100] text-left animate-in fade-in slide-in-from-top-2 duration-200">
-                                    <div className="flex items-center justify-between mb-3">
-                                      <div className="flex items-center gap-2">
-                                        <div className="p-1.5 bg-amber-100 rounded-lg">
-                                          <TrendingDown className="w-3 h-3 text-amber-600" />
-                                        </div>
-                                        <h4 className="text-[10px] font-black text-slate-900 uppercase">Análisis Inteligente</h4>
-                                      </div>
-                                      <button onClick={() => setShowIntelligence(null)} className="text-slate-400 hover:text-slate-600">
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                    </div>
-                                    
-                                    <div className="space-y-4">
-                                      {/* Movimientos Recientes */}
-                                      <div className="space-y-2">
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Rastreo de Movimientos</span>
-                                          <span className="text-[7px] font-bold text-slate-300 uppercase">Últ. 30 días</span>
-                                        </div>
-                                        
-                                        {transfers
-                                          .filter(t => t.productId === item.productId && (t.fromBranchId === auditBranchId || t.toBranchId === auditBranchId))
-                                          .length > 0 ? (
-                                            transfers
-                                              .filter(t => t.productId === item.productId && (t.fromBranchId === auditBranchId || t.toBranchId === auditBranchId))
-                                              .slice(0, 3)
-                                              .map(t => (
-                                                <div key={t.id} className="bg-slate-50 p-2 rounded-xl border border-slate-100">
-                                                  <div className="flex justify-between items-center mb-1">
-                                                    <span className={cn(
-                                                      "text-[7px] font-black px-1.5 py-0.5 rounded",
-                                                      t.fromBranchId === auditBranchId ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"
-                                                    )}>
-                                                      {t.fromBranchId === auditBranchId ? 'SALIDA' : 'ENTRADA'}
-                                                    </span>
-                                                    <span className="text-[7px] font-bold text-slate-400 uppercase">{new Date(t.date).toLocaleDateString()}</span>
-                                                  </div>
-                                                  <div className="text-[9px] font-black text-slate-700 uppercase">
-                                                    {t.quantity} un. {t.fromBranchId === auditBranchId ? `a ${t.toBranchName}` : `de ${t.fromBranchName}`}
-                                                  </div>
-                                                  <div className={cn(
-                                                    "text-[7px] font-bold uppercase mt-1",
-                                                    t.status === 'pending' ? "text-amber-500" : "text-slate-400"
-                                                  )}>
-                                                    Estado: {t.status === 'pending' ? 'PENDIENTE DE RECIBIR ⚠️' : 'COMPLETADO'}
-                                                  </div>
-                                                </div>
-                                              ))
-                                          ) : (
-                                            <div className="text-[8px] font-bold text-slate-400 uppercase italic py-2">Sin transferencias recientes</div>
-                                          )}
-                                      </div>
-
-                                      {/* Resumen de Problema */}
-                                      <div className="bg-indigo-50/50 p-3 rounded-xl border border-indigo-100">
-                                        <h5 className="text-[8px] font-black text-indigo-900 uppercase mb-1">Diagnóstico Sugerido</h5>
-                                        <p className="text-[9px] font-medium text-indigo-700 leading-tight">
-                                          {diff < 0 ? (
-                                            transfers.some(t => t.productId === item.productId && t.fromBranchId === auditBranchId && t.status === 'pending')
-                                              ? "⚠️ Faltante probablemente causado por transferencias que salieron pero no han sido confirmadas en destino."
-                                              : "🔴 Posible pérdida desconocida. Verifique si hubo ventas manuales no registradas o errores de despacho."
-                                          ) : (
-                                            "🟢 Sobrante detectado. Probablemente mercancía recibida físicamente pero no cargada en el sistema (Factura pendiente)."
-                                          )}
-                                        </p>
-                                      </div>
-                                    </div>
                                   </div>
-                                )}
                               </td>
                             </tr>
                           );
@@ -448,7 +373,7 @@ export default function InventoryAuditPage() {
               <div className="p-6 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-center bg-slate-50 gap-4">
                 <div className="flex gap-6">
                   <div className="text-center">
-                    <p className="text-[8px] font-black text-slate-400 uppercase">Items</p>
+                    <p className="text-[8px] font-black text-slate-400 uppercase">Artículos</p>
                     <p className="text-sm font-black text-slate-900">{auditItems.length}</p>
                   </div>
                   <div className="text-center">

@@ -30,7 +30,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   private handleHardReset = () => {
     try {
-      localStorage.clear();
+      const protectedKeys = new Set(['pos_offline_sync_queue', 'mare_sales_backup_v1', 'mare_supabase_url', 'mare_supabase_anon_key']);
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && !protectedKeys.has(key)) localStorage.removeItem(key);
+      }
       sessionStorage.clear();
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then(registrations => {

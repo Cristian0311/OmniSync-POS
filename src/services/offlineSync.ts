@@ -1,492 +1,507 @@
 /**
- * Servicio de Cola y Sincronización Offline para POS y Operaciones Críticas
- * Garantiza que ninguna venta, turno de caja, cliente o movimiento se pierda
- * cuando la tablet o el equipo pierde la conexión a internet.
+ * Offline-first operation queue.
+ *
+ * IMPORTANT: this queue stores operations, not a copy of the whole application
+ * state. IndexedDB is used because POS devices can remain offline for long
+ * periods and localStorage is too fragile for a growing transactional queue.
  */
-
 import { getSupabase } from '../lib/supabase';
 import { useStore } from '../store/useStore';
-import { 
-  Transaction, CashRegisterSession, InventoryLevel, 
-  Customer, ReturnItem, BankTransaction, Branch, Product, Category 
+import {
+  Transaction, CashRegisterSession,
+  Customer, ReturnItem, Branch, Product, Category
 } from '../types';
-import { callOpenSessionRPC, callProcessTransactionRPC } from './supabaseSync';
+import {
+  callOpenSessionRPC, callProcessTransactionRPC, callVoidTransactionRPC, callCancelSessionRPC,
+  callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC,
+  callCompleteInventoryAuditRPC
+} from './supabaseSync';
 import { addSyncLog } from '../utils/syncLogger';
 
 export type OfflineActionType =
-  | 'transaction'
-  | 'cash_session'
-  | 'inventory'
-  | 'customer'
-  | 'return'
-  | 'bank_transaction'
-  | 'branch'
-  | 'product'
-  | 'category'
-  | 'receipt_config'
-  | 'store_config';
+  | 'transaction' | 'void_transaction' | 'return_complete' | 'transfer'
+  | 'supplier_receive' | 'audit_complete' | 'cash_session' | 'inventory' | 'inventory_adjustment' | 'inventory_reconcile'
+  | 'customer' | 'customer_delete' | 'return' | 'bank_transaction'
+  | 'branch' | 'product' | 'category' | 'receipt_config' | 'store_config' | 'catalog_config' | 'salary_settlement'
+  | 'user' | 'currency' | 'idn_settlement_price' | 'warranty' | 'time_shift' | 'quote'
+  | 'bank_card' | 'supplier' | 'supplier_order' | 'inventory_audit';
 
 export interface OfflineQueueItem {
-  id: string; // ID único del item en la cola
-  actionId: string; // ID de la entidad (ej: id de la transacción)
+  id: string;
+  actionId: string;
   type: OfflineActionType;
   data: any;
   timestamp: string;
   retryCount: number;
+  status?: 'pending' | 'processing' | 'failed' | 'conflict';
+  lastError?: string;
+  deviceId?: string;
 }
 
 const STORAGE_KEY = 'pos_offline_sync_queue';
+const DB_NAME = 'omnisync-pos-offline';
+const DB_VERSION = 1;
+const STORE_NAME = 'operations';
+const DEVICE_KEY = 'omnisync_device_id';
+
 let isProcessingQueue = false;
+let memoryQueue: OfflineQueueItem[] = [];
+let queueReady = false;
+let persistenceChain: Promise<void> = Promise.resolve();
+let queueInitPromise: Promise<void>;
 
-// Obtener cola desde localStorage
-export function getOfflineQueue(): OfflineQueueItem[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as OfflineQueueItem[];
-  } catch (e) {
-    console.error('[offlineSync] Error al leer cola offline:', e);
-    return [];
-  }
+class PermanentSyncError extends Error {
+  permanent = true;
 }
 
-// Guardar cola en localStorage y emitir evento reactivo
-function saveOfflineQueue(queue: OfflineQueueItem[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('offline_queue_updated', { detail: { count: queue.length } }));
-    }
-  } catch (e) {
-    console.error('[offlineSync] Error al guardar cola offline:', e);
-  }
+function getDeviceId(): string {
+  if (typeof window === 'undefined') return 'server';
+  const existing = localStorage.getItem(DEVICE_KEY);
+  if (existing) return existing;
+  const id = crypto.randomUUID();
+  localStorage.setItem(DEVICE_KEY, id);
+  return id;
 }
 
-// Agregar o actualizar un elemento en la cola offline
-export function enqueueOfflineItem(type: OfflineActionType, data: any, actionId?: string): void {
-  const currentQueue = getOfflineQueue();
-  const finalActionId = actionId || data?.id || crypto.randomUUID();
-
-  // Si ya existe un elemento con el mismo tipo y actionId, actualizamos su data
-  const existingIdx = currentQueue.findIndex(item => item.type === type && item.actionId === finalActionId);
-
-  if (existingIdx !== -1) {
-    currentQueue[existingIdx] = {
-      ...currentQueue[existingIdx],
-      data: { ...currentQueue[existingIdx].data, ...data },
-      timestamp: new Date().toISOString()
+function openDb(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        store.createIndex('status', 'status', { unique: false });
+        store.createIndex('action', ['type', 'actionId'], { unique: true });
+        store.createIndex('timestamp', 'timestamp', { unique: false });
+      }
     };
-  } else {
-    currentQueue.push({
-      id: crypto.randomUUID(),
-      actionId: finalActionId,
-      type,
-      data,
-      timestamp: new Date().toISOString(),
-      retryCount: 0
-    });
-  }
-
-  saveOfflineQueue(currentQueue);
-  addSyncLog({
-    level: 'info',
-    source: 'offline_queue',
-    title: `Elemento encolado (${type})`,
-    details: `Operación ${finalActionId} guardada en cola offline local. Pendientes totales: ${currentQueue.length}`,
-    entityType: type,
-    actionId: finalActionId
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
   });
-  console.info(`[offlineSync] Elemento encolado (${type}): ${finalActionId}. Pendientes: ${currentQueue.length}`);
 }
 
-// Remover elemento de la cola
-export function removeFromOfflineQueue(id: string): void {
+async function idbGetAll(): Promise<OfflineQueueItem[] | null> {
+  const db = await openDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const request = tx.objectStore(STORE_NAME).getAll();
+    request.onsuccess = () => resolve((request.result || []) as OfflineQueueItem[]);
+    request.onerror = () => resolve(null);
+    tx.oncomplete = () => db.close();
+  });
+}
+
+async function idbReplaceAll(queue: OfflineQueueItem[]): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    store.clear();
+    queue.forEach(item => store.put(item));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+  db.close();
+}
+
+async function idbPut(item: OfflineQueueItem): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(item);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+  db.close();
+}
+
+async function idbDelete(id: string): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+  db.close();
+}
+
+async function idbClear(): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+  db.close();
+}
+
+async function migrateLegacyQueue(): Promise<void> {
+  if (typeof window === 'undefined') { queueReady = true; return; }
+  const legacyRaw = localStorage.getItem(STORAGE_KEY);
+  const legacy = legacyRaw ? (() => { try { return JSON.parse(legacyRaw); } catch { return []; } })() : [];
+  const existing = await idbGetAll();
+  // Merge every source instead of choosing one. This prevents an enqueue that
+  // happens during startup from being overwritten by the migration itself.
+  const merged = new Map<string, OfflineQueueItem>();
+  for (const item of [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(legacy) ? legacy : []), ...memoryQueue]) {
+    const normalized = { ...item, deviceId: item.deviceId || getDeviceId() };
+    merged.set(`${normalized.type}:${normalized.actionId}`, normalized);
+  }
+  memoryQueue = Array.from(merged.values()).sort((a,b) => a.timestamp.localeCompare(b.timestamp));
+  await idbReplaceAll(memoryQueue);
+  if (legacyRaw) localStorage.removeItem(STORAGE_KEY);
+  queueReady = true;
+  emitQueueEvent();
+}
+
+// Hydrate once at module load. Synchronous readers use the memory snapshot.
+// Writers wait for this migration so a first offline operation cannot be lost
+// when the legacy localStorage queue is being imported.
+queueInitPromise = migrateLegacyQueue();
+
+function emitQueueEvent() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('offline_queue_updated', { detail: { count: memoryQueue.length } }));
+  }
+}
+
+export function getOfflineQueue(): OfflineQueueItem[] {
+  return [...memoryQueue];
+}
+
+function persistQueueSnapshot(queue: OfflineQueueItem[]): void {
+  memoryQueue = [...queue];
+  emitQueueEvent();
+  const snapshot = [...memoryQueue];
+  // El snapshot completo se usa solo durante la migración/recuperación.
+  // Las operaciones normales usan put/delete incrementales para no reescribir
+  // miles de operaciones cada vez que entra una venta nueva.
+  persistenceChain = persistenceChain.then(async () => {
+    if (!queueReady && queueInitPromise) await queueInitPromise;
+    if (typeof indexedDB !== 'undefined') {
+      await idbReplaceAll(snapshot);
+      return;
+    }
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot)); } catch (e) {
+      console.error('[offlineSync] Error al guardar cola offline:', e);
+    }
+  }).catch(e => console.error('[offlineSync] Error persistiendo cola:', e));
+}
+
+function persistQueueItem(item: OfflineQueueItem): void {
+  persistenceChain = persistenceChain.then(async () => {
+    if (!queueReady && queueInitPromise) await queueInitPromise;
+    if (typeof indexedDB !== 'undefined') {
+      await idbPut(item);
+      return;
+    }
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch (e) {
+      console.error('[offlineSync] Error al guardar cola offline:', e);
+    }
+  }).catch(e => console.error('[offlineSync] Error persistiendo cola:', e));
+}
+
+function persistQueueDelete(id: string): void {
+  persistenceChain = persistenceChain.then(async () => {
+    if (!queueReady && queueInitPromise) await queueInitPromise;
+    if (typeof indexedDB !== 'undefined') {
+      await idbDelete(id);
+      return;
+    }
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch (e) {
+      console.error('[offlineSync] Error al guardar cola offline:', e);
+    }
+  }).catch(e => console.error('[offlineSync] Error persistiendo cola:', e));
+}
+
+function persistQueueClear(): void {
+  persistenceChain = persistenceChain.then(async () => {
+    if (!queueReady && queueInitPromise) await queueInitPromise;
+    if (typeof indexedDB !== 'undefined') {
+      await idbClear();
+      return;
+    }
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {
+      console.error('[offlineSync] Error al limpiar cola offline:', e);
+    }
+  }).catch(e => console.error('[offlineSync] Error persistiendo cola:', e));
+}
+
+export function enqueueOfflineItem(type: OfflineActionType, data: any, actionId?: string): void {
+  const finalActionId = actionId || data?.id || crypto.randomUUID();
   const currentQueue = getOfflineQueue();
-  const nextQueue = currentQueue.filter(item => item.id !== id);
-  saveOfflineQueue(nextQueue);
+  const existingIdx = currentQueue.findIndex(item => item.type === type && item.actionId === finalActionId);
+  const base = {
+    id: existingIdx >= 0 ? currentQueue[existingIdx].id : crypto.randomUUID(),
+    actionId: finalActionId,
+    type,
+    data,
+    timestamp: new Date().toISOString(),
+    retryCount: existingIdx >= 0 ? currentQueue[existingIdx].retryCount : 0,
+    status: 'pending' as const,
+    deviceId: getDeviceId()
+  };
+  if (existingIdx >= 0) {
+    currentQueue[existingIdx] = { ...currentQueue[existingIdx], ...base, data: { ...currentQueue[existingIdx].data, ...data } };
+  } else {
+    currentQueue.push(base);
+  }
+  memoryQueue = currentQueue;
+  emitQueueEvent();
+  persistQueueItem(currentQueue[existingIdx >= 0 ? existingIdx : currentQueue.length - 1]);
+  addSyncLog({ level: 'info', source: 'offline_queue', title: `Elemento encolado (${type})`, details: `Operación ${finalActionId} guardada offline. Pendientes: ${currentQueue.length}`, entityType: type, actionId: finalActionId });
 }
 
-// Limpiar toda la cola
+export function removeFromOfflineQueue(id: string): void {
+  memoryQueue = memoryQueue.filter(item => item.id !== id);
+  emitQueueEvent();
+  persistQueueDelete(id);
+}
+
 export function clearOfflineQueue(): void {
-  saveOfflineQueue([]);
+  memoryQueue = [];
+  emitQueueEvent();
+  persistQueueClear();
 }
+export function getOfflineQueueCount(): number { return memoryQueue.length; }
 
-// Retorna cantidad de items pendientes
-export function getOfflineQueueCount(): number {
-  return getOfflineQueue().length;
-}
-
-// Procesar individualmente según el tipo de acción
 async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<boolean> {
   const { type, data } = item;
-
   switch (type) {
     case 'cash_session': {
-      const session = data as CashRegisterSession;
-      
-      // Intentar usar RPC para garantizar el Turno-N correlativo e integridad
-      try {
+      const session = data as CashRegisterSession & { __operation?: 'open' | 'close' | 'cancel' | 'snapshot'; settlement?: any; closedAt?: string };
+      if (session.__operation === 'close') {
+        const settlement = session.settlement;
+        if (!settlement) throw new Error('Cierre offline sin liquidación asociada');
+        const res = await (await import('./supabaseSync')).callCloseSessionRPC(session.id, session.closingBalances || [], session.closedAt || new Date().toISOString(), session.notes || '', settlement);
+        if (!res.success) throw new Error(res.error || 'No se pudo cerrar el turno');
+        return true;
+      }
+      if (session.__operation === 'cancel') {
+        const res = await callCancelSessionRPC(session.id, session.userId || 'system', session.deleteReason || 'Cancelación de turno');
+        if (!res.success) throw new Error(res.error || 'No se pudo cancelar el turno');
+        return true;
+      }
+      if (session.__operation !== 'snapshot') {
         const res = await callOpenSessionRPC(session);
         if (res.success) return true;
-      } catch (rpcErr) {
-        console.warn("[offlineSync] RPC open_cash_session falló, usando fallback upsert:", rpcErr);
       }
-
-      let extendedNotes = session.notes || '';
-      const meta = {
-        closing_balances: session.closingBalances || [],
-        closing_date: session.closingDate || null,
-        movements: session.movements || []
-      };
-      if (extendedNotes.includes('__META__:')) {
-        extendedNotes = extendedNotes.split('__META__:')[0].trim();
-      }
-      extendedNotes = (extendedNotes ? extendedNotes + ' ' : '') + '__META__:' + JSON.stringify(meta);
-
       const row = {
-        id: session.id,
-        user_id: session.userId || null,
-        worker_name: session.workerName || null,
-        branch_id: session.branchId,
-        opened_at: session.openedAt,
-        closed_at: session.closedAt || null,
-        opening_balance: session.openingAmount,
-        status: session.status,
-        notes: extendedNotes,
-        working_employee_ids: session.workingEmployeeIds || [],
-        deleted_at: session.deletedAt || null,
-        deleted_by: session.deletedBy || null,
-        delete_reason: session.deleteReason || null
+        id: session.id, user_id: session.userId || null, worker_name: session.workerName || null,
+        branch_id: session.branchId, opened_at: session.openedAt, closed_at: session.closedAt || null,
+        opening_balance: session.openingAmount, status: session.status,
+        notes: session.notes || '', working_employee_ids: session.workingEmployeeIds || [],
+        deleted_at: session.deletedAt || null, deleted_by: session.deletedBy || null, delete_reason: session.deleteReason || null
       };
-
       const { error } = await supabase.from('cash_sessions').upsert(row);
       if (error) throw error;
       return true;
     }
-
+    case 'salary_settlement': {
+      const settlement = data;
+      const { error } = await supabase.from('salary_settlements').upsert({
+        id: settlement.id, user_id: settlement.userId || null, user_name: settlement.userName || '',
+        session_id: settlement.sessionId || null, base_salary: settlement.baseSalary || 0,
+        commissions: settlement.commissions || 0, discrepancy_deduction: settlement.discrepancyDeduction || 0,
+        total: settlement.total || 0, date: settlement.date, status: settlement.status || 'pending'
+      });
+      if (error) throw error;
+      return true;
+    }
     case 'customer': {
       const customer = data as Customer;
-      const row = {
-        id: customer.id,
-        name: customer.name,
-        phone: customer.phone || null,
-        email: customer.email || null,
-        tax_id: customer.taxId || null
-      };
-      const { error } = await supabase.from('customers').upsert(row);
-      if (error) throw error;
-      return true;
+      const { error } = await supabase.from('customers').upsert({ id: customer.id, name: customer.name, phone: customer.phone || null, email: customer.email || null, tax_id: customer.taxId || null });
+      if (error) throw error; return true;
     }
-
+    case 'customer_delete': {
+      const { error } = await supabase.from('customers').delete().eq('id', data.id);
+      if (error) throw error; return true;
+    }
     case 'branch': {
-      const branch = data as Branch;
-      const row = {
-        id: branch.id,
-        name: branch.name,
-        address: branch.address || null,
-        phone: branch.phone || null,
-        is_active: branch.isActive !== false,
-        is_main: branch.isMain === true
-      };
-      const { error } = await supabase.from('branches').upsert(row);
-      if (error) throw error;
-      return true;
+      const b = data as Branch;
+      const { error } = await supabase.from('branches').upsert({ id: b.id, name: b.name, address: b.address || null, phone: b.phone || null, is_active: b.isActive !== false, is_main: b.isMain === true });
+      if (error) throw error; return true;
     }
-
     case 'category': {
-      const category = data as Category;
-      const row = {
-        id: category.id,
-        name: category.name,
-        department: category.department || 'General',
-        description: category.description || null,
-        color: category.color || null,
-        image: category.image || null
-      };
-      const { error } = await supabase.from('categories').upsert(row);
-      if (error) throw error;
-      return true;
+      const c = data as Category;
+      const { error } = await supabase.from('categories').upsert({ id: c.id, name: c.name, department: c.department || 'General', description: c.description || null, color: c.color || null, image: c.image || null });
+      if (error) throw error; return true;
     }
-
     case 'product': {
-      const product = data as Product;
-      const row = {
-        id: product.id,
-        name: product.name,
-        sku: product.sku || null,
-        barcode: product.barcode || null,
-        cost_price: product.costPrice || 0,
-        price: product.price || 0,
-        margin: product.margin || 0,
-        category_id: product.categoryId || null,
-        color: product.color || null,
-        commission_value: product.commissionValue || 0,
-        unit: product.unit || 'unidad',
-        status: product.status || 'active',
-        min_stock_alert: product.minStockAlert || 5,
-        has_serial: product.hasSerial || false,
-        warranty_days: product.warrantyDays || 0,
-        is_kit: product.isKit || false,
-        kit_items: product.kitItems || []
-      };
-      const { error } = await supabase.from('products').upsert(row);
-      if (error) throw error;
-      return true;
+      const p = data as Product;
+      const { error } = await supabase.from('products').upsert({ id: p.id, name: p.name, sku: p.sku || null, barcode: p.barcode || null, cost_price: p.costPrice || 0, price: p.price || 0, margin: p.margin || 0, category_id: p.categoryId || null, color: p.color || null, commission_value: p.commissionValue || 0, unit: p.unit || 'unidad', status: p.status || 'active', min_stock_alert: p.minStockAlert || 5, has_serial: p.hasSerial || false, warranty_days: p.warrantyDays || 0, is_kit: p.isKit || false, kit_items: p.kitItems || [] });
+      if (error) throw error; return true;
     }
-
-    case 'transaction': {
-      const tx = data as Transaction;
-
-      // Usar RPC atómico para asegurar que el stock se ajuste correctamente en el servidor
-      try {
-        const res = await callProcessTransactionRPC(tx);
-        if (res.success) return true;
-      } catch (rpcErr) {
-        console.warn("[offlineSync] RPC process_pos_transaction falló, usando fallback upsert:", rpcErr);
-      }
-
-      // Fallback a manual si falla el RPC (e.g. por red o esquema)
-      const row = {
-        id: tx.id,
-        date: tx.date,
-        total: tx.total,
-        tax: tx.tax || 0,
-        discount: tx.discount || 0,
-        branch_id: tx.branchId,
-        customer_id: tx.customerId || null,
-        user_id: tx.userId || null,
-        status: tx.status || 'completed',
-        notes: tx.notes || '',
-        payment_method: tx.paymentMethod || 'cash',
-        session_id: tx.sessionId || null,
-        change_given: tx.changeGiven || 0,
-        items: tx.items || [],
-        payments: tx.payments || [],
-        change_payments: tx.changePayments || [],
-        seller_employee_ids: tx.sellerEmployeeIds || [],
-        deleted_at: tx.deletedAt || null,
-        deleted_by: tx.deletedBy || null,
-        delete_reason: tx.deleteReason || null
-      };
-
-      const { error } = await supabase.from('transactions').upsert(row);
-      if (error) throw error;
-      return true;
+    case 'user': {
+      const u = data;
+      const email = u.email && String(u.email).trim() ? u.email : `${String(u.name || 'user').toLowerCase().replace(/[^a-z0-9]/g, '')}_${String(u.id).slice(0, 6)}@system.local`;
+      const { error } = await supabase.from('users').upsert({ id:u.id, name:u.name, email, password:u.password || null, role:u.role || 'employee', base_salary:u.baseSalary || 0, sales_goal:u.salesGoal || 0, branch_id:u.branchId || null, allowed_branches:u.allowedBranches || [], permissions:u.permissions || [], is_active:u.isActive !== false, is_independent:u.isIndependent === true, assigned_branch_id:u.assignedBranchId || u.branchId || null });
+      if (error) throw error; return true;
     }
-
+    case 'currency': { const c=data; const {error}=await supabase.from('currencies').upsert({code:c.code,name:c.name,symbol:c.symbol,rate_to_base:c.rateToBase,is_base:c.isBase},{onConflict:'code'}); if(error) throw error; return true; }
+    case 'idn_settlement_price': { const d=data; const {error}=await supabase.from('idn_settlement_prices').upsert({id:d.id,user_id:d.userId,product_id:d.productId,settlement_price:d.settlementPrice}); if(error) throw error; return true; }
+    case 'warranty': { const d=data; const {error}=await supabase.from('warranties').upsert({id:d.id,product_id:d.productId,product_name:d.productName,transaction_id:d.transactionId,customer_id:d.customerId,customer_name:d.customerName,purchase_date:d.purchaseDate,expiry_date:d.expiryDate,serial_number:d.serialNumber,status:d.status}); if(error) throw error; return true; }
+    case 'time_shift': { const d=data; const {error}=await supabase.from('time_shifts').upsert({id:d.id,user_id:d.userId,clock_in:d.clockIn,clock_out:d.clockOut,notes:d.notes}); if(error) throw error; return true; }
+    case 'quote': { const d=data; const {error}=await supabase.from('quotes').upsert({id:d.id,branch_id:d.branchId,user_id:d.userId,customer_id:d.customerId,date:d.date,subtotal:d.subtotal,tax:d.tax,total:d.total,items:d.items||[],status:d.status,notes:d.notes}); if(error) throw error; return true; }
+    case 'bank_card': { const d=data; const {error}=await supabase.from('bank_cards').upsert({id:d.id,name:d.name||d.bankName||'Tarjeta Bancaria',bank:d.bank||d.bankName||'Banco',bank_name:d.bankName||d.bank||'Banco',card_holder:d.cardHolder||'Titular',account_number:d.accountNumber||d.lastFourDigits||d.lastFour||'',phone:d.phone||'',last_four_digits:d.lastFourDigits||d.lastFour||(d.accountNumber?String(d.accountNumber).slice(-4):'0000'),balance:d.balance||0,currency:d.currency||'CUP',color:d.color||'from-indigo-600 to-purple-800',is_active:d.isActive!==false}); if(error) throw error; return true; }
+    case 'supplier': { const d=data; const {error}=await supabase.from('suppliers').upsert({id:d.id,name:d.name,phone:d.phone||'',address:d.address||'',email:d.email||'',rating:d.rating||5,type_of_merchandise:d.typeOfMerchandise||''}); if(error) throw error; return true; }
+    case 'supplier_order': { const d=data; const {error}=await supabase.from('supplier_orders').upsert({id:d.id,supplier_id:d.supplierId,date:d.date,expected_delivery_date:d.expectedDeliveryDate,items:d.items||[],total:d.total,status:d.status,branch_id:d.branchId,transport_details:d.transportDetails,transport_cost:d.transportCost}); if(error) throw error; return true; }
+    case 'inventory_audit': { const d=data; const {error}=await supabase.from('inventory_audits').upsert({id:d.id,date:d.date,branch_id:d.branchId,user_id:d.userId,status:d.status,items:d.items||[],notes:d.notes}); if(error) throw error; return true; }
+    case 'transaction': { const res = await callProcessTransactionRPC(data as Transaction); if (!res.success) { if (res.errorCode) throw new PermanentSyncError(res.error || 'La venta fue rechazada por Supabase'); throw new Error(res.error || 'No se pudo sincronizar la venta'); } return true; }
+    case 'void_transaction': { const res = await callVoidTransactionRPC(data.id, data.userId, data.reason || 'Anulación de venta'); if (!res.success) throw new Error(res.error || 'No se pudo anular la venta'); return true; }
+    case 'return_complete': { const res = await callCompleteReturnRPC(data.id, data.userId); if (!res.success) throw new Error(res.error || 'No se pudo completar la devolución'); return true; }
+    case 'transfer': { const res = await callTransferInventoryRPC(data); if (!res.success) throw new Error(res.error || 'No se pudo sincronizar la transferencia'); return true; }
+    case 'supplier_receive': { const res = await callReceiveSupplierOrderRPC(data.id, data.userId || 'system'); if (!res.success) throw new Error(res.error || 'No se pudo recibir la orden'); return true; }
+    case 'audit_complete': { const res = await callCompleteInventoryAuditRPC(data.id, data.branchId, data.userId, data.items || [], data.notes); if (!res.success) throw new Error(res.error || 'No se pudo completar la auditoría'); return true; }
     case 'inventory': {
-      const level = data as InventoryLevel;
-      const isValidUUID = typeof level.id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(level.id);
-      const row = {
-        id: isValidUUID ? level.id : crypto.randomUUID(),
-        product_id: level.productId,
-        branch_id: level.branchId || null,
-        variant_label: level.variantLabel || '',
-        quantity: Number(level.quantity) || 0,
-        min_quantity: Number(level.minQuantity) || 0
-      };
-      const { error } = await supabase.from('inventory').upsert(row);
-      if (error) throw error;
+      // Compatibilidad con colas antiguas que guardaban un stock absoluto.
+      // Nunca sobrescribimos silenciosamente un cambio remoto: solo aceptamos
+      // la operación si el servidor todavía coincide con el valor esperado.
+      const { data: current, error: readError } = await supabase.from('inventory').select('quantity').eq('product_id', data.productId).eq('branch_id', data.branchId).eq('variant_label', data.variantLabel || '').maybeSingle();
+      if (readError) throw readError;
+      if (current && Number(current.quantity) !== Number(data.quantity)) {
+        throw new Error('Conflicto de inventario legado: el stock remoto cambió antes de sincronizar.');
+      }
       return true;
     }
-
-    case 'bank_transaction': {
-      const tx = data as BankTransaction;
-      const row = {
-        id: tx.id,
-        card_id: tx.cardId,
-        type: tx.type,
-        amount: Number(tx.amount) || 0,
-        date: tx.date,
-        reference: tx.reference || null,
-        description: tx.description || '',
-        transaction_id: tx.transactionId || null
-      };
-      const { error } = await supabase.from('bank_transactions').upsert(row);
+    case 'inventory_adjustment': {
+      const { data: result, error } = await supabase.rpc('apply_inventory_adjustment_v2', {
+        p_operation_id: item.actionId, p_product_id: data.productId, p_branch_id: data.branchId,
+        p_variant_label: data.variantLabel || '', p_delta: Number(data.delta) || 0,
+        p_min_quantity: Number(data.minQuantity) || 0, p_user_id: data.userId || null,
+        p_movement_type: data.movementType || 'ADJUSTMENT'
+      });
       if (error) throw error;
+      if (result?.conflict) throw new Error(result.message || 'Conflicto de inventario');
       return true;
     }
-
+    case 'inventory_reconcile': {
+      const { data: result, error } = await supabase.rpc('reconcile_inventory_v2', {
+        p_operation_id: item.actionId, p_product_id: data.productId, p_branch_id: data.branchId,
+        p_variant_label: data.variantLabel || '', p_expected_quantity: Number(data.expectedQuantity),
+        p_new_quantity: Math.max(0, Number(data.quantity) || 0), p_min_quantity: Number(data.minQuantity) || 0,
+        p_user_id: data.userId || null
+      });
+      if (error) throw error;
+      if (result?.conflict) throw new Error(result.message || 'Conflicto de inventario: el stock cambió mientras estaba offline');
+      return true;
+    }
     case 'return': {
       const ret = data as ReturnItem;
-      const row = {
-        id: ret.id,
-        transaction_id: ret.transactionId || null,
-        product_id: ret.productId,
-        quantity: Number(ret.quantity) || 1,
-        reason: ret.reason || '',
-        date: ret.date,
-        status: ret.status || 'pending',
-        type: ret.type || 'refund',
-        notes: ret.notes || null,
-        variant_label: ret.variantLabel || null
-      };
-      const { error } = await supabase.from('returns').upsert(row);
-      if (error) throw error;
-      return true;
+      const { error } = await supabase.from('returns').upsert({ id: ret.id, transaction_id: ret.transactionId || null, product_id: ret.productId, quantity: Number(ret.quantity) || 1, reason: ret.reason || '', date: ret.date, status: ret.status || 'pending', type: ret.type || 'refund', notes: ret.notes || null, variant_label: ret.variantLabel || null });
+      if (error) throw error; return true;
     }
-
-    case 'receipt_config': {
-      const { error } = await supabase.from('settings').upsert({
-        id: 'global',
-        receipt_config: data
-      });
-      if (error) throw error;
-      return true;
-    }
-
-    case 'store_config': {
-      const { error } = await supabase.from('settings').upsert({
-        id: 'global',
-        store_config: data
-      });
-      if (error) throw error;
-      return true;
-    }
-
-    default:
-      return true;
+    case 'receipt_config': { const { error } = await supabase.from('settings').upsert({ id: 'global', receipt_config: data }); if (error) throw error; return true; }
+    case 'store_config': { const { error } = await supabase.from('settings').upsert({ id: 'global', store_config: data }); if (error) throw error; return true; }
+    case 'catalog_config': { const { error } = await supabase.from('settings').upsert({ id: 'global', catalog_config: data }); if (error) throw error; return true; }
+    default: return true;
   }
 }
 
-// Procesar toda la cola offline
 export async function processOfflineQueue(): Promise<{ processed: number; failed: number; remaining: number }> {
-  if (isProcessingQueue) {
-    return { processed: 0, failed: 0, remaining: getOfflineQueue().length };
-  }
-
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    return { processed: 0, failed: 0, remaining: getOfflineQueue().length };
-  }
-
+  if (isProcessingQueue || (typeof navigator !== 'undefined' && !navigator.onLine)) return { processed: 0, failed: 0, remaining: getOfflineQueueCount() };
   const supabase = getSupabase();
-  if (!supabase) {
-    return { processed: 0, failed: 0, remaining: getOfflineQueue().length };
-  }
-
+  if (!supabase) return { processed: 0, failed: 0, remaining: getOfflineQueueCount() };
   const queue = getOfflineQueue();
-  if (queue.length === 0) {
-    return { processed: 0, failed: 0, remaining: 0 };
-  }
+  if (!queue.length) return { processed: 0, failed: 0, remaining: 0 };
 
   isProcessingQueue = true;
-  console.info(`[offlineSync] Iniciando sincronización de cola (${queue.length} elementos pendientes)...`);
+  // El orden real de un POS offline es temporal. Forzar prioridades por tipo
+  // puede invertir, por ejemplo, un ajuste de inventario realizado después de
+  // una venta. Las RPC son idempotentes y las dependencias se resuelven en la DB.
+  const sorted = [...queue].sort((a,b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id));
+  let processed = 0, failed = 0;
+  const remaining: OfflineQueueItem[] = [];
+  const handledIds = new Set<string>();
 
-  // Orden de prioridad para no romper llaves foráneas:
-  // 1. Sucursales, Categorías, Productos, Clientes, Sesiones de caja
-  // 2. Transacciones (ventas)
-  // 3. Inventario, Movimientos de banco, Devoluciones
-  const priorityOrder: Record<OfflineActionType, number> = {
-    branch: 1,
-    category: 2,
-    product: 3,
-    customer: 4,
-    cash_session: 5,
-    transaction: 6,
-    inventory: 7,
-    bank_transaction: 8,
-    return: 9,
-    receipt_config: 10,
-    store_config: 11
-  };
-
-  const sortedQueue = [...queue].sort((a, b) => {
-    const pA = priorityOrder[a.type] || 10;
-    const pB = priorityOrder[b.type] || 10;
-    if (pA !== pB) return pA - pB;
-    return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-  });
-
-  let processed = 0;
-  let failed = 0;
-  const remainingQueue: OfflineQueueItem[] = [];
-
-  for (const item of sortedQueue) {
+  for (let index = 0; index < sorted.length; index++) {
+    const item = sorted[index];
+    item.status = 'processing';
     try {
       await processQueueItem(supabase, item);
       processed++;
-      addSyncLog({
-        level: 'success',
-        source: 'offline_queue',
-        title: `Item sincronizado (${item.type})`,
-        details: `Operación ${item.actionId} subida con éxito a Supabase.`,
-        entityType: item.type,
-        actionId: item.actionId
-      });
-      console.debug(`[offlineSync] Item sincronizado con éxito (${item.type}): ${item.actionId}`);
-    } catch (err: any) {
-      console.warn(`[offlineSync] Fallo al sincronizar item (${item.type} ${item.actionId}):`, err?.message || err);
+      handledIds.add(item.id);
+      addSyncLog({ level:'success', source:'offline_queue', title:`Item sincronizado (${item.type})`, details:`Operación ${item.actionId} confirmada por Supabase.`, entityType:item.type, actionId:item.actionId });
+    } catch (err:any) {
       failed++;
       item.retryCount = (item.retryCount || 0) + 1;
-      addSyncLog({
-        level: 'error',
-        source: 'offline_queue',
-        title: `Error al procesar item (${item.type})`,
-        details: err?.message || 'Fallo de conexión o Supabase RPC',
-        entityType: item.type,
-        actionId: item.actionId,
-        retryAttempt: item.retryCount,
-        maxRetries: 5
-      });
-      // Si falló por desconexión de red súbita, mantenerlo para la próxima reconexión
-      remainingQueue.push(item);
-    }
-  }
-
-  saveOfflineQueue(remainingQueue);
-  isProcessingQueue = false;
-
-  console.info(`[offlineSync] Proceso finalizado. Sincronizados: ${processed}, Fallidos: ${failed}, Restantes: ${remainingQueue.length}`);
-
-  if (processed > 0) {
-    // Si se subieron ventas o cambios offline, invocar sincronización local para reconciliar estados
-    useStore.getState().syncWithSupabase().catch(() => {});
-  }
-
-  return { processed, failed, remaining: remainingQueue.length };
-}
-
-// Inicializar el vigilante automático de conectividad
-export function initOfflineSyncWatcher(): () => void {
-  if (typeof window === 'undefined') return () => {};
-
-  let intervalId: any = null;
-
-  const handleOnline = async () => {
-    console.info('[offlineSync] Conexión a internet detectada.');
-    const count = getOfflineQueueCount();
-    if (count > 0) {
-      useStore.getState().addNotification(`Conexión detectada. Sincronizando ${count} operaciones pendientes...`, 'info');
-      const res = await processOfflineQueue();
-      if (res.processed > 0) {
-        useStore.getState().addNotification(`Sincronización completada: ${res.processed} operaciones subidas a Supabase.`, 'info');
+      item.lastError = err?.message || 'Error desconocido';
+      const permanent = err?.permanent === true;
+      item.status = permanent || item.retryCount >= 8 ? 'conflict' : 'failed';
+      remaining.push(item);
+      addSyncLog({ level:'error', source:'offline_queue', title:`Error al procesar item (${item.type})`, details:item.lastError, entityType:item.type, actionId:item.actionId, retryAttempt:item.retryCount, maxRetries:8 });
+      if (!permanent && (item.type === 'transaction' || item.type === 'cash_session' || item.type === 'transfer' || item.type === 'return_complete')) {
+        // Preserve this failed operation and everything after it. Dependent operations
+        // must not leapfrog an unresolved critical operation.
+        for (let tail = index + 1; tail < sorted.length; tail++) remaining.push(sorted[tail]);
+        break;
       }
     }
-  };
-
-  const handleOffline = () => {
-    console.warn('[offlineSync] Conexión perdida. Operando en modo Offline local.');
-    useStore.getState().addNotification('Sin conexión a internet. El POS continuará operando localmente.', 'warning');
-  };
-
-  window.addEventListener('online', handleOnline);
-  window.addEventListener('offline', handleOffline);
-
-  // Verificación periódica cada 30 segundos si hay items en cola y hay red
-  intervalId = setInterval(() => {
-    if (navigator.onLine && getOfflineQueueCount() > 0 && !isProcessingQueue) {
-      processOfflineQueue().catch(() => {});
-    }
-  }, 30000);
-
-  // Verificación inicial inmediata
-  if (navigator.onLine && getOfflineQueueCount() > 0) {
-    processOfflineQueue().catch(() => {});
   }
 
-  return () => {
-    window.removeEventListener('online', handleOnline);
-    window.removeEventListener('offline', handleOffline);
-    if (intervalId) clearInterval(intervalId);
+  for (const item of sorted) {
+    if (!handledIds.has(item.id) && !remaining.some(r => r.id === item.id)) remaining.push(item);
+  }
+
+  memoryQueue = remaining;
+  emitQueueEvent();
+  // Persist only the changed rows. This is critical when a POS reconnects after
+  // a long offline period: syncing 5,000 operations must not rewrite 5,000 rows
+  // for every single operation.
+  persistenceChain = persistenceChain.then(async () => {
+    if (!queueReady && queueInitPromise) await queueInitPromise;
+    if (typeof indexedDB !== 'undefined') {
+      const remainingIds = new Set(remaining.map(item => item.id));
+      for (const item of sorted) {
+        if (remainingIds.has(item.id)) await idbPut(item);
+        else await idbDelete(item.id);
+      }
+      return;
+    }
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(remaining)); } catch (e) {
+      console.error('[offlineSync] Error al guardar cola offline:', e);
+    }
+  }).catch(e => console.error('[offlineSync] Error persistiendo cola:', e));
+  isProcessingQueue = false;
+  return { processed, failed, remaining: remaining.length };
+}
+
+function isManualOfflineSyncEnabled(): boolean {
+  try {
+    const config = useStore.getState().storeConfig;
+    return config?.manualOfflineSync === true;
+  } catch {
+    return false;
+  }
+}
+
+export function initOfflineSyncWatcher(): () => void {
+  if (typeof window === 'undefined') return () => {};
+  let intervalId: any = null;
+  const handleOnline = async () => {
+    if (isManualOfflineSyncEnabled()) return;
+    const count = getOfflineQueueCount();
+    if (!count) return;
+    useStore.getState().addNotification(`Conexión detectada. Sincronizando ${count} operaciones pendientes...`, 'info');
+    const res = await processOfflineQueue();
+    if (res.processed) useStore.getState().addNotification(`Sincronización completada: ${res.processed} operaciones.`, 'info');
   };
+  const handleOffline = () => useStore.getState().addNotification('Sin conexión. El POS continúa trabajando offline.', 'warning');
+  window.addEventListener('online', handleOnline);
+  window.addEventListener('offline', handleOffline);
+  intervalId = setInterval(() => { 
+    if (navigator.onLine && getOfflineQueueCount() && !isProcessingQueue && !isManualOfflineSyncEnabled()) {
+      processOfflineQueue().catch(() => {}); 
+    }
+  }, 30000);
+  if (navigator.onLine && getOfflineQueueCount() && !isManualOfflineSyncEnabled()) processOfflineQueue().catch(() => {});
+  return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); if (intervalId) clearInterval(intervalId); };
 }

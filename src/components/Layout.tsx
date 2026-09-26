@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -29,7 +30,6 @@ import React, { useState, useEffect } from "react";
 import { cn } from "../lib/utils";
 import { useStore } from "../store/useStore";
 import { getOfflineQueueCount, processOfflineQueue } from "../services/offlineSync";
-import { SupabaseRefreshModal } from "./SupabaseRefreshModal";
 import { 
   CheckCircle2, 
   AlertTriangle, 
@@ -62,7 +62,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pendingOfflineCount, setPendingOfflineCount] = useState(getOfflineQueueCount());
   const [isSyncingOffline, setIsSyncingOffline] = useState(false);
-  const { currentUser, logout, notifications, removeNotification, storeConfig, syncWithSupabase, addNotification } = useStore();
+  const { currentUser, logout, notifications, removeNotification, storeConfig, syncWithSupabase, addNotification } = useStore(useShallow((state) => ({ currentUser: state.currentUser, logout: state.logout, notifications: state.notifications, removeNotification: state.removeNotification, storeConfig: state.storeConfig, syncWithSupabase: state.syncWithSupabase, addNotification: state.addNotification })));
   const location = useLocation();
   const isPosPage = location.pathname === "/pos";
 
@@ -226,14 +226,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         <div className={cn("shrink-0 p-3 bg-secondary border-t border-subtle", sidebarCollapsed && "md:p-2 md:items-center")}>
           <div className={cn("mb-2 space-y-1.5", sidebarCollapsed && "md:hidden")}>
-            <SupabaseRefreshModal variant="compact" label="Reactualizar Supabase" buttonClassName="w-full justify-center text-[8px] py-1.5" />
-
             <button
               type="button"
               onClick={handleManualSync}
               disabled={isSyncingOffline || !isOnline}
               className={cn(
-                "w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all border",
+                "w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border",
                 !isOnline
                   ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
                   : pendingOfflineCount > 0
@@ -282,7 +280,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             onClick={logout}
             className={cn(
               "flex items-center text-muted hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-xl transition-all font-black uppercase",
-              sidebarCollapsed ? "justify-center p-2 w-full" : "space-x-2 px-3 py-2 w-full text-[8px] tracking-wider"
+              sidebarCollapsed ? "justify-center p-2 w-full" : "space-x-2 px-3 py-2 w-full text-[10px] tracking-wider"
             )}
             title="Cerrar sesión"
           >

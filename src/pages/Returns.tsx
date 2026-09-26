@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState } from "react";
 import { RotateCcw, Search, CheckCircle, XCircle, AlertTriangle, ShieldCheck, X, Calendar, User, Package, Hash } from "lucide-react";
 import { useStore } from "../store/useStore";
@@ -5,7 +6,7 @@ import { cn, generateId } from "../lib/utils";
 import { ReturnItem, Warranty } from "../types";
 
 export default function Returns() {
-  const { returns, transactions, products, categories, createReturn, updateReturn, processReturn, warranties, updateWarranty } = useStore();
+  const { returns, transactions, products, categories, createReturn, updateReturn, processReturn, warranties, updateWarranty } = useStore(useShallow((state) => ({ returns: state.returns, transactions: state.transactions, products: state.products, categories: state.categories, createReturn: state.createReturn, updateReturn: state.updateReturn, processReturn: state.processReturn, warranties: state.warranties, updateWarranty: state.updateWarranty })));
   const [activeTab, setActiveTab] = useState<'returns' | 'warranties'>('returns');
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
@@ -190,13 +191,13 @@ export default function Returns() {
                                     processReturn(ret.id, 'complete');
                                   }
                                 }}
-                                className="text-[8px] font-black bg-indigo-600 text-white px-2 py-1.5 rounded-lg uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-sm w-full text-center"
+                                className="text-[9px] font-black bg-indigo-600 text-white px-2 py-1.5 rounded-lg uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-sm w-full text-center"
                               >
                                 Finalizar Devolución
                               </button>
                               <button 
                                 onClick={() => processReturn(ret.id, 'reject')}
-                                className="text-[8px] font-black bg-rose-50 text-rose-600 border border-rose-100 px-2 py-1.5 rounded-lg uppercase tracking-widest hover:bg-rose-100 transition-all w-full text-center"
+                                className="text-[9px] font-black bg-rose-50 text-rose-600 border border-rose-100 px-2 py-1.5 rounded-lg uppercase tracking-widest hover:bg-rose-100 transition-all w-full text-center"
                               >
                                 Rechazar
                               </button>
@@ -205,7 +206,7 @@ export default function Returns() {
                           {ret.status === 'pending' && (
                             <button 
                               onClick={() => updateReturn(ret.id, { type: ret.type === 'refund' ? 'warranty_exchange' : 'refund' })}
-                              className="text-[8px] font-black bg-white border border-slate-200 text-slate-500 px-2 py-1.5 rounded-lg uppercase tracking-widest hover:bg-slate-50 transition-all"
+                              className="text-[9px] font-black bg-white border border-slate-200 text-slate-500 px-2 py-1.5 rounded-lg uppercase tracking-widest hover:bg-slate-50 transition-all"
                             >
                               {ret.type === 'refund' ? 'Cambiar a Garantía' : 'Cambiar a Reembolso'}
                             </button>

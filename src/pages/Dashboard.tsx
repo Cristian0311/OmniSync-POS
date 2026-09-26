@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useMemo } from "react";
 import { 
   TrendingUp, 
@@ -16,19 +17,24 @@ import {
   Eye, 
   X, 
   CheckCircle2, 
-  ChevronRight 
+  ChevronRight,
+  RefreshCw,
+  Sparkles
 } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { cn } from "../lib/utils";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { getBusinessSummaryAI } from "../services/gemini";
 import type { Transaction, CartItem, Payment } from "../types";
 
 export default function Dashboard() {
-  const { branches, currentBranchId, setCurrentBranch, transactions, getBaseCurrency, currencies, inventory, products, customers, users } = useStore();
+  const { branches, currentBranchId, setCurrentBranch, transactions, getBaseCurrency, currencies, inventory, products, customers, users, categories } = useStore(useShallow((state) => ({ branches: state.branches, currentBranchId: state.currentBranchId, setCurrentBranch: state.setCurrentBranch, transactions: state.transactions, getBaseCurrency: state.getBaseCurrency, currencies: state.currencies, inventory: state.inventory, products: state.products, customers: state.customers, users: state.users, categories: state.categories })));
   const baseCurrency = getBaseCurrency();
   const [selectedTxForDetail, setSelectedTxForDetail] = useState<Transaction | null>(null);
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>(currentBranchId || 'all');
   const [showAllSalesModal, setShowAllSalesModal] = useState<boolean>(false);
+  const [aiSummary, setAiSummary] = useState<string>("");
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
 
   const isCupCode = (code: string) => code === 'CUP' || code === 'MN' || code === 'CUC' || code === '₱';
 
@@ -67,7 +73,38 @@ export default function Dashboard() {
 
   const totalSalesToday = todayTransactions.reduce((sum, t) => sum + (t.total || 0), 0);
   const averageTicketToday = todayTransactions.length > 0 ? totalSalesToday / todayTransactions.length : 0;
-  
+
+  const topCategories = useMemo(() => {
+    const data: Record<string, number> = {};
+    todayTransactions.forEach(tx => {
+      (tx.items || []).forEach(item => {
+        const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
+        const prod = products.find(p => p.id === prodId);
+        const categoryId = prod?.categoryId || (typeof item.product === 'object' ? item.product?.categoryId : '') || 'unclassified';
+        const category = categories.find(c => c.id === categoryId);
+        const categoryName = category?.name || 'Otros';
+        data[categoryName] = (data[categoryName] || 0) + (item.total || 0);
+      });
+    });
+    return Object.entries(data)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 3);
+  }, [todayTransactions, products, categories]);
+
+  const handleGenerateAI = async () => {
+    setIsGeneratingAI(true);
+    const summary = await getBusinessSummaryAI({
+      salesToday: totalSalesToday,
+      txCountToday: todayTransactions.length,
+      lowStockCount,
+      topCategories,
+      baseCurrency: baseCurrency.code
+    });
+    setAiSummary(summary);
+    setIsGeneratingAI(false);
+  };
+
   const lowStockCount = useMemo(() => {
     if (selectedBranchFilter === 'all') {
       return inventory.filter(i => i.quantity <= i.minQuantity).length;
@@ -218,16 +255,19 @@ export default function Dashboard() {
             <span className="text-slate-300 dark:text-slate-700">·</span>
             <div className="flex items-center gap-1.5 text-[8.5px] font-bold text-slate-500 dark:text-slate-400">
               <span>Moneda Base: <strong className="text-indigo-600 dark:text-indigo-400">{baseCurrency.code} ({baseCurrency.symbol})</strong></span>
-              {secondaryCurrencies.length > 0 && (
-                <span className="text-[8px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md">
-                  {secondaryCurrencies.map(c => `1 ${c.code} = $${c.rateToBase} CUP`).join(' · ')}
-                </span>
-              )}
             </div>
           </div>
         </div>
         
         <div className="flex items-center gap-2">
+          <button 
+            onClick={handleGenerateAI}
+            disabled={isGeneratingAI}
+            className="btn-secondary"
+          >
+            {isGeneratingAI ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 text-amber-500" />}
+            {aiSummary ? "Actualizar Análisis IA" : "Analizar con IA"}
+          </button>
           <select 
             value={selectedBranchFilter}
             onChange={(e) => {
@@ -238,13 +278,37 @@ export default function Dashboard() {
             }}
             className="bg-secondary border border-base rounded-xl text-[10px] font-black text-primary px-3 py-1.5 focus:ring-1 focus:ring-indigo-100 outline-none cursor-pointer uppercase tracking-widest transition-colors shadow-2xs"
           >
-            <option value="all">🏢 Todas las Sucursales</option>
+            <option value="all">🏢 Todas</option>
             {branches.map(b => (
               <option key={b.id} value={b.id} className="bg-secondary">{b.name}</option>
             ))}
           </select>
         </div>
       </header>
+
+      {/* AI Summary Card */}
+      {aiSummary && (
+        <div className="bg-indigo-600 text-white p-5 rounded-3xl shadow-xl shadow-indigo-200 dark:shadow-none border border-indigo-500 relative overflow-hidden animate-in slide-in-from-top-4 duration-500">
+          <div className="absolute top-0 right-0 p-4 opacity-10">
+            <Sparkles size={120} />
+          </div>
+          <div className="relative z-10 flex flex-col sm:flex-row items-start gap-4">
+            <div className="p-3 bg-white/20 rounded-2xl shrink-0 backdrop-blur-sm border border-white/30">
+              <Sparkles className="w-6 h-6 text-amber-300" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-2 text-indigo-100">Visión de Negocio (IA)</h3>
+              <p className="text-sm font-bold leading-relaxed max-w-3xl whitespace-pre-wrap">{aiSummary}</p>
+            </div>
+            <button 
+              onClick={() => setAiSummary("")}
+              className="p-1 hover:bg-white/10 rounded-lg transition-colors shrink-0"
+            >
+              <X size={20} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Metrics Grid (Compact & Clear Currency Indicators) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -253,7 +317,7 @@ export default function Dashboard() {
             <div className="p-1.5 sm:p-2 rounded-xl text-white shrink-0 shadow-xs bg-indigo-600">
               <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </div>
-            <div className="px-1.5 py-0.5 rounded-lg text-[7.5px] font-black uppercase tracking-widest bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400">
+            <div className="badge-quiet">
               Hoy
             </div>
           </div>
@@ -263,12 +327,12 @@ export default function Dashboard() {
               <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300">
                 {baseCurrency.code}
               </span>
-              <h4 className="text-sm sm:text-base lg:text-lg font-black text-primary tracking-tight truncate">
+              <h4 className="text-sm sm:text-base lg:text-lg font-black text-primary tracking-tight truncate tabular-nums">
                 {baseCurrency.symbol}{formatMoney(totalSalesToday)}
               </h4>
             </div>
             {secondaryCurrencies.length > 0 && totalSalesToday > 0 && (
-              <div className="mt-1 text-[8px] font-bold text-muted flex flex-wrap gap-1.5">
+              <div className="mt-1 text-[8px] font-bold text-muted flex flex-wrap gap-1.5 tabular-nums">
                 {secondaryCurrencies.map(c => (
                   <span key={c.code} className="whitespace-nowrap">
                     ≈ {c.code} {c.symbol}{(totalSalesToday / (c.rateToBase || 1)).toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -888,16 +952,13 @@ function MetricCard({ title, value, subtitle, icon: Icon, trend, positive, color
         <div className={cn("p-1.5 sm:p-2 rounded-xl text-white shrink-0 shadow-xs", color)}>
           <Icon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
         </div>
-        <div className={cn(
-          "px-1.5 sm:px-2 py-0.5 rounded-lg text-[7px] font-black uppercase tracking-widest shrink-0",
-          positive ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400" : "bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400"
-        )}>
+        <div className="badge-quiet">
           {trend}
         </div>
       </div>
       <div className="min-w-0">
         <p className="text-[8px] font-black text-muted uppercase tracking-widest mb-0.5 truncate">{title}</p>
-        <h4 className="text-sm sm:text-base lg:text-lg font-black text-primary tracking-tight truncate">{value}</h4>
+        <h4 className="text-sm sm:text-base lg:text-lg font-black text-primary tracking-tight truncate tabular-nums">{value}</h4>
         {subtitle && (
           <p className="text-[7.5px] font-bold text-muted truncate mt-0.5">{subtitle}</p>
         )}

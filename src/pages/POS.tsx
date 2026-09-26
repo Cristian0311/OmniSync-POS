@@ -1,36 +1,42 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { lazy, useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Search, Wifi, WifiOff, RefreshCw, Plus, Minus, CreditCard, Receipt, Trash2, ShoppingCart, ShieldCheck, DollarSign, Banknote, QrCode, ArrowLeftRight, UserPlus, X, Lock, Unlock, Camera, AlertCircle, TrendingUp, Wallet, MessageSquare, Mail, HelpCircle, Calculator, ArrowRight, Package, User, RotateCcw, Printer, Bluetooth, Usb, Smartphone, Send, Copy, Check, CheckCircle, Share2, Store, ChevronDown, ChevronUp, Filter } from "lucide-react";
-import { Html5QrcodeScanner, Html5Qrcode } from "html5-qrcode";
-import { QRCodeCanvas } from "qrcode.react";
+import type { Html5QrcodeScanner } from "html5-qrcode";
 import { useNavigate } from "react-router-dom";
 import { cn, generateId } from "../lib/utils";
 import { useStore } from "../store/useStore";
 import { Product, Payment, Transaction, CashRegisterSession } from "../types";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { InfoTooltip } from "../components/InfoTooltip";
-import { SupabaseRefreshModal } from "../components/SupabaseRefreshModal";
 import { getOfflineQueueCount, processOfflineQueue } from "../services/offlineSync";
 import { normalizeSemanticText } from "../utils/textUtils";
+import { POSCatalog } from "../components/POSCatalog";
+
+const POSReceiptModal = lazy(() => import("../components/POSReceiptModal"));
+const POSPrinterSetupModal = lazy(() => import("../components/POSPrinterSetupModal"));
+
+const EMPTY_TRANSACTIONS: Transaction[] = [];
+const EMPTY_CASH_SESSIONS: CashRegisterSession[] = [];
 
 export default function POS() {
-  const store = useStore();
-  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, removeCashMovement, salarySettlements, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification, joinOpenSession } = store;
-  
-  const cashSessions = useMemo(() => (store.cashSessions || []).filter(s => !s.deletedAt), [store.cashSessions]);
-  const transactions = useMemo(() => (store.transactions || []).filter(t => !t.deletedAt), [store.transactions]);
-  const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [showCashManagementModal, setShowCashManagementModal] = useState(false);
+  const [lastClosedSession, setLastClosedSession] = useState<CashRegisterSession | null>(null);
+  const [showOpenShiftModal, setShowOpenShiftModal] = useState(false);
+  const [joiningSessionId, setJoiningSessionId] = useState<string | null>(null);
+
+  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, removeCashMovement, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification, joinOpenSession, salarySettlements } = useStore(useShallow((state) => ({ categories: state.categories, products: state.products, cart: state.cart, addToCart: state.addToCart, updateCartQty: state.updateCartQty, clearCart: state.clearCart, processTransaction: state.processTransaction, branches: state.branches, currentBranchId: state.currentBranchId, setCurrentBranch: state.setCurrentBranch, currencies: state.currencies, getBaseCurrency: state.getBaseCurrency, currentCustomerId: state.currentCustomerId, setCartCustomer: state.setCartCustomer, currentUser: state.currentUser, pendingOrders: state.pendingOrders, removePendingOrder: state.removePendingOrder, getCurrentSession: state.getCurrentSession, openSession: state.openSession, closeSession: state.closeSession, addCashMovement: state.addCashMovement, removeCashMovement: state.removeCashMovement, inventory: state.inventory, addCustomer: state.addCustomer, bankCards: state.bankCards, addBankTransaction: state.addBankTransaction, customers: state.customers, users: state.users, logout: state.logout, createReturn: state.createReturn, processReturn: state.processReturn, receiptConfig: state.receiptConfig, idnSettlementPrices: state.idnSettlementPrices, addIDNSettlementPrice: state.addIDNSettlementPrice, updateIDNSettlementPrice: state.updateIDNSettlementPrice, deleteIDNSettlementPrice: state.deleteIDNSettlementPrice, setInventoryQuantity: state.setInventoryQuantity, addNotification: state.addNotification, joinOpenSession: state.joinOpenSession, salarySettlements: state.salarySettlements })));
+
+
+  // Heavy administrative collections subscribe only while their UI is visible.
+  // Normal sales therefore do not re-render because a transaction/session changed elsewhere.
+  const needsTransactions = showCashManagementModal || !!lastClosedSession;
+  const needsCashSessions = showOpenShiftModal || !!joiningSessionId;
+  const transactions = useStore((state) => needsTransactions ? state.transactions : EMPTY_TRANSACTIONS);
+  const cashSessions = useStore((state) => needsCashSessions ? state.cashSessions : EMPTY_CASH_SESSIONS);
+  const activeCashSessions = useMemo(() => cashSessions.filter(s => !s.deletedAt), [cashSessions]);
+  const activeTransactions = useMemo(() => transactions.filter(t => !t.deletedAt), [transactions]);
   const [idnFilter, setIdnFilter] = useState("");
   const [debouncedIdnFilter, setDebouncedIdnFilter] = useState("");
-  
-  // Debounce search query to improve performance on low-end tablets
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearchQuery(searchQuery);
-    }, 200); // 200ms delay
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -103,12 +109,9 @@ export default function POS() {
   };
   
   // Cash Management State
-  const [showCashManagementModal, setShowCashManagementModal] = useState(false);
   const [cashManagementTab, setCashManagementTab] = useState<'movements' | 'close' | 'sales'>('movements');
   const [closingBalances, setClosingBalances] = useState<{ [key: string]: number }>({});
   const [showDiscrepancyModal, setShowDiscrepancyModal] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState<{ analysis: string, suggestions: string[] } | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [finalBalancesToClose, setFinalBalancesToClose] = useState<Payment[]>([]);
   const [movementData, setMovementData] = useState({ type: 'expense' as 'income' | 'expense', amount: '', currencyCode: 'CUP', description: '' });
 
@@ -130,8 +133,6 @@ export default function POS() {
   const currentSession = getCurrentSession(currentBranchId || (currentUser?.branchId || currentUser?.assignedBranchId || branches[0]?.id || ''), currentUser?.id || '');
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [showSalarySummary, setShowSalarySummary] = useState(false);
-  const [lastClosedSession, setLastClosedSession] = useState<CashRegisterSession | null>(null);
-  const [showOpenShiftModal, setShowOpenShiftModal] = useState(false);
   const [connectedPrinterName, setConnectedPrinterName] = useState<string | null>(null);
   const [showPrinterSetupModal, setShowPrinterSetupModal] = useState(false);
   const [isConnectingPrinter, setIsConnectingPrinter] = useState(false);
@@ -160,7 +161,6 @@ export default function POS() {
   const [sessionWorkerName, setSessionWorkerName] = useState("");
   const [sessionPassword, setSessionPassword] = useState("");
 
-  const [joiningSessionId, setJoiningSessionId] = useState<string | null>(null);
   const [joiningSessionPassword, setJoiningSessionPassword] = useState("");
   const [isNewEmployee, setIsNewEmployee] = useState(false);
 
@@ -319,13 +319,14 @@ export default function POS() {
       }
 
       // Permitir liquidación con 0 ventas o 0 CUP de acuerdo a la solicitud del usuario
-      const maxIdnNum = (transactions || []).reduce((max, t) => {
+      const currentTransactions = useStore.getState().transactions.filter(t => !t.deletedAt);
+      const maxIdnNum = currentTransactions.reduce((max, t) => {
         const match = t.id?.match(/LIQ-IDN-(\d+)/i);
         return match ? Math.max(max, parseInt(match[1], 10)) : max;
       }, 0);
-      let nextIdnNum = Math.max((transactions || []).length, maxIdnNum) + 1;
+      let nextIdnNum = Math.max(currentTransactions.length, maxIdnNum) + 1;
       let idnTxId = `LIQ-IDN-${nextIdnNum.toString().padStart(2, '0')}`;
-      if ((transactions || []).some(t => t.id === idnTxId)) {
+      if (currentTransactions.some(t => t.id === idnTxId)) {
         const wSuffix = targetWorker.name?.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase() || 'W';
         idnTxId = `LIQ-IDN-${nextIdnNum.toString().padStart(2, '0')}-${wSuffix}`;
       }
@@ -440,15 +441,20 @@ export default function POS() {
     const isPasswordValid = 
       (worker?.password && cancelShiftPassword === worker.password) ||
       (currentUser?.password && cancelShiftPassword === currentUser.password) ||
-      cancelShiftPassword === '03111166702' ||
       users.some(u => u.role === 'admin' && u.password === cancelShiftPassword);
 
     if (isPasswordValid) {
-      useStore.getState().cancelSession(currentSession.id);
-      setShowCancelShiftModal(false);
-      setCancelShiftPassword("");
-      setPosSuccess("Turno cancelado exitosamente. Se anularon las ventas y se restauró el inventario.");
-      setTimeout(() => setPosSuccess(""), 3000);
+      void useStore.getState().cancelSession(currentSession.id).then((ok) => {
+        if (ok) {
+          setShowCancelShiftModal(false);
+          setCancelShiftPassword("");
+          setPosSuccess("Turno cancelado y guardado. Las ventas quedaron anuladas y el inventario fue revertido.");
+          setTimeout(() => setPosSuccess(""), 3500);
+        } else {
+          setPosError("No se pudo cancelar el turno. No se realizó ninguna confirmación.");
+          setTimeout(() => setPosError(""), 3500);
+        }
+      });
     } else {
       setPosError("Contraseña incorrecta. Por favor ingresa la contraseña asignada al trabajador.");
       setTimeout(() => setPosError(""), 3000);
@@ -542,7 +548,7 @@ export default function POS() {
     ];
 
     // Add all transaction payments from this session
-    const sessionTxs = transactions.filter(t => 
+    const sessionTxs = activeTransactions.filter(t => 
       t.branchId === currentBranchId && 
       t.sessionId === currentSession.id
     );
@@ -568,7 +574,7 @@ export default function POS() {
           }
         });
       } else if (tx.changeGiven && tx.changeGiven > 0) {
-        // Fallback for transactions with only changeGiven in base currency
+        // Fallback for activeTransactions with only changeGiven in base currency
         const existing = expected.find(e => e.currencyCode === baseCurrency.code && e.method === 'cash');
         if (existing) {
           existing.amount -= tx.changeGiven;
@@ -601,7 +607,7 @@ export default function POS() {
     }
 
     return expected.filter(e => e.amount !== 0);
-  }, [currentSession, transactions, currentBranchId, baseCurrency, currencies]);
+  }, [currentSession, activeTransactions, currentBranchId, baseCurrency, currencies]);
 
   const handleReturnItem = async () => {
     if (!returnConfirm) return;
@@ -609,10 +615,11 @@ export default function POS() {
 
     try {
       const returnId = generateId();
+      const prodId = typeof (item.product as any) === 'object' ? (item.product?.id || '') : (item.product || '');
       const returnData = {
         id: returnId,
         transactionId: tx.id,
-        productId: item.product.id,
+        productId: prodId,
         quantity: item.quantity,
         reason: 'Devolución de cliente',
         date: new Date().toISOString(),
@@ -631,39 +638,6 @@ export default function POS() {
       console.error("Error processing return:", err);
       setPosError("Error al procesar la devolución");
       setTimeout(() => setPosError(""), 3000);
-    }
-  };
-
-  const runAIDiscrepancyAnalysis = async (expected: Payment[], actual: Payment[]) => {
-    setIsAnalyzing(true);
-    setAiAnalysis(null);
-    try {
-      const sessionTxs = transactions.filter(t => 
-        t.branchId === currentBranchId && 
-        currentSession && 
-        t.sessionId === currentSession.id
-      );
-
-      const response = await fetch('/api/ai-analyze-discrepancy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          expectedBalances: expected,
-          actualBalances: actual,
-          transactions: sessionTxs,
-          products: products,
-          baseCurrency: baseCurrency
-        })
-      });
-
-      const result = await response.json();
-      if (result.success) {
-        setAiAnalysis(result.data);
-      }
-    } catch (err) {
-      console.error("AI Analysis failed:", err);
-    } finally {
-      setIsAnalyzing(false);
     }
   };
 
@@ -700,7 +674,6 @@ export default function POS() {
       if (hasDiscrepancy) {
         setFinalBalancesToClose(finalBalances);
         setShowDiscrepancyModal(true);
-        runAIDiscrepancyAnalysis(expectedBalances, finalBalances);
       } else {
         processClose(finalBalances);
         setPosSuccess("Caja cerrada exitosamente.");
@@ -807,7 +780,6 @@ export default function POS() {
         discrepancyDetails,
         discrepancyDeductionApplied: totalDeduction,
         deductedFromSalary: deductFromSalary,
-        aiDiagnostic: aiAnalysis || undefined,
         matchingProductsAnalysis,
         auditStatus: 'pending_review',
         notes: `Cierre forzado con descuadre. Deducción salarial: ${totalDeduction > 0 ? `${totalDeduction} CUP` : 'No aplicada'}.`
@@ -846,74 +818,10 @@ export default function POS() {
 
   // Barcode scanner moved lower
 
-  // 1. Mapa de stock optimizado O(I)
-  const currentBranchStockMap = useMemo(() => {
-    const map = new Map<string, number>();
-    (inventory || []).forEach(i => {
-      if (i.branchId === currentBranchId) {
-        const key = i.variantLabel ? `${i.productId}::${i.variantLabel}` : i.productId;
-        // Also keep track of the total stock per product (sum of all variants)
-        map.set(i.productId, (map.get(i.productId) || 0) + i.quantity);
-        // And specific variant stock
-        if (i.variantLabel) {
-          map.set(key, i.quantity);
-        }
-      }
-    });
-    return map;
-  }, [inventory, currentBranchId]);
-
-  const filteredProducts = useMemo(() => {
-    const query = normalizeSemanticText(debouncedSearchQuery);
-
-    const filtered = (products || []).filter(p => {
-      if (!p) return false;
-      const normName = normalizeSemanticText(p.name);
-      const normSku = normalizeSemanticText(p.sku);
-      const normBarcode = normalizeSemanticText(p.barcode);
-      const normId = normalizeSemanticText(p.id);
-
-      // Coincidencia directa de código, SKU o ID: Si el usuario busca por código o SKU exacto o parcial,
-      // se detecta prioritariamente ignorando el filtro de categoría.
-      const isCodeMatch = query && (
-        normSku === query || 
-        normBarcode === query || 
-        normId === query ||
-        (query.length >= 3 && (normSku.includes(query) || normBarcode.includes(query)))
-      );
-
-      if (isCodeMatch) return true;
-
-      // Filtrar por texto de búsqueda semántica (nombre, SKU o código de barras sin acentos)
-      if (query) {
-        const matchesSearch = normName.includes(query) || normSku.includes(query) || normBarcode.includes(query);
-        if (!matchesSearch) return false;
-      }
-
-      // Filtrar por categoría seleccionada
-      const matchesCategory = activeCategoryId === "Todos" || p.categoryId === activeCategoryId;
-      if (!matchesCategory) return false;
-
-      // Por defecto muestra productos con existencia en la sucursal actual (o todos si se busca explícitamente)
-      const branchStockTotal = currentBranchStockMap.get(p.id) || 0;
-      if (query) return true; // Al buscar por texto, incluir incluso sin stock pero etiquetados
-      return branchStockTotal > 0;
-    });
-
-    // Deduplicación estricta por ID para evitar duplicidad de tarjetas en la interfaz
-    const uniqueMap = new Map<string, typeof products[0]>();
-    filtered.forEach(p => {
-      if (p && p.id && !uniqueMap.has(p.id)) {
-        uniqueMap.set(p.id, p);
-      }
-    });
-
-    return Array.from(uniqueMap.values())
-      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-      .slice(0, 150);
-  }, [products, debouncedSearchQuery, activeCategoryId, currentBranchStockMap]);
-
-  const subtotalBase = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
+  const subtotalBase = cart.reduce((sum, item) => {
+    const price = typeof (item.product as any) === 'object' && item.product !== null ? (item.product.price ?? item.price ?? 0) : (item.price ?? 0);
+    return sum + (price * item.quantity);
+  }, 0);
   const taxBase = 0; // Configurable tax if needed
   const rawTotalBase = subtotalBase + taxBase;
   const isCupBase = baseCurrency.code === 'CUP' || baseCurrency.code === 'MN';
@@ -937,16 +845,19 @@ export default function POS() {
   };
 
   const getProductStock = (productId: string, variantLabel?: string) => {
-    if (variantLabel) {
-      const key = `${productId}::${variantLabel}`;
-      return currentBranchStockMap.get(key) || 0;
-    }
-    return currentBranchStockMap.get(productId) || 0;
+    return (inventory || []).reduce((total, item) => {
+      if (item.branchId !== currentBranchId || item.productId !== productId) return total;
+      if (variantLabel) return item.variantLabel === variantLabel ? total + item.quantity : total;
+      return total + item.quantity;
+    }, 0);
   };
 
   const getCartQuantity = (productId: string, variantLabel?: string) => {
     return cart
-      .filter(item => item.product.id === productId && (item.variantLabel || '') === (variantLabel || ''))
+      .filter(item => {
+        const pId = typeof (item.product as any) === 'object' && item.product !== null ? item.product.id : item.product;
+        return pId === productId && (item.variantLabel || '') === (variantLabel || '');
+      })
       .reduce((sum, item) => sum + item.quantity, 0);
   };
 
@@ -987,15 +898,19 @@ export default function POS() {
 
   useEffect(() => {
     let scanner: Html5QrcodeScanner | null = null;
-    
-    if (showCameraScanner) {
-      scanner = new Html5QrcodeScanner(
-        "qr-reader",
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        false
-      );
+    let cancelled = false;
 
-      scanner.render((decodedText) => {
+    if (showCameraScanner) {
+      void import("html5-qrcode").then(({ Html5QrcodeScanner }) => {
+        if (cancelled) return;
+
+        scanner = new Html5QrcodeScanner(
+          "qr-reader",
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          false
+        );
+
+        scanner.render((decodedText) => {
         // On successful scan
         const scannedProduct = products.find(p => p.sku === decodedText || p.id === decodedText || p.barcode === decodedText);
         if (scannedProduct) {
@@ -1043,8 +958,11 @@ export default function POS() {
             if (order) {
               clearCart();
               order.items.forEach(item => {
-                for(let i=0; i<item.quantity; i++){
-                  addToCart(item.product, item.serialNumber);
+                const prodObj = typeof (item.product as any) === 'object' && item.product !== null ? item.product : products.find(p => p.id === (item.product as any));
+                if (prodObj) {
+                  for(let i=0; i<item.quantity; i++){
+                    addToCart(prodObj, item.serialNumber);
+                  }
                 }
               });
               removePendingOrder(order.id);
@@ -1056,13 +974,15 @@ export default function POS() {
             }
           }
         }
-        setShowCameraScanner(false);
-      }, (error) => {
-        // Handle scan errors silently
+          setShowCameraScanner(false);
+        }, (error) => {
+          // Handle scan errors silently
+        });
       });
     }
 
     return () => {
+      cancelled = true;
       if (scanner) {
         scanner.clear().catch(error => {
           console.error("Failed to clear html5QrcodeScanner. ", error);
@@ -1071,30 +991,22 @@ export default function POS() {
     };
   }, [showCameraScanner, products, inventory, currentBranchId]);
 
-  const handleProductClick = (product: Product) => {
+  const handleProductClick = useCallback((product: Product) => {
     setPosError("");
-    const totalAvailable = getProductStock(product.id);
-    if (totalAvailable <= 0) {
-      setPosError("Sin existencias en esta sucursal.");
-      setTimeout(() => setPosError(""), 3000);
-      return;
-    }
+    setSelectedProduct(product);
+    const autoSN = product.hasSerial ? `SN-${Math.floor(Math.random() * 100000000).toString().padStart(8, "0")}` : "";
+    setConfigData({
+      selectedSize: product.availableSizes?.[0],
+      selectedColor: product.availableColors?.[0],
+      serialNumber: autoSN
+    });
+    setShowConfigModal(true);
+  }, []);
 
-    const needsConfig = product.hasSerial || (product.availableSizes?.length) || (product.availableColors?.length);
-    if (needsConfig) {
-      setSelectedProduct(product);
-      // Pre-generar serie automáticamente si el producto lo requiere
-      const autoSN = product.hasSerial ? `SN-${Math.floor(Math.random() * 100000000).toString().padStart(8, '0')}` : "";
-      setConfigData({
-        selectedSize: product.availableSizes?.[0],
-        selectedColor: product.availableColors?.[0],
-        serialNumber: autoSN
-      });
-      setShowConfigModal(true);
-    } else {
-      addToCart(product);
-    }
-  };
+  const handleCatalogOutOfStock = useCallback(() => {
+    setPosError("Sin existencias en esta sucursal.");
+    setTimeout(() => setPosError(""), 3000);
+  }, []);
 
   const handleConfigSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1358,15 +1270,18 @@ export default function POS() {
     lines.push("---");
     
     tx.items.forEach(item => {
-      const itemName = `${item.quantity}x ${item.product.name}`;
-      const itemPrice = formatMoney(item.product.price * item.quantity, baseCurrency.symbol);
+      const prodName = typeof (item.product as any) === 'object' ? ((item.product as any)?.name || 'Producto') : (products.find(p => p.id === (item.product as any))?.name || (item.product as any) || 'Producto');
+      const prodPrice = typeof (item.product as any) === 'object' ? ((item.product as any)?.price || 0) : (products.find(p => p.id === (item.product as any))?.price || item.price || 0);
+      const prodWarranty = typeof (item.product as any) === 'object' ? ((item.product as any)?.warrantyDays || 0) : (products.find(p => p.id === (item.product as any))?.warrantyDays || 0);
+      const itemName = `${item.quantity}x ${prodName}`;
+      const itemPrice = formatMoney(prodPrice * item.quantity, baseCurrency.symbol);
       const dots = Math.max(1, 32 - itemName.length - itemPrice.length);
       lines.push(`${itemName}${" ".repeat(dots)}${itemPrice}`);
       if (item.serialNumber) {
         lines.push(`  S/N: ${item.serialNumber}`);
       }
       if (item.warrantyCode) {
-        lines.push(`  Gda: ${item.warrantyCode} (${item.product.warrantyDays || 0}d)`);
+        lines.push(`  Gda: ${item.warrantyCode} (${prodWarranty}d)`);
       }
     });
     
@@ -1413,7 +1328,7 @@ export default function POS() {
 
   const getClosureReceiptLines = (session: CashRegisterSession): string[] => {
     const receiptConfig = useStore.getState().receiptConfig;
-    const sessionTx = transactions.filter(t => 
+    const sessionTx = activeTransactions.filter(t => 
       t.sessionId === session.id && !t.deletedAt
     );
 
@@ -1711,7 +1626,11 @@ export default function POS() {
     }
     
     const storeName = useStore.getState().storeConfig.storeName;
-    let itemsText = tx.items.map(i => `${i.quantity}x ${i.product.name} - ${formatMoney(i.product.price * i.quantity, baseCurrency.symbol)}`).join('%0A');
+    let itemsText = (tx.items || []).map(i => {
+      const pName = typeof (i.product as any) === 'object' ? ((i.product as any)?.name || 'Producto') : (products.find(p => p.id === (i.product as any))?.name || (i.product as any) || 'Producto');
+      const pPrice = typeof (i.product as any) === 'object' ? ((i.product as any)?.price || 0) : (products.find(p => p.id === (i.product as any))?.price || i.price || 0);
+      return `${i.quantity}x ${pName} - ${formatMoney(pPrice * i.quantity, baseCurrency.symbol)}`;
+    }).join('%0A');
     const text = `Hola, gracias por tu compra en *${storeName}*.%0A%0A*Detalle del recibo ${tx.id}:*%0A${itemsText}%0A%0A*Total:* ${formatMoney(tx.total, baseCurrency.symbol)}%0A%0A¡Vuelve pronto!`;
     const url = `https://wa.me/${phone}?text=${text}`;
     window.open(url, '_blank');
@@ -1725,12 +1644,12 @@ export default function POS() {
     }
     const storeName = useStore.getState().storeConfig.storeName;
     const subject = `Tu Recibo de Compra - ${storeName}`;
-    const body = `Hola ${customer.name},\n\nGracias por tu compra. Tu recibo es ${tx.id} por un total de ${formatMoney(tx.total, baseCurrency.symbol)}.\n\nSaludos,\n${storeName}`;
+    const body = `Hola ${customer?.name || 'Cliente'},\n\nGracias por tu compra. Tu recibo es ${tx.id} por un total de ${formatMoney(tx.total, baseCurrency.symbol)}.\n\nSaludos,\n${storeName}`;
     const url = `mailto:${customer.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     window.open(url, '_blank');
   };
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     // Final payments with rounded USD
     const finalizedPayments: import('../types').Payment[] = paymentLines
       .filter(p => p.amount > 0)
@@ -1758,14 +1677,15 @@ export default function POS() {
       return;
     }
 
-    const txCount = transactions.length;
-    const maxTicketNum = transactions.reduce((max, t) => {
+    const currentTransactions = useStore.getState().transactions.filter(t => !t.deletedAt);
+    const txCount = currentTransactions.length;
+    const maxTicketNum = currentTransactions.reduce((max, t) => {
       const match = t.id?.match(/TIKECT ID-MARE(\d+)/i);
       return match ? Math.max(max, parseInt(match[1], 10)) : max;
     }, 0);
     let nextTicketNum = Math.max(txCount, maxTicketNum) + 1;
     let txId = `TIKECT ID-MARE${nextTicketNum.toString().padStart(2, '0')}`;
-    if (transactions.some(t => t.id === txId)) {
+    if (currentTransactions.some(t => t.id === txId)) {
       const bObj = branches.find(b => b.id === effectiveBranchId);
       const bCode = bObj?.name?.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase() || 'TG';
       txId = `TIKECT ID-MARE${nextTicketNum.toString().padStart(2, '0')}-${bCode}`;
@@ -1802,12 +1722,17 @@ export default function POS() {
       tx.ncfType = 'B01';
     }
 
-    processTransaction(tx);
-    
-    // Register bank transactions
+    const saleConfirmed = await processTransaction(tx);
+    if (!saleConfirmed) {
+      setPosError('La venta no fue confirmada. Verifique el stock, turno y conexión antes de continuar.');
+      setTimeout(() => setPosError(''), 5000);
+      return;
+    }
+
+    // Register bank activeTransactions only after the sale is confirmed.
     finalizedPayments.forEach(p => {
       if (p.method === 'transfer' && p.bankCardId) {
-        const itemDetails = cart.map(item => `${item.quantity}x ${item.product.name}`).join(', ');
+        const itemDetails = cart.map(item => `${item.quantity}x ${item.product?.name || 'Producto'}`).join(', ');
         addBankTransaction({
           id: generateId('BTX'),
           cardId: p.bankCardId,
@@ -1864,13 +1789,13 @@ export default function POS() {
     const enteredPassword = (sessionPassword || '').trim();
 
     if (!requiredPassword) {
-      setPosError(`El empleado ${workerToAssign.name} no tiene contraseña asignada. El administrador debe asignarle una en Configuración -> Usuarios.`);
+      setPosError(`El empleado ${workerToAssign?.name || 'empleado'} no tiene contraseña asignada. El administrador debe asignarle una en Configuración -> Usuarios.`);
       setTimeout(() => setPosError(""), 4000);
       return;
     }
 
     if (enteredPassword !== requiredPassword) {
-      setPosError(`Contraseña incorrecta para ${workerToAssign.name}. Acceso denegado.`);
+      setPosError(`Contraseña incorrecta para ${workerToAssign?.name || 'empleado'}. Acceso denegado.`);
       setTimeout(() => setPosError(""), 4000);
       return;
     }
@@ -1900,7 +1825,7 @@ export default function POS() {
     e.preventDefault();
     if (!joiningSessionId) return;
 
-    const targetSession = (cashSessions || []).find(s => s.id === joiningSessionId);
+    const targetSession = (activeCashSessions || []).find(s => s.id === joiningSessionId);
     if (!targetSession) {
       setPosError("No se encontró el turno seleccionado");
       return;
@@ -1917,7 +1842,7 @@ export default function POS() {
     const enteredPassword = (joiningSessionPassword || '').trim();
 
     if (!requiredPassword) {
-      setPosError(`El empleado ${targetUser.name} no tiene contraseña asignada. El administrador debe asignarle una.`);
+      setPosError(`El empleado ${targetUser?.name || 'empleado'} no tiene contraseña asignada. El administrador debe asignarle una.`);
       return;
     }
 
@@ -2010,7 +1935,7 @@ export default function POS() {
             <button
               type="button"
               onClick={handleCancelAndReturnToEmployeeSelector}
-              className="px-2.5 sm:px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 rounded-xl text-[9px] sm:text-[10px] font-black uppercase transition-all shadow-sm flex items-center gap-1.5 active:scale-95 cursor-pointer"
+              className="px-2.5 sm:px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 rounded-xl text-[10px] sm:text-[10px] font-black uppercase transition-all shadow-sm flex items-center gap-1.5 active:scale-95 cursor-pointer"
               title="Cancelar punto de venta y volver al selector de empleado"
             >
               <X className="w-3.5 h-3.5" />
@@ -2080,7 +2005,7 @@ export default function POS() {
                       setIdnFilter('');
                     } else {
                       const prod = products.find(p => p.id === val);
-                      setIdnFilter(prod ? prod.name : '');
+                      setIdnFilter(prod?.name || '');
                     }
                   }}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-amber-500/20 text-slate-800 uppercase"
@@ -2091,7 +2016,7 @@ export default function POS() {
                     if (!prod) return null;
                     return (
                       <option key={inv.id} value={prod.id}>
-                        {prod.name} ({prod.sku}) • Stock: {inv.quantity}
+                        {prod.name || 'Producto'} ({prod.sku || ''}) • Stock: {inv.quantity}
                       </option>
                     );
                   })}
@@ -2277,7 +2202,7 @@ export default function POS() {
               <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/60 text-xs space-y-2">
                 <div className="flex justify-between font-bold text-slate-600">
                   <span>Almacén / Sucursal:</span>
-                  <span className="text-slate-900">{branches.find(b => b.id === branchId)?.name}</span>
+                  <span className="text-slate-900">{branches.find(b => b.id === branchId)?.name || 'Almacén'}</span>
                 </div>
                 <div className="flex justify-between font-bold text-slate-600">
                   <span>Unidades a descontar:</span>
@@ -2351,7 +2276,7 @@ export default function POS() {
                     showIDNReceiptModal.details.map((item: any, idx: number) => (
                       <div key={idx} className="flex justify-between items-center bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700 text-xs">
                         <div className="min-w-0 flex-1 pr-2">
-                          <p className="font-black text-slate-900 dark:text-white uppercase text-[10px] sm:text-[11px] truncate">{item.name}</p>
+                          <p className="font-black text-slate-900 dark:text-white uppercase text-[10px] sm:text-[11px] truncate">{item?.name || 'Producto'}</p>
                           <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase">
                             {item.qty} uds × {baseCurrency.symbol}{item.price.toLocaleString()} CUP
                           </p>
@@ -2478,7 +2403,7 @@ export default function POS() {
                 Reanudar Turno Abierto
               </h3>
               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-4">
-                Turno de {(cashSessions || []).find(s => s.id === joiningSessionId)?.workerName || 'Vendedor'}
+                Turno de {(activeCashSessions || []).find(s => s.id === joiningSessionId)?.workerName || 'Vendedor'}
               </p>
 
               {posError && (
@@ -2674,8 +2599,8 @@ export default function POS() {
                         >
                           <option value="">-- Seleccionar Trabajador / IDN --</option>
                           {(users || []).filter(u => u.isActive !== false).map(u => (
-                            <option key={u.id} value={u.name}>
-                              {u.name} {u.isIndependent ? '(Vendedor IDN)' : (u.role === 'admin' ? '(Administrador)' : '(Empleado)')}
+                            <option key={u.id} value={u.name || ''}>
+                              {u.name || 'Trabajador'} {u.isIndependent ? '(Vendedor IDN)' : (u.role === 'admin' ? '(Administrador)' : '(Empleado)')}
                             </option>
                           ))}
                         </select>
@@ -2690,7 +2615,7 @@ export default function POS() {
                           required
                           value={sessionPassword}
                           onChange={e => setSessionPassword(e.target.value)}
-                          placeholder={detectedWorker ? `Ingresa la contraseña de ${detectedWorker.name}` : "Ingresa la contraseña del trabajador"}
+                          placeholder={detectedWorker ? `Ingresa la contraseña de ${detectedWorker?.name || 'trabajador'}` : "Ingresa la contraseña del trabajador"}
                           className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                         />
                       </div>
@@ -2830,7 +2755,7 @@ export default function POS() {
 
               {/* Turnos Abiertos en Curso (Evita duplicidad y permite reanudar con contraseña) */}
               {(() => {
-                const otherOpenSessions = (cashSessions || []).filter(s => s.status === 'open');
+                const otherOpenSessions = (activeCashSessions || []).filter(s => s.status === 'open');
                 if (otherOpenSessions.length === 0) return null;
                 return (
                   <div className="bg-white dark:bg-slate-900 p-4 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-800 text-left max-w-sm w-full mt-2 shrink-0">
@@ -3047,7 +2972,7 @@ export default function POS() {
                               const cardsToRender = matchedCards.length > 0 ? matchedCards : bankCards;
                               return cardsToRender.map(card => (
                                 <option key={card.id} value={card.id} className="text-slate-900 bg-white">
-                                  {card.bank} - {card.name} ({card.currency})
+                                  {card.bank || 'Banco'} - {card.name || 'Tarjeta'} ({card.currency || 'CUP'})
                                 </option>
                               ));
                             })()}
@@ -3155,7 +3080,7 @@ export default function POS() {
                                   <div className="p-2 bg-slate-800/80 border border-slate-700/80 rounded-xl flex items-center justify-between gap-1">
                                     <div className="min-w-0">
                                       <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest leading-none mb-0.5">Titular</p>
-                                      <p className="text-xs font-bold text-slate-200 truncate">{card.name}</p>
+                                      <p className="text-xs font-bold text-slate-200 truncate">{card?.name || 'Titular'}</p>
                                     </div>
                                   </div>
                                 )}
@@ -3165,7 +3090,7 @@ export default function POS() {
                               <button
                                 type="button"
                                 onClick={handleCopyAllTransferData}
-                                className="w-full py-1.5 px-3 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-200 rounded-xl text-[8px] sm:text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-98"
+                                className="w-full py-1.5 px-3 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-200 rounded-xl text-[10px] sm:text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-98"
                               >
                                 {copiedTransferInfo ? (
                                   <>
@@ -3398,7 +3323,7 @@ export default function POS() {
               ) : cashManagementTab === 'sales' ? (
                 <div className="space-y-4">
                   {(() => {
-                    const sessionTx = transactions.filter(t => 
+                    const sessionTx = activeTransactions.filter(t => 
                       t.sessionId === currentSession?.id && !t.deletedAt
                     );
 
@@ -3701,7 +3626,7 @@ export default function POS() {
                                               }
                                             }}
                                             className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
-                                            title="Anular/Eliminar Venta"
+                                            title="Anular Venta"
                                           >
                                             <Trash2 className="w-3.5 h-3.5" />
                                           </button>
@@ -3714,11 +3639,11 @@ export default function POS() {
                                       {tx.items.map((item, idx) => (
                                         <div key={idx} className="flex justify-between items-center text-slate-700 font-bold">
                                           <span className="truncate pr-2">
-                                            {item.quantity}x {item.product.name}
+                                            {item.quantity}x {typeof (item.product as any) === "object" ? ((item.product as any)?.name || "Producto") : (products.find(p => p.id === (item.product as any))?.name || (item.product as any) || "Producto")}
                                             {item.variantLabel ? ` (${item.variantLabel})` : ''}
                                           </span>
                                           <span className="font-mono shrink-0">
-                                            {formatMoney(item.product.price * item.quantity, baseCurrency.symbol)}
+                                            {formatMoney((typeof (item.product as any) === "object" ? ((item.product as any)?.price || 0) : (products.find(p => p.id === (item.product as any))?.price || item.price || 0)) * item.quantity, baseCurrency.symbol)}
                                           </span>
                                         </div>
                                       ))}
@@ -3789,7 +3714,7 @@ export default function POS() {
                                         {prod.quantity}x
                                       </span>
                                       <div className="min-w-0">
-                                        <span className="font-black text-slate-900 text-xs uppercase block truncate">{prod.name}</span>
+                                        <span className="font-black text-slate-900 text-xs uppercase block truncate">{prod?.name || "Producto"}</span>
                                         <span className="text-[9px] font-bold text-slate-400 block">
                                           Precio unitario: {formatMoney(prod.unitPrice, baseCurrency.symbol)}
                                         </span>
@@ -3914,7 +3839,7 @@ export default function POS() {
                         const sessionUser = users.find(u => u.id === currentSession?.userId || (u.name && currentSession?.workerName && u.name.toLowerCase() === currentSession.workerName.toLowerCase())) || currentUser;
                         if (!sessionUser || sessionUser.isIndependent) return null;
                         
-                        const sessionTx = transactions.filter(t => 
+                        const sessionTx = activeTransactions.filter(t => 
                           t.sessionId === currentSession?.id && !t.deletedAt
                         );
                         const totalSales = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
@@ -3940,7 +3865,7 @@ export default function POS() {
                                 <span className="text-[10px] font-black text-amber-900 uppercase tracking-widest">Liquidación del Turno</span>
                               </div>
                               <span className="text-xs font-black text-amber-900 uppercase">
-                                {sessionUser.name}
+                                {sessionUser?.name || "Vendedor"}
                               </span>
                             </div>
                             
@@ -4030,74 +3955,12 @@ export default function POS() {
               </div>
               <div>
                 <h3 className="text-lg font-black text-slate-900 uppercase tracking-tighter">Discrepancia Detectada</h3>
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Revisión de Auditoría por IA</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Revisión del Descuadre</p>
               </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {isAnalyzing ? (
-                <div className="flex flex-col items-center justify-center py-12 space-y-4">
-                  <div className="relative">
-                    <div className="w-12 h-12 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-2 h-2 bg-indigo-600 rounded-full animate-pulse"></div>
-                    </div>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-xs font-black text-slate-800 uppercase tracking-widest">Análisis de IA en curso...</p>
-                    <p className="text-[10px] text-slate-400 font-bold mt-1">Comparando ventas, cobros y stock del turno</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                  {/* Administrative Informative Message */}
-                  <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex gap-3">
-                    <HelpCircle className="w-5 h-5 text-blue-500 shrink-0" />
-                    <div>
-                      <p className="text-[10px] font-black text-blue-900 uppercase tracking-tight">Nota para el Administrador</p>
-                      <p className="text-[9px] font-medium text-blue-700 leading-tight mt-0.5">
-                        El sistema ha detectado una diferencia entre lo reportado físicamente y lo registrado en el software. 
-                        Los sobrantes (dinero de más) suelen ser ventas no marcadas o errores de vuelto. 
-                        Los faltantes (dinero de menos) se registran para auditoría y pueden ser descontados del salario.
-                      </p>
-                    </div>
-                  </div>
-
-                  {aiAnalysis && (
-                    <div className="space-y-6">
-                      <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 relative overflow-hidden">
-                        <div className="absolute top-0 right-0 p-2 opacity-10">
-                          <MessageSquare className="w-12 h-12 text-indigo-600" />
-                        </div>
-                        <h4 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                          <ShieldCheck className="w-3 h-3" />
-                          Diagnóstico del Auditor IA
-                        </h4>
-                        <p className="text-xs text-slate-700 leading-relaxed font-medium">
-                          {aiAnalysis.analysis}
-                        </p>
-                      </div>
-
-                      {aiAnalysis.suggestions && aiAnalysis.suggestions.length > 0 && (
-                        <div className="space-y-3">
-                          <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest px-1">Sugerencias para el Cuadre</h4>
-                          <div className="grid grid-cols-1 gap-2">
-                            {aiAnalysis.suggestions.map((s, idx) => (
-                              <div key={idx} className="flex gap-3 items-start p-3 bg-white border border-slate-100 rounded-xl shadow-sm hover:border-indigo-200 transition-colors">
-                                <div className="w-5 h-5 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center shrink-0 mt-0.5 font-black text-[10px]">
-                                  {idx + 1}
-                                </div>
-                                <p className="text-[11px] font-bold text-slate-600 leading-tight">{s}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Overage/Shortage Analysis Helper */}
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Resumen de Descuadres</p>
                     <div className="space-y-2">
                       {expectedBalances.map(eb => {
@@ -4105,9 +3968,6 @@ export default function POS() {
                         const diff = actual - eb.amount;
                         if (Math.abs(diff) < 0.01) return null;
                         
-                        // Look for products matching the difference (big company logic)
-                        const matchingProducts = products.filter(p => Math.abs(p.price - Math.abs(diff)) < 1).slice(0, 3);
-
                         return (
                           <div key={`${eb.currencyCode}-${eb.method}`} className="space-y-2 border-b border-slate-200 pb-2 last:border-0 last:pb-0">
                             <div className="flex items-center justify-between">
@@ -4120,14 +3980,7 @@ export default function POS() {
                               </span>
                             </div>
                             
-                            {diff > 0 && matchingProducts.length > 0 && (
-                              <div className="pl-4 border-l-2 border-emerald-200">
-                                <p className="text-[8px] font-black text-emerald-600 uppercase tracking-tight">Posibles productos no marcados:</p>
-                                {matchingProducts.map(p => (
-                                  <p key={p.id} className="text-[8px] font-medium text-slate-500">• {p.name} ({formatMoney(p.price, baseCurrency.symbol)})</p>
-                                ))}
-                              </div>
-                            )}
+
                           </div>
                         );
                       })}
@@ -4154,9 +4007,7 @@ export default function POS() {
                         )} />
                       </button>
                     </div>
-                  </div>
                 </div>
-              )}
             </div>
 
             <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3 shrink-0">
@@ -4287,16 +4138,13 @@ export default function POS() {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Botón de Reactualización Total Supabase */}
-          <SupabaseRefreshModal variant="pos" />
-
           {/* Offline / Online Sync Status Badge */}
           <button
             type="button"
             onClick={handleManualSync}
             disabled={isSyncingOffline}
             className={cn(
-              "px-2 sm:px-2.5 py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border active:scale-95",
+              "px-2 sm:px-2.5 py-1 rounded-lg text-[10px] sm:text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border active:scale-95",
               !isOnline
                 ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
                 : pendingOfflineCount > 0
@@ -4364,120 +4212,13 @@ export default function POS() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col md:flex-row min-h-0 bg-slate-100 overflow-hidden relative">
         
-        {/* Products Section */}
-        <main className={cn(
-          "flex-1 flex flex-col min-h-0 bg-white shadow-xs overflow-hidden",
-          showMobileCart ? "hidden md:flex" : "flex"
-        )}>
-          {/* Header Sub-bar: Search & Categories */}
-          <div className="p-3 sm:p-4 border-b border-slate-200/80 bg-white sticky top-0 z-30 shadow-sm">
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-              {/* Category Selector First */}
-              <div className="w-full sm:w-64 relative group">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 group-focus-within:text-indigo-500 transition-colors">
-                  <Filter className="w-3.5 h-3.5" />
-                </div>
-                <select 
-                  value={activeCategoryId}
-                  onChange={(e) => setActiveCategoryId(e.target.value)}
-                  className="w-full pl-9 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all appearance-none cursor-pointer shadow-sm"
-                >
-                  <option value="Todos">Todas las Categorías</option>
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                  <ChevronDown className="w-3.5 h-3.5" />
-                </div>
-              </div>
-              
-              {/* Search Bar - Main Focus */}
-              <div className="relative flex-1 w-full">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-                <input 
-                  type="text" 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Busca productos por nombre, SKU o código de barras..." 
-                  className="w-full pl-11 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all text-sm font-bold text-slate-900 placeholder:text-slate-400 shadow-sm"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery("")}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-50 transition-all"
-                    title="Limpiar búsqueda"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Product Grid */}
-          <div className="flex-1 overflow-y-auto p-2 sm:p-3 lg:p-4 bg-primary">
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 pb-24 md:pb-6">
-              {filteredProducts.map(product => {
-                const stock = getProductStock(product.id);
-                return (
-                  <button
-                    key={product.id}
-                    onClick={() => handleProductClick(product)}
-                    className="flex flex-col p-2 rounded-xl border border-base hover:border-indigo-500 hover:shadow-md transition-all active:scale-[0.98] bg-secondary relative overflow-hidden group shadow-2xs text-left"
-                  >
-                    {/* Stock Indicator - Hidden for workers */}
-                    {currentUser?.role === 'admin' && (
-                      <div className="absolute top-1.5 left-1.5 z-20">
-                        <span className={cn(
-                          "text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-tight shadow-2xs border",
-                          stock > 5 ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800" : stock > 0 ? "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800" : "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800"
-                        )}>
-                          {stock} u.
-                        </span>
-                      </div>
-                    )}
-
-                    {(product.warrantyDays ?? 0) > 0 && (
-                      <div className="absolute top-1.5 right-1.5 bg-indigo-600 text-white text-[7px] font-black px-1.5 py-0.5 rounded-md shadow-2xs z-20 uppercase tracking-tight">
-                        {product.warrantyDays}d Gda
-                      </div>
-                    )}
-
-                    <div className="w-full h-24 sm:h-28 bg-subtle rounded-lg mb-1.5 flex items-center justify-center overflow-hidden relative border border-base">
-                      {product.image ? (
-                        <img 
-                          src={product.image} 
-                          alt={product.name} 
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
-                          referrerPolicy="no-referrer" 
-                          onError={(e) => {
-                            e.currentTarget.onerror = null;
-                            e.currentTarget.src = '';
-                            e.currentTarget.style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        <div className={cn("w-full h-full opacity-20 flex items-center justify-center font-black text-muted text-xl", product.color)}>
-                          {product.name.substring(0, 2).toUpperCase()}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="w-full space-y-1">
-                      <p className="font-bold text-primary text-[11px] leading-snug line-clamp-2 h-[2.4em]">{product.name}</p>
-                      <div className="flex items-center justify-between pt-1 border-t border-base">
-                        <span className="text-[8px] font-mono text-muted uppercase truncate max-w-[45%]">{product.sku || 'S/SKU'}</span>
-                        <span className="text-indigo-600 dark:text-indigo-400 font-black text-xs sm:text-sm">
-                          {formatMoney(product.price, baseCurrency.symbol)}
-                        </span>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </main>
+        <POSCatalog
+          baseCurrencySymbol={baseCurrency.symbol}
+          currentUserRole={currentUser?.role}
+          showMobileCart={showMobileCart}
+          onSelectConfiguredProduct={handleProductClick}
+          onOutOfStock={handleCatalogOutOfStock}
+        />
 
         {/* Sidebar: Cart / Ticket (Side-by-side on Tablet md+ and Desktop, overlay on Mobile) */}
         {Boolean(currentSession) && (
@@ -4497,18 +4238,6 @@ export default function POS() {
               </div>
             </div>
             <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setCashManagementTab('close');
-                  setShowCashManagementModal(true);
-                }}
-                className="px-2 py-1 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all flex items-center gap-1 active:scale-95"
-                title="Cierre de Caja y Arqueo"
-              >
-                <Lock className="w-3 h-3 text-rose-600" />
-                <span>Cierre</span>
-              </button>
               <button onClick={clearCart} className="p-1.5 text-muted hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-all" title="Limpiar Ticket">
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -4528,9 +4257,7 @@ export default function POS() {
                 className="w-full pl-7 pr-3 py-1.5 bg-subtle border border-base rounded-lg outline-none text-[9px] font-bold uppercase tracking-tight text-primary focus:ring-1 focus:ring-indigo-500 transition-all appearance-none"
               >
                 <option value="">Consumidor Final</option>
-                {customers.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
+                {customers.map(c => (<option key={c.id} value={c.id}>{c?.name || "Cliente"}</option>))}
               </select>
             </div>
             <button onClick={() => setShowAddCustomerModal(true)} className="p-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-lg border border-indigo-100 dark:border-indigo-900 hover:bg-indigo-100 transition-all" title="Registrar Cliente">
@@ -4551,75 +4278,85 @@ export default function POS() {
                 </div>
               </div>
             ) : (
-              cart.map(item => (
-                <div key={item.id} className="p-1.5 sm:p-2 rounded-xl bg-subtle border border-base hover:bg-secondary transition-colors flex gap-2">
-                  <div className="w-9 h-9 sm:w-10 sm:h-10 bg-secondary rounded-lg overflow-hidden shrink-0 border border-base">
-                    {item.product.image ? (
-                      <img 
-                        src={item.product.image} 
-                        className="w-full h-full object-cover" 
-                        referrerPolicy="no-referrer" 
-                        onError={(e) => {
-                          e.currentTarget.onerror = null;
-                          e.currentTarget.src = '';
-                          e.currentTarget.style.display = 'none';
-                        }}
-                      />
-                    ) : (
-                      <div className={cn("w-full h-full opacity-20 flex items-center justify-center font-bold text-[9px] text-muted", item.product.color)}>
-                        {item.product.name.substring(0, 2).toUpperCase()}
+              cart.map(item => {
+                const prodObj = typeof (item.product as any) === 'object' && item.product !== null ? item.product : (products.find(p => p.id === (item.product as any)) || null);
+                const prodName = (prodObj?.name || (typeof (item.product as any) === 'string' ? (item.product as any) : 'Producto')) as string;
+                const prodPrice = prodObj?.price ?? item.price ?? 0;
+                const prodImg = prodObj?.image || '';
+                const prodColor = prodObj?.color || '';
+                const prodId = (prodObj?.id || (typeof (item.product as any) === 'string' ? (item.product as any) : '')) as string;
+                const prodHasSerial = prodObj?.hasSerial ?? false;
+
+                return (
+                  <div key={item.id} className="p-1.5 sm:p-2 rounded-xl bg-subtle border border-base hover:bg-secondary transition-colors flex gap-2">
+                    <div className="w-9 h-9 sm:w-10 sm:h-10 bg-secondary rounded-lg overflow-hidden shrink-0 border border-base">
+                      {prodImg ? (
+                        <img 
+                          src={prodImg} 
+                          className="w-full h-full object-cover" 
+                          referrerPolicy="no-referrer" 
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = '';
+                            e.currentTarget.style.display = 'none';
+                          }}
+                         loading="lazy" decoding="async" />
+                      ) : (
+                        <div className={cn("w-full h-full opacity-20 flex items-center justify-center font-bold text-[9px] text-muted", prodColor)}>
+                          {(prodName || "PR").substring(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-0.5">
+                      <div className="flex justify-between items-start gap-1">
+                        <div className="min-w-0 flex-1">
+                          <h4 className="text-[10px] font-bold text-primary leading-tight line-clamp-1">{prodName}</h4>
+                          <p className="text-[8px] font-semibold text-muted">{formatMoney(prodPrice, baseCurrency.symbol)} / u.</p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-[10px] sm:text-[11px] font-black text-primary font-mono">{formatMoney(prodPrice * item.quantity, baseCurrency.symbol)}</span>
+                          <button
+                            type="button"
+                            onClick={() => updateCartQty(item.id, -item.quantity)}
+                            className="p-0.5 text-muted hover:text-rose-500 rounded transition-colors cursor-pointer"
+                            title="Eliminar producto"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0 space-y-0.5">
-                    <div className="flex justify-between items-start gap-1">
-                      <div className="min-w-0 flex-1">
-                        <h4 className="text-[10px] font-bold text-primary leading-tight line-clamp-1">{item.product.name}</h4>
-                        <p className="text-[8px] font-semibold text-muted">{formatMoney(item.product.price, baseCurrency.symbol)} / u.</p>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <span className="text-[10px] sm:text-[11px] font-black text-primary font-mono">{formatMoney(item.product.price * item.quantity, baseCurrency.symbol)}</span>
-                        <button
-                          type="button"
-                          onClick={() => updateCartQty(item.id, -item.quantity)}
-                          className="p-0.5 text-muted hover:text-rose-500 rounded transition-colors cursor-pointer"
-                          title="Eliminar producto"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
+                      <div className="flex items-center justify-between gap-1 pt-0.5">
+                        <div className="flex items-center bg-secondary rounded-md p-0.5 border border-base">
+                          <button 
+                            onClick={() => updateCartQty(item.id, -1)} 
+                            className="p-0.5 sm:p-1 rounded hover:bg-subtle text-secondary hover:text-rose-500 transition-all active:scale-90 cursor-pointer"
+                            title="Disminuir"
+                          >
+                            <Minus className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                          </button>
+                          <span className="w-5 text-center text-[10px] font-black text-primary font-mono">{item.quantity}</span>
+                          <button 
+                            onClick={() => {
+                              if (getCartQuantity(prodId, item.variantLabel) >= getProductStock(prodId, item.variantLabel)) {
+                                setPosError("Stock insuficiente"); setTimeout(() => setPosError(""), 3000);
+                              } else updateCartQty(item.id, 1);
+                            }} 
+                            disabled={prodHasSerial}
+                            className="p-0.5 sm:p-1 rounded hover:bg-subtle text-secondary hover:text-indigo-600 transition-all disabled:opacity-20 active:scale-90 cursor-pointer"
+                            title="Aumentar"
+                          >
+                            <Plus className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                          </button>
+                        </div>
+                        <div className="flex gap-1 flex-wrap justify-end">
+                          {item.variantLabel && <span className="px-1 py-0.2 bg-subtle text-secondary text-[7px] font-black rounded uppercase border border-base">{item.variantLabel}</span>}
+                          {item.serialNumber && <span className="px-1 py-0.2 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[7px] font-black rounded border border-indigo-100 dark:border-indigo-900">SN: {item.serialNumber}</span>}
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between gap-1 pt-0.5">
-                      <div className="flex items-center bg-secondary rounded-md p-0.5 border border-base">
-                        <button 
-                          onClick={() => updateCartQty(item.id, -1)} 
-                          className="p-0.5 sm:p-1 rounded hover:bg-subtle text-secondary hover:text-rose-500 transition-all active:scale-90 cursor-pointer"
-                          title="Disminuir"
-                        >
-                          <Minus className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                        </button>
-                        <span className="w-5 text-center text-[10px] font-black text-primary font-mono">{item.quantity}</span>
-                        <button 
-                          onClick={() => {
-                            if (getCartQuantity(item.product.id, item.variantLabel) >= getProductStock(item.product.id, item.variantLabel)) {
-                              setPosError("Stock insuficiente"); setTimeout(() => setPosError(""), 3000);
-                            } else updateCartQty(item.id, 1);
-                          }} 
-                          disabled={item.product.hasSerial}
-                          className="p-0.5 sm:p-1 rounded hover:bg-subtle text-secondary hover:text-indigo-600 transition-all disabled:opacity-20 active:scale-90 cursor-pointer"
-                          title="Aumentar"
-                        >
-                          <Plus className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                        </button>
-                      </div>
-                      <div className="flex gap-1 flex-wrap justify-end">
-                        {item.variantLabel && <span className="px-1 py-0.2 bg-subtle text-secondary text-[7px] font-black rounded uppercase border border-base">{item.variantLabel}</span>}
-                        {item.serialNumber && <span className="px-1 py-0.2 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[7px] font-black rounded border border-indigo-100 dark:border-indigo-900">SN: {item.serialNumber}</span>}
-                      </div>
-                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 
@@ -4691,250 +4428,16 @@ export default function POS() {
       </div>
 
       {showReceiptModal && (
-        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[95] flex items-center justify-center p-2 sm:p-4 overflow-hidden animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-sm sm:max-w-md max-h-[94vh] sm:max-h-[90vh] flex flex-col overflow-hidden border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 print:w-full print:max-w-none print:shadow-none print:bg-white print:fixed print:inset-0 print:border-none print:max-h-none print:rounded-none">
-            
-            {/* Top Bar with Ticket ID and Quick Close (Hidden when printing) */}
-            <div className="px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-900 text-white flex items-center justify-between gap-2 shrink-0 border-b border-slate-800 print:hidden">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-6 h-6 rounded-lg bg-indigo-600 flex items-center justify-center text-white shrink-0 shadow-xs">
-                  <Receipt className="w-3.5 h-3.5" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="font-mono text-[10px] sm:text-[11px] font-black uppercase tracking-wider text-white truncate">
-                      Ticket #{showReceiptModal.id}
-                    </span>
-                    <span className="px-1.5 py-0.2 bg-indigo-500/20 text-indigo-300 text-[8px] font-black rounded-md border border-indigo-500/30 shrink-0">
-                      {(showReceiptModal.items || []).reduce((s, i) => s + i.quantity, 0)} {((showReceiptModal.items || []).reduce((s, i) => s + i.quantity, 0)) === 1 ? 'artículo' : 'artículos'}
-                    </span>
-                  </div>
-                  <p className="text-[8px] font-medium text-slate-400 truncate">
-                    {new Date(showReceiptModal.date).toLocaleString('es-CU', { dateStyle: 'short', timeStyle: 'short' })}
-                  </p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowReceiptModal(null)}
-                className="w-7 h-7 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-all shrink-0 active:scale-95 border border-slate-700"
-                title="Cerrar ticket"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Scrollable Printable Ticket Area */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-5 text-xs text-center print:p-2 print:overflow-visible space-y-2" id="print-area">
-              <div>
-                <h2 className="text-base sm:text-lg font-black uppercase tracking-tight text-slate-900 dark:text-white print:text-black">
-                  {useStore.getState().receiptConfig.businessName || 'MARÉ'}
-                </h2>
-                {useStore.getState().receiptConfig.showAddress && (
-                  <p className="text-slate-500 dark:text-slate-400 text-[9px] sm:text-[10px] mt-0.5 leading-snug print:text-black">
-                    {useStore.getState().receiptConfig.businessAddress}
-                  </p>
-                )}
-                {useStore.getState().receiptConfig.showPhone && (
-                  <p className="text-slate-500 dark:text-slate-400 text-[9px] sm:text-[10px] print:text-black font-mono">
-                    {useStore.getState().receiptConfig.businessPhone}
-                  </p>
-                )}
-              </div>
-              
-              <div className="border-t border-dashed border-slate-300 dark:border-slate-700 my-2 print:border-black"></div>
-              
-              {/* Metadata Micro-Grid */}
-              <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[9px] text-slate-600 dark:text-slate-400 print:text-black text-left">
-                <div>
-                  <span className="font-bold text-slate-400 dark:text-slate-500 uppercase text-[7px] block">Fecha y Hora</span>
-                  <span className="font-medium text-slate-800 dark:text-slate-200 print:text-black truncate block">
-                    {new Date(showReceiptModal.date).toLocaleString()}
-                  </span>
-                </div>
-                <div>
-                  <span className="font-bold text-slate-400 dark:text-slate-500 uppercase text-[7px] block">Cliente</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200 print:text-black truncate block">
-                    {useStore.getState().customers.find(c => c.id === showReceiptModal.customerId)?.name || 'Consumidor Final'}
-                  </span>
-                </div>
-                {showReceiptModal.cashierName && (
-                  <div>
-                    <span className="font-bold text-slate-400 dark:text-slate-500 uppercase text-[7px] block">Cajero / Vendedor</span>
-                    <span className="font-medium text-slate-800 dark:text-slate-200 print:text-black truncate block">
-                      {showReceiptModal.cashierName}
-                    </span>
-                  </div>
-                )}
-                <div>
-                  <span className="font-bold text-slate-400 dark:text-slate-500 uppercase text-[7px] block">Comprobante</span>
-                  <span className="font-mono font-bold text-slate-800 dark:text-slate-200 print:text-black">
-                    #{showReceiptModal.id}
-                  </span>
-                </div>
-              </div>
-
-              <div className="border-t border-dashed border-slate-300 dark:border-slate-700 my-2 print:border-black"></div>
-
-              {/* Items Table Header */}
-              <div className="flex justify-between items-center text-[8px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1 px-1 text-left">
-                <span>Cant • Descripción</span>
-                <span className="text-right">Importe</span>
-              </div>
-
-              {/* Items List - Compact and cleanly spaced */}
-              <div className="space-y-1 text-left">
-                {(showReceiptModal.items || []).map((item, idx) => (
-                  <div 
-                    key={item.id || idx} 
-                    className="p-1.5 sm:p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800/60 print:bg-transparent print:border-none print:p-0 transition-colors"
-                  >
-                    <div className="flex justify-between items-start gap-2">
-                      <div className="flex items-start gap-1.5 min-w-0 flex-1">
-                        <span className="font-mono font-black text-indigo-600 dark:text-indigo-400 print:text-black text-[10px] bg-indigo-50 dark:bg-indigo-950/60 px-1 py-0.5 rounded shrink-0">
-                          {item.quantity}x
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <span className="font-bold text-slate-900 dark:text-slate-100 print:text-black text-[10px] sm:text-[11px] leading-tight block">
-                            {item.product.name}
-                          </span>
-                          <div className="flex flex-wrap items-center gap-1 mt-0.5">
-                            {item.quantity > 1 && (
-                              <span className="text-[8px] font-medium text-slate-500 dark:text-slate-400">
-                                @{formatMoney(item.product.price, baseCurrency.symbol)}/u
-                              </span>
-                            )}
-                            {item.variantLabel && (
-                              <span className="px-1 py-0.2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded text-[7px] font-bold uppercase">
-                                {item.variantLabel}
-                              </span>
-                            )}
-                            {item.serialNumber && (
-                              <span className="px-1 py-0.2 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 rounded font-mono text-[7px] font-bold border border-blue-200 dark:border-blue-900">
-                                SN: {item.serialNumber}
-                              </span>
-                            )}
-                            {item.warrantyCode && (
-                              <span className="px-1 py-0.2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 rounded font-mono text-[7px] font-bold border border-emerald-200 dark:border-emerald-900">
-                                Gda: {item.warrantyCode} ({item.product.warrantyDays || 0}d)
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <span className="font-mono font-black text-slate-900 dark:text-white print:text-black text-[11px] shrink-0 pt-0.5">
-                        {formatMoney(item.product.price * item.quantity, baseCurrency.symbol)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="border-t border-dashed border-slate-300 dark:border-slate-700 my-2 print:border-black"></div>
-              
-              {/* Total Box */}
-              <div className="p-2 sm:p-2.5 bg-indigo-50/80 dark:bg-indigo-950/50 border border-indigo-100 dark:border-indigo-900/50 rounded-xl print:bg-transparent print:border-none print:p-0 flex justify-between items-center">
-                <div className="text-left">
-                  <span className="text-[9px] font-black uppercase text-indigo-950 dark:text-indigo-300 print:text-black tracking-wider block">
-                    TOTAL TICKET
-                  </span>
-                  <span className="text-[8px] font-medium text-slate-500 dark:text-slate-400">
-                    {(showReceiptModal.items || []).reduce((s, i) => s + i.quantity, 0)} {((showReceiptModal.items || []).reduce((s, i) => s + i.quantity, 0)) === 1 ? 'artículo' : 'artículos'}
-                  </span>
-                </div>
-                <span className="text-sm sm:text-base font-black text-indigo-600 dark:text-indigo-400 print:text-black font-mono">
-                  {baseCurrency.symbol}{showReceiptModal.total.toFixed(2)} {baseCurrency.code}
-                </span>
-              </div>
-
-              {/* Payments breakdown */}
-              <div className="mt-2 text-left space-y-1">
-                <div className="text-[8px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest px-0.5">
-                  Pagos Recibidos:
-                </div>
-                {(showReceiptModal.payments || []).map((p, i) => (
-                  <div key={i} className="text-[9px] sm:text-[10px] flex justify-between items-center text-slate-700 dark:text-slate-300 print:text-black px-1.5 py-0.5 rounded bg-slate-50 dark:bg-slate-800/30">
-                    <span className="font-medium">
-                      {p.method === 'cash' ? '💵 Efectivo' : '💳 Transferencia'} ({p.currencyCode})
-                    </span>
-                    <span className="font-mono font-black">
-                      {formatMoney(p.amount, currencies.find(c => c.code === p.currencyCode)?.symbol || '')}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Change returned */}
-              {((showReceiptModal.changePayments && showReceiptModal.changePayments.length > 0) || (showReceiptModal.changeGiven && showReceiptModal.changeGiven > 0)) && (
-                <div className="mt-2 p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 text-left">
-                  <div className="text-[8px] font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-widest mb-0.5">
-                    Vuelto Entregado:
-                  </div>
-                  {showReceiptModal.changePayments && showReceiptModal.changePayments.length > 0 ? (
-                    showReceiptModal.changePayments.map((p, i) => (
-                      <div key={i} className="text-[9px] sm:text-[10px] flex justify-between text-emerald-700 dark:text-emerald-400 font-bold font-mono">
-                        <span>Efectivo ({p.currencyCode})</span>
-                        <span>{formatMoney(p.amount, currencies.find(c => c.code === p.currencyCode)?.symbol || '')}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-[9px] sm:text-[10px] flex justify-between text-emerald-700 dark:text-emerald-400 font-bold font-mono">
-                      <span>Efectivo ({baseCurrency.code})</span>
-                      <span>{formatMoney(showReceiptModal.changeGiven || 0, baseCurrency.symbol)}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {useStore.getState().receiptConfig.showFooter && (
-                <>
-                  <div className="border-t border-dashed border-slate-300 dark:border-slate-700 my-2 print:border-black"></div>
-                  <p className="text-[8px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium uppercase tracking-tight leading-relaxed">
-                    {useStore.getState().receiptConfig.footerText}
-                  </p>
-                </>
-              )}
-            </div>
-            
-            {/* Sticky Action Footer - Fully adapted for PC, tablet and mobile */}
-            <div className="p-2 sm:p-2.5 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0 print:hidden">
-              <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-1.5 sm:gap-2 justify-end items-center">
-                <button 
-                  onClick={() => setShowReceiptModal(null)}
-                  className="order-1 py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider hover:bg-slate-100 dark:hover:bg-slate-750 transition-all shadow-2xs active:scale-95 text-center cursor-pointer"
-                >
-                  Cerrar
-                </button>
-                
-                <button 
-                  onClick={() => handleWhatsAppReceipt(showReceiptModal)}
-                  className="order-2 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm shadow-emerald-200 dark:shadow-none active:scale-95 cursor-pointer"
-                  title="Enviar ticket por WhatsApp"
-                >
-                  <MessageSquare className="w-3.5 h-3.5 text-white shrink-0" />
-                  <span>WhatsApp</span>
-                </button>
-                
-                <button 
-                  onClick={() => handleThermalPrint(showReceiptModal, { preferRawBT: true })}
-                  className="order-3 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm shadow-indigo-200 dark:shadow-none active:scale-95 cursor-pointer"
-                  title="Impresión directa para Android con RawBT"
-                >
-                  <Smartphone className="w-3.5 h-3.5 text-indigo-200 shrink-0" />
-                  <span>RawBT</span>
-                </button>
-
-                <button 
-                  onClick={() => handleThermalPrint(showReceiptModal)}
-                  className="order-4 py-2 px-3 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white text-white rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
-                  title="Impresión Térmica Directa 58mm (Bluetooth / USB)"
-                >
-                  <Printer className="w-3.5 h-3.5 shrink-0" />
-                  <span>Imprimir 58mm</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <POSReceiptModal
+          showReceiptModal={showReceiptModal}
+          products={products}
+          currencies={currencies}
+          baseCurrency={baseCurrency}
+          formatMoney={formatMoney}
+          onClose={() => setShowReceiptModal(null)}
+          onWhatsAppReceipt={handleWhatsAppReceipt}
+          onThermalPrint={handleThermalPrint}
+        />
       )}
 
       {returnConfirm && (
@@ -4946,7 +4449,7 @@ export default function POS() {
               </div>
               <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">¿Confirmar Devolución?</h3>
               <p className="text-[10px] font-bold text-slate-500 uppercase leading-relaxed">
-                Estás a punto de devolver <span className="text-rose-600">{returnConfirm.item.quantity}x {returnConfirm.item.product.name}</span>. 
+                Estás a punto de devolver <span className="text-rose-600">{returnConfirm.item.quantity}x {typeof returnConfirm.item.product === "object" ? (returnConfirm.item.product?.name || "Producto") : (products.find(p => p.id === returnConfirm.item.product)?.name || returnConfirm.item.product || "Producto")}</span>. 
                 Esto reintegrará el stock a la sucursal actual.
               </p>
               <div className="grid grid-cols-2 gap-3 pt-4">
@@ -4994,7 +4497,7 @@ export default function POS() {
             {/* Scrollable Body */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-5 space-y-3 text-left">
               {(() => {
-                const sessionTransactions = transactions.filter(t => 
+                const sessionTransactions = activeTransactions.filter(t => 
                   t.branchId === lastClosedSession.branchId && 
                   t.sessionId === lastClosedSession.id
                 );
@@ -5256,7 +4759,7 @@ export default function POS() {
                 type="button"
                 disabled={cart.length === 0}
                 onClick={openCheckout}
-                className="h-8 px-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-950 active:scale-95 flex items-center gap-1 disabled:opacity-40 disabled:pointer-events-none disabled:shadow-none"
+                className="h-8 px-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-950 active:scale-95 flex items-center gap-1 disabled:opacity-40 disabled:pointer-events-none disabled:shadow-none"
               >
                 <Banknote className="w-3.5 h-3.5" />
                 <span>Cobrar</span>
@@ -5278,7 +4781,7 @@ export default function POS() {
       {lastClosedSession && (
         <div id="print-closure-area" className="hidden font-mono text-[11px] leading-tight text-black bg-white p-2">
           {(() => {
-            const sessionTx = transactions.filter(t => 
+            const sessionTx = activeTransactions.filter(t => 
               t.sessionId === lastClosedSession.id && !t.deletedAt
             );
 
@@ -5344,7 +4847,7 @@ export default function POS() {
                 ) : (
                   soldList.map((p, i) => (
                     <div key={i} className="flex justify-between text-[10px]">
-                      <span className="truncate max-w-[170px]">{p.qty}x {p.name}</span>
+                      <span className="truncate max-w-[170px]">{p.qty}x {p?.name || "Producto"}</span>
                       <span className="font-bold">{formatMoney(p.total, baseCurrency.symbol)}</span>
                     </div>
                   ))
@@ -5391,161 +4894,23 @@ export default function POS() {
       )}
 
       {showPrinterSetupModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 border border-slate-100">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-200">
-                  <Printer className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Impresora Térmica 58mm</h3>
-                  <p className="text-[10px] font-bold text-slate-400">Conexión directa Bluetooth, USB y RawBT</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowPrinterSetupModal(false)}
-                className="w-7 h-7 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 flex items-center justify-center transition-all"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4">
-              {/* Current Status */}
-              <div className={cn(
-                "p-3 rounded-2xl border flex items-center justify-between",
-                connectedPrinterName ? "bg-emerald-50/70 border-emerald-200 text-emerald-900" : "bg-slate-50 border-slate-200 text-slate-700"
-              )}>
-                <div className="flex items-center gap-2.5">
-                  <div className={cn("w-2.5 h-2.5 rounded-full", connectedPrinterName ? "bg-emerald-500 animate-pulse" : "bg-slate-400")} />
-                  <div>
-                    <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Estado actual</div>
-                    <div className="text-xs font-black truncate max-w-[170px]">{connectedPrinterName || "Sin conexión activa"}</div>
-                  </div>
-                </div>
-                {connectedPrinterName && (
-                  <button 
-                    onClick={async () => {
-                      const { disconnectPrinter, disconnectBluetoothPrinter } = await import('../lib/escpos');
-                      await disconnectPrinter();
-                      await disconnectBluetoothPrinter();
-                      setConnectedPrinterName(null);
-                      setPosSuccess("Impresora desconectada");
-                      setTimeout(() => setPosSuccess(""), 2000);
-                    }}
-                    className="px-2.5 py-1 bg-white border border-rose-200 text-rose-600 rounded-lg text-[10px] font-black uppercase hover:bg-rose-50 transition-all"
-                  >
-                    Desconectar
-                  </button>
-                )}
-              </div>
-
-              {printerStatusMsg && (
-                <p className="text-[10px] font-bold text-indigo-600 text-center animate-pulse">{printerStatusMsg}</p>
-              )}
-
-              {/* Connection Actions */}
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  disabled={isConnectingPrinter}
-                  onClick={handlePairBluetooth}
-                  className="w-full p-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all shadow-md shadow-indigo-100 active:scale-95 disabled:opacity-50"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Bluetooth className="w-4 h-4 text-indigo-200" />
-                    <span>1. Vincular por Bluetooth</span>
-                  </div>
-                  <span className="text-[9px] bg-indigo-500/50 px-2 py-0.5 rounded-md text-indigo-100">BLE / Inalámbrico</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const { printThermalReceipt } = await import('../lib/escpos');
-                    await printThermalReceipt({
-                      lines: [
-                        "CENTER|BOLD|MARÉ POS",
-                        "CENTER|PRUEBA RAWBT ANDROID",
-                        "---",
-                        "Conexión exitosa con RawBT",
-                        "Impresión térmica 58mm OK",
-                        "---"
-                      ],
-                      width: '58mm',
-                      preferRawBT: true
-                    });
-                    setShowPrinterSetupModal(false);
-                  }}
-                  className="w-full p-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all shadow-md shadow-emerald-100 active:scale-95"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Smartphone className="w-4 h-4 text-emerald-200" />
-                    <span>2. Imprimir con App RawBT</span>
-                  </div>
-                  <span className="text-[9px] bg-emerald-500/50 px-2 py-0.5 rounded-md text-emerald-100">Android</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isConnectingPrinter}
-                  onClick={handleConnectUsb}
-                  className="w-full p-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all active:scale-95 disabled:opacity-50 border border-slate-200"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Usb className="w-4 h-4 text-slate-500" />
-                    <span>3. Conectar por Cable USB</span>
-                  </div>
-                  <span className="text-[9px] bg-slate-200 px-2 py-0.5 rounded-md text-slate-600">Cable OTG</span>
-                </button>
-              </div>
-
-              {/* Test Ticket */}
-              <div className="pt-2 border-t border-slate-100 flex gap-2">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const { printThermalReceipt } = await import('../lib/escpos');
-                    const printed = await printThermalReceipt({
-                      lines: [
-                        "CENTER|BOLD|MARÉ POS",
-                        "CENTER|TICKET DE PRUEBA 58MM",
-                        "---",
-                        `Fecha: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-                        "Estado: Correcto",
-                        "---",
-                        "CENTER|Impresión Térmica OK"
-                      ],
-                      openDrawer: true,
-                      width: '58mm',
-                      onSuccess: (method) => {
-                        setPosSuccess(`Prueba enviada (${method})`);
-                        setTimeout(() => setPosSuccess(""), 2500);
-                      }
-                    });
-                    if (!printed) {
-                      setPosError("No hay impresora conectada");
-                      setTimeout(() => setPosError(""), 3000);
-                    }
-                  }}
-                  className="flex-1 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-1.5 active:scale-95"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  Imprimir Prueba
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowPrinterSetupModal(false)}
-                  className="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-200 transition-all active:scale-95"
-                >
-                  Listo
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <POSPrinterSetupModal
+          connectedPrinterName={connectedPrinterName}
+          printerStatusMsg={printerStatusMsg}
+          isConnectingPrinter={isConnectingPrinter}
+          onClose={() => setShowPrinterSetupModal(false)}
+          onPairBluetooth={handlePairBluetooth}
+          onConnectUsb={handleConnectUsb}
+          onPrinterConnectedChange={setConnectedPrinterName}
+          onSuccess={(message) => {
+            setPosSuccess(message);
+            if (message) setTimeout(() => setPosSuccess(""), 2500);
+          }}
+          onError={(message) => {
+            setPosError(message);
+            if (message) setTimeout(() => setPosError(""), 3000);
+          }}
+        />
       )}
 
       {/* Modal para Cancelar Turno */}
@@ -5560,7 +4925,7 @@ export default function POS() {
               <div className="space-y-2">
                 <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">¿Cancelar Turno?</h3>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4">
-                  Esta acción anulará todas las ventas registradas y restaurará el inventario. Se requiere contraseña.
+                  Esta acción anulará las ventas de este turno, revertirá el inventario y conservará el turno como "Cancelado" en el historial. Se requiere contraseña.
                 </p>
               </div>
 
