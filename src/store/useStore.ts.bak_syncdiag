@@ -11,7 +11,7 @@ import {
   pushSupplierToSupabase, deleteSupplierFromSupabase, pushSupplierOrderToSupabase, pushCustomerToSupabase,
   applyInventoryAdjustmentToSupabase, reconcileInventoryToSupabase,
   pushReceiptConfigToSupabase, pushStoreConfigToSupabase, pushCatalogConfigToSupabase, deleteTransactionFromSupabase, deleteCustomerFromSupabase,
-  deleteBankTransactionFromSupabase, clearSelectedDataFromSupabase, callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC, callCompleteInventoryAuditRPC, callCloseSessionRPC, callCancelSessionRPC
+  deleteBankTransactionFromSupabase, clearSelectedDataFromSupabase, callOpenSessionRPC, callProcessTransactionRPC, callVoidTransactionRPC, callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC, callCompleteInventoryAuditRPC, callCloseSessionRPC, callCancelSessionRPC
 } from '../services/supabaseSync';
 import { getSupabaseCredentials } from '../lib/supabase';
 import { getOfflineQueue, enqueueOfflineItem } from '../services/offlineSync';
@@ -1248,7 +1248,7 @@ export const useStore = create<AppState>()(
     // Si hay red, usar RPC para garantizar integridad y turno único
     if (navigator.onLine) {
       try {
-        const res = await callOpenSessionRPCWithId(session);
+        const res = await callOpenSessionRPC(session);
         if (res.success && res.data) {
           const officialSession = {
             ...res.data,
@@ -1370,6 +1370,12 @@ export const useStore = create<AppState>()(
     // atomic close RPC and the settlement, rather than fire-and-forget upserts.
     enqueueOfflineItem('cash_session', { ...updatedSession, __operation: 'close', settlement }, `cash-close:${sessionId}`);
     enqueueOfflineItem('salary_settlement', settlement, `salary:${settlement.id}`);
+    if (navigator.onLine) {
+      pushCashSessionToSupabase(updatedSession).catch(() => {});
+      import('../services/supabaseSync').then(({ pushSalarySettlementToSupabase }) => {
+        pushSalarySettlementToSupabase(settlement).catch(() => {});
+      });
+    }
   },
   updateCashSession: (id, updates) => {
     set((state) => ({
@@ -1532,6 +1538,7 @@ export const useStore = create<AppState>()(
       };
 
       // Push updated session to Supabase
+      pushCashSessionToSupabase(updatedSession).catch(() => {});
 
       return {
         cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s)
@@ -2407,16 +2414,16 @@ export const useStore = create<AppState>()(
   },
 
   notifications: [],
-  addNotification: (message, type = 'info', details) => {
+  addNotification: (message, type = 'info') => {
     const id = crypto.randomUUID();
     set(state => ({
-      notifications: [...state.notifications, { id, message, type, ...(details ? { details } : {}) }]
+      notifications: [...state.notifications, { id, message, type }]
     }));
     setTimeout(() => {
       set(state => ({
         notifications: state.notifications.filter(n => n.id !== id)
       }));
-    }, details ? 15000 : 4000);
+    }, 4000);
   },
   removeNotification: (id) => {
     set(state => ({

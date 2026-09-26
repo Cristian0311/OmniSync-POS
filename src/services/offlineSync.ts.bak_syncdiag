@@ -12,7 +12,7 @@ import {
   Customer, ReturnItem, Branch, Product, Category
 } from '../types';
 import {
-  callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCancelSessionRPC,
+  callOpenSessionRPC, callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCancelSessionRPC,
   callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC,
   callCompleteInventoryAuditRPC
 } from './supabaseSync';
@@ -360,14 +360,13 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         if (!res.success) throw new Error(res.error || 'No se pudo cancelar el turno');
         return true;
       }
-      if (session.__operation === 'open' || String(item.actionId).startsWith('cash-open:')) {
-        const res = await callOpenSessionRPCWithId(session);
+      if (session.__operation !== 'snapshot' || String(item.actionId).startsWith('cash-open:')) {
+        const res = String(item.actionId).startsWith('cash-open:')
+          ? await callOpenSessionRPCWithId(session)
+          : await callOpenSessionRPC(session);
         if (res.success) return true;
         throw new Error(res.error || 'No se pudo abrir el turno en Supabase');
       }
-      // Un snapshot de un turno ya existente no debe llamar al RPC de apertura:
-      // ese RPC puede crear otro turno si el original aún no existe en remoto.
-      // Los snapshots son reconciliaciones de estado y se escriben por ID estable.
       const row = {
         id: session.id, user_id: session.userId || null, worker_name: session.workerName || null,
         branch_id: session.branchId, opened_at: session.openedAt, closed_at: session.closedAt || null,
@@ -381,13 +380,10 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     }
     case 'salary_settlement': {
       const settlement = data;
-      // Keep the offline replay payload aligned with the live schema.
-      // `discrepancy_deduction` was removed from salary_settlements; sending it
-      // through PostgREST produces a 400/PGRST204 and leaves the item stuck.
       const { error } = await supabase.from('salary_settlements').upsert({
         id: settlement.id, user_id: settlement.userId || null, user_name: settlement.userName || '',
         session_id: settlement.sessionId || null, base_salary: settlement.baseSalary || 0,
-        sales_goal: settlement.salesGoal || 0, commissions: settlement.commissions || 0,
+        commissions: settlement.commissions || 0, discrepancy_deduction: settlement.discrepancyDeduction || 0,
         total: settlement.total || 0, date: settlement.date, status: settlement.status || 'pending'
       });
       if (error) throw error;
@@ -523,53 +519,24 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
   }
 }
 
-export async function processOfflineQueue(): Promise<{ processed: number; failed: number; remaining: number; errors: Array<{ type: string; actionId: string; message: string; retryCount?: number }> }> {
+export async function processOfflineQueue(): Promise<{ processed: number; failed: number; remaining: number }> {
   // Nunca inspeccionar una cola todavía no hidratada desde IndexedDB.
   await waitForOfflineQueueReady();
   if (isProcessingQueue || (typeof navigator !== 'undefined' && !navigator.onLine)) {
-    return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), errors: [] };
+    return { processed: 0, failed: 0, remaining: getOfflineQueueCount() };
   }
   const supabase = getSupabase();
-  if (!supabase) return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), errors: [{ type: 'system', actionId: 'supabase', message: 'Supabase no está disponible en esta sesión.' }] };
+  if (!supabase) return { processed: 0, failed: 0, remaining: getOfflineQueueCount() };
   const queueAtStart = getOfflineQueue();
-  if (!queueAtStart.length) return { processed: 0, failed: 0, remaining: 0, errors: [] };
+  if (!queueAtStart.length) return { processed: 0, failed: 0, remaining: 0 };
 
   isProcessingQueue = true;
   // Procesamos una instantánea estable. Las operaciones que entren mientras
   // sincronizamos se reconcilian al final y nunca se pierden por reemplazar
   // memoryQueue con una instantánea vieja.
-  // Ordenamos respetando dependencias de negocio, no solo el timestamp.
-  // En dispositivos offline varias operaciones pueden compartir el mismo
-  // milisegundo; si una venta quedara antes que la apertura de su turno, el
-  // procesamiento se detendría sobre la venta y nunca alcanzaría la apertura.
-  // La prioridad solo resuelve dependencias; dentro de cada nivel conservamos
-  // el orden temporal original.
-  const syncPriority = (item: OfflineQueueItem): number => {
-    if (item.type === 'cash_session') {
-      const op = item.data?.__operation;
-      if (op === 'open' || String(item.actionId).startsWith('cash-open:')) return 10;
-      if (op === 'snapshot') return 20;
-      if (op === 'cancel') return 80;
-      if (op === 'close') return 90;
-      return 20;
-    }
-    if (item.type === 'transaction') return 30;
-    if (item.type === 'void_transaction' || item.type === 'return_complete') return 40;
-    if (item.type === 'supplier_order') return 50;
-    if (item.type === 'supplier_receive') return 60;
-    if (item.type === 'inventory_audit') return 70;
-    if (item.type === 'audit_complete') return 80;
-    if (item.type === 'salary_settlement') return 100;
-    return 50;
-  };
-  const sorted = [...queueAtStart].sort((a,b) =>
-    syncPriority(a) - syncPriority(b) ||
-    a.timestamp.localeCompare(b.timestamp) ||
-    a.id.localeCompare(b.id)
-  );
+  const sorted = [...queueAtStart].sort((a,b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id));
   const startById = new Map(sorted.map(item => [item.id, item]));
   let processed = 0, failed = 0;
-  const errors: Array<{ type: string; actionId: string; message: string; retryCount?: number }> = [];
   const remainingFromRun: OfflineQueueItem[] = [];
   const handledIds = new Set<string>();
 
@@ -584,15 +551,10 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
     } catch (err:any) {
       failed++;
       item.retryCount = (item.retryCount || 0) + 1;
-      const code = err?.code ? ` [${err.code}]` : '';
-      const status = err?.status || err?.statusCode ? ` HTTP ${err?.status || err?.statusCode}` : '';
-      const detail = err?.details ? ` — ${err.details}` : '';
-      const hint = err?.hint ? ` — ${err.hint}` : '';
-      item.lastError = `${err?.message || 'Error desconocido'}${code}${status}${detail}${hint}`;
+      item.lastError = err?.message || 'Error desconocido';
       const permanent = err?.permanent === true;
       item.status = permanent || item.retryCount >= 8 ? 'conflict' : 'failed';
       remainingFromRun.push(item);
-      errors.push({ type: item.type, actionId: item.actionId, message: item.lastError, retryCount: item.retryCount });
       addSyncLog({ level:'error', source:'offline_queue', title:`Error al procesar item (${item.type})`, details:item.lastError, entityType:item.type, actionId:item.actionId, retryAttempt:item.retryCount, maxRetries:8 });
       if (!permanent && (item.type === 'transaction' || item.type === 'cash_session' || item.type === 'transfer' || item.type === 'return_complete')) {
         // Las operaciones críticas mantienen el orden temporal: una dependencia
@@ -674,14 +636,12 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
     memoryQueue = Array.from(fallbackById.values());
     emitQueueEvent();
     isProcessingQueue = false;
-    const persistenceMessage = persistenceError?.message || 'Error de IndexedDB/localStorage. Las operaciones se conservaron para reintento.';
-    errors.push({ type: 'offline_queue', actionId: 'persistence', message: persistenceMessage });
-    addSyncLog({ level:'error', source:'offline_queue', title:'Cola local no pudo persistirse', details:persistenceMessage, entityType:'offline_queue' });
-    return { processed, failed, remaining: memoryQueue.length, errors };
+    addSyncLog({ level:'error', source:'offline_queue', title:'Cola local no pudo persistirse', details:persistenceError?.message || 'Error de IndexedDB/localStorage. Las operaciones se conservaron para reintento.', entityType:'offline_queue' });
+    return { processed, failed, remaining: memoryQueue.length };
   }
 
   isProcessingQueue = false;
-  return { processed, failed, remaining: finalQueue.length, errors };
+  return { processed, failed, remaining: finalQueue.length };
 }
 
 function isManualOfflineSyncEnabled(): boolean {
@@ -704,7 +664,7 @@ export function initOfflineSyncWatcher(): () => void {
     try {
       const res = await processOfflineQueue();
       if (res.remaining > 0) {
-        useStore.getState().addNotification(`Sincronización incompleta: ${res.processed} procesadas; ${res.remaining} siguen pendientes.`, 'warning', res.errors?.length ? res.errors.map(e => `${e.type} · ${e.actionId}: ${e.message}`).join('\n') : undefined);
+        useStore.getState().addNotification(`Sincronización incompleta: ${res.processed} procesadas; ${res.remaining} siguen pendientes.`, 'warning');
       } else if (res.processed > 0) {
         useStore.getState().addNotification(`Sincronización completada: ${res.processed} operaciones confirmadas.`, 'success');
       }

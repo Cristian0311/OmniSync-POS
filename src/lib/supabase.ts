@@ -4,7 +4,8 @@ const STORAGE_URL_KEY = 'mare_supabase_url';
 const STORAGE_ANON_KEY = 'mare_supabase_anon_key';
 
 export const DEFAULT_SUPABASE_URL = 'https://mszojsqwilfqqcaycxch.supabase.co';
-export const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1zem9qc3F3aWxmcXFjYXljeGNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4MzkzODksImV4cCI6MjA5ODQxNTM4OX0.BSdhqmNwEMT5exDnu7H_gY_TSLSgzy1Cs4V2V2gSnvc';
+export const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_QKwC2wFFvTe7eEky9T5p_Q_JVUqdHv9';
+const LEGACY_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1zem9qc3F3aWxmcXFjYXljeGNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4MzkzODksImV4cCI6MjA5ODQxNTM4OX0.BSdhqmNwEMT5exDnu7H_gY_TSLSgzy1Cs4V2V2gSnvc';
 
 export function getSupabaseCredentials() {
   const envUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -13,8 +14,17 @@ export function getSupabaseCredentials() {
   const storedUrl = localStorage.getItem(STORAGE_URL_KEY) || '';
   const storedKey = localStorage.getItem(STORAGE_ANON_KEY) || '';
 
-  const url = storedUrl || envUrl || DEFAULT_SUPABASE_URL;
-  const anonKey = storedKey || envKey || DEFAULT_SUPABASE_ANON_KEY;
+  // The app uses a fixed production Supabase project. Older builds could leave
+  // an obsolete API key in localStorage; that key then causes PostgREST 401s
+  // even though the bundled project credentials are valid. Keep custom
+  // credentials for a different URL, but never let a stale key override the
+  // current production key for the canonical project.
+  const canonicalUrl = envUrl || DEFAULT_SUPABASE_URL;
+  const url = storedUrl || canonicalUrl;
+  const canonicalProject = url === DEFAULT_SUPABASE_URL;
+  const knownCanonicalKeys = new Set([DEFAULT_SUPABASE_ANON_KEY, LEGACY_SUPABASE_ANON_KEY]);
+  const anonKey = envKey || (canonicalProject && storedKey && knownCanonicalKeys.has(storedKey) ? storedKey : '') ||
+    (!canonicalProject ? storedKey : '') || DEFAULT_SUPABASE_ANON_KEY;
 
   return { url, anonKey, isConfigured: Boolean(url && anonKey) };
 }

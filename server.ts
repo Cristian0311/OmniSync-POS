@@ -387,6 +387,16 @@ Responde ESTRICTAMENTE con un objeto JSON:
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+
+    // Never let the browser/CDN pin the service-worker entrypoint. The SW is
+    // responsible for updating the cached application bundle; stale sw.js can
+    // otherwise keep an old frontend running indefinitely after a deploy.
+    app.get(['/sw.js', '/registerSW.js', '/manifest.webmanifest'], (_req, res, next) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      next();
+    });
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

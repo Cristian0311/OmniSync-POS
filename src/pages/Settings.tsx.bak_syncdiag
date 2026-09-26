@@ -333,29 +333,24 @@ export default function Settings() {
   const handleManualSync = async () => {
     if (isSyncing) return;
     setIsSyncing(true);
-    let syncRes: Awaited<ReturnType<typeof import('../services/offlineSync').processOfflineQueue>> | null = null;
     try {
       const { processOfflineQueue, getOfflineQueueCount } = await import('../services/offlineSync');
       const count = getOfflineQueueCount();
       if (count > 0) {
         addNotification(`Sincronizando ${count} operaciones pendientes...`, 'info');
-        syncRes = await processOfflineQueue();
-        if (syncRes.processed) addNotification(`Cola procesada: ${syncRes.processed} operaciones.`, 'success');
-        if (syncRes.failed) addNotification(`Error en ${syncRes.failed} operaciones.`, 'error');
+        const res = await processOfflineQueue();
+        if (res.processed) addNotification(`Cola procesada: ${res.processed} operaciones.`, 'success');
+        if (res.failed) addNotification(`Error en ${res.failed} operaciones.`, 'error');
       }
       const cloudResult = await syncWithSupabase();
       const remaining = getOfflineQueueCount();
       if (remaining > 0 || cloudResult?.success === false) {
-        addNotification(`Sincronización incompleta: quedan ${remaining} operaciones pendientes.`, "warning", [
-          ...(syncRes?.errors || []).map((e: any) => `${e.type} · ${e.actionId}: ${e.message}`),
-          ...(cloudResult?.errors || []).map((e: string) => `Nube: ${e}`),
-          cloudResult?.success === false && cloudResult?.message ? `Nube: ${cloudResult.message}` : ''
-        ].filter(Boolean).join('\n') || 'No se recibió un detalle específico. Revisa el registro de sincronización.');
+        showToast(`Sincronización incompleta: quedan ${remaining} operaciones pendientes.`, "error");
       } else {
         showToast("Sincronización completa con Supabase.");
       }
     } catch (e) {
-      addNotification("Error al sincronizar con la nube.", "error", "La sincronización lanzó una excepción antes de completar el proceso. Revisa la conexión y vuelve a intentarlo.");
+      showToast("Error al sincronizar con la nube.", "error");
     } finally {
       setIsSyncing(false);
     }

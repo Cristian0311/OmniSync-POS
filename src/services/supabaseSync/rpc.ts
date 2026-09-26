@@ -11,6 +11,25 @@ import {
 } from '../../types';
 import { fetchAllRows, safeUpsert, safeUpsertMany, SyncResult } from './core';
 
+function assertRpcSuccess(data: any, operation: string) {
+  if (data && data.success === false) {
+    const e: any = new Error(data.message || data.error || data.reason || `La operación ${operation} fue rechazada por Supabase`);
+    e.code = data.code || data.error_code;
+    throw e;
+  }
+  if (data == null) throw new Error(`Supabase no devolvió confirmación para ${operation}`);
+}
+
+function formatSupabaseError(e: any): string {
+  if (!e) return 'Error desconocido';
+  const parts = [e.message || String(e)];
+  if (e.code) parts.push(`code=${e.code}`);
+  if (e.status) parts.push(`status=${e.status}`);
+  if (e.details) parts.push(`details=${e.details}`);
+  if (e.hint) parts.push(`hint=${e.hint}`);
+  return parts.join(' | ');
+}
+
 export async function logAuditEvent(entry: {
   userId?: string;
   action: string;
@@ -54,10 +73,11 @@ export async function callOpenSessionRPC(session: CashRegisterSession): Promise<
     });
 
     if (error) throw error;
+    assertRpcSuccess(data, 'open_cash_session_v2');
     return { success: true, data };
   } catch (e: any) {
     console.error("[RPC] open_cash_session_v2 failed:", e);
-    return { success: false, error: e.message };
+    return { success: false, error: formatSupabaseError(e) };
   }
 }
 
@@ -71,10 +91,11 @@ export async function callOpenSessionRPCWithId(session: CashRegisterSession): Pr
       p_working_employee_ids: session.workingEmployeeIds || [], p_notes: session.notes || ''
     });
     if (error) throw error;
+    assertRpcSuccess(data, 'open_cash_session_v3');
     return { success: true, data };
   } catch (e: any) {
     console.error('[RPC] open_cash_session_v3 failed:', e);
-    return { success: false, error: e.message, errorCode: e.code || e.statusCode || undefined };
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
   }
 }
 
@@ -110,10 +131,11 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
     });
 
     if (error) throw error;
+    assertRpcSuccess(data, 'process_pos_transaction_v2');
     return { success: true, data };
   } catch (e: any) {
     console.error("[RPC] process_pos_transaction_v2 failed:", e);
-    return { success: false, error: e.message, errorCode: e.code || e.statusCode || undefined };
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
   }
 }
 
@@ -125,10 +147,11 @@ export async function callCompleteInventoryAuditRPC(auditId: string, branchId: s
       p_audit_id: auditId, p_branch_id: branchId, p_user_id: userId, p_items: items, p_notes: notes || ''
     });
     if (error) throw error;
+    assertRpcSuccess(data, 'complete_inventory_audit_v2');
     return { success: true, data };
   } catch (e: any) {
     console.error('[RPC] complete_inventory_audit_v2 failed:', e);
-    return { success: false, error: e.message, errorCode: e.code || e.statusCode || undefined };
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
   }
 }
 
@@ -138,10 +161,11 @@ export async function callReceiveSupplierOrderRPC(orderId: string, userId: strin
   try {
     const { data, error } = await supabase.rpc('receive_supplier_order_v2', { p_order_id: orderId, p_user_id: userId });
     if (error) throw error;
+    assertRpcSuccess(data, 'receive_supplier_order_v2');
     return { success: true, data };
   } catch (e: any) {
     console.error('[RPC] receive_supplier_order_v2 failed:', e);
-    return { success: false, error: e.message, errorCode: e.code || e.statusCode || undefined };
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
   }
 }
 
@@ -158,10 +182,11 @@ export async function callTransferInventoryRPC(params: {
       p_variants: params.variants, p_user_id: params.userId
     });
     if (error) throw error;
+    assertRpcSuccess(data, 'process_inventory_transfer_v2');
     return { success: true, data };
   } catch (e: any) {
     console.error('[RPC] process_inventory_transfer_v2 failed:', e);
-    return { success: false, error: e.message, errorCode: e.code || e.statusCode || undefined };
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
   }
 }
 
@@ -171,10 +196,11 @@ export async function callCompleteReturnRPC(returnId: string, userId: string): P
   try {
     const { data, error } = await supabase.rpc('complete_return_v2', { p_return_id: returnId, p_user_id: userId });
     if (error) throw error;
+    assertRpcSuccess(data, 'complete_return_v2');
     return { success: true, data };
   } catch (e: any) {
     console.error('[RPC] complete_return_v2 failed:', e);
-    return { success: false, error: e.message, errorCode: e.code || e.statusCode || undefined };
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
   }
 }
 
@@ -186,10 +212,11 @@ export async function callVoidTransactionRPC(id: string, userId: string, reason:
       p_id: id, p_user_id: userId, p_reason: reason
     });
     if (error) throw error;
+    assertRpcSuccess(data, 'void_pos_transaction_v2');
     return { success: true, data };
   } catch (e: any) {
     console.error('[RPC] void_pos_transaction_v2 failed:', e);
-    return { success: false, error: e.message, errorCode: e.code || e.statusCode || undefined };
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
   }
 }
 
@@ -209,102 +236,14 @@ export async function callCancelSessionRPC(
     });
 
     if (error) throw error;
+    assertRpcSuccess(data, 'cancel_cash_session_v2');
     return { success: true, data };
   } catch (e: any) {
-    console.warn("[RPC] cancel_cash_session_v2 falló (" + (e?.message || e?.code || 'error') + "), ejecutando fallback resiliente en cliente:", e);
-
-    try {
-      // 1. Verificar estado actual del turno en la base de datos
-      const { data: s } = await supabase
-        .from('cash_sessions')
-        .select('*')
-        .eq('id', sessionId)
-        .maybeSingle();
-
-      if (s?.status === 'cancelled') {
-        return { success: true, data: { already_cancelled: true, session_id: sessionId, fallback: true } };
-      }
-
-      // 2. Anular ventas activas vinculadas a este turno
-      const { data: txs } = await supabase
-        .from('transactions')
-        .select('id')
-        .eq('session_id', sessionId)
-        .is('deleted_at', null);
-
-      let voidedCount = 0;
-      if (txs && txs.length > 0) {
-        for (const tx of txs) {
-          try {
-            const vRes = await callVoidTransactionRPC(tx.id, userId || 'system', reason || 'Cancelación de turno');
-            if (vRes.success) {
-              voidedCount++;
-            } else {
-              // Si el RPC de anulación falla, actualizar la transacción directamente
-              await supabase
-                .from('transactions')
-                .update({
-                  status: 'refunded',
-                  deleted_at: new Date().toISOString(),
-                  deleted_by: userId || 'system',
-                  delete_reason: reason || 'Cancelación de turno'
-                })
-                .eq('id', tx.id);
-              voidedCount++;
-            }
-          } catch (txErr) {
-            console.warn('[RPC Fallback] Error anulando venta individual ' + tx.id + ':', txErr);
-          }
-        }
-      }
-
-      // 3. Actualizar cash_sessions sin referenciar updated_at ni closing_date para compatibilidad total
-      const notesBase = s?.notes || '';
-      const notesClean = notesBase.includes('__CANCELLED__')
-        ? notesBase
-        : (notesBase ? notesBase + ' ' : '') + '__CANCELLED__:turno_cancelado';
-
-      const updateData: Record<string, any> = {
-        status: 'cancelled',
-        closed_at: s?.closed_at || new Date().toISOString(),
-        delete_reason: reason || 'Cancelación de turno',
-        deleted_at: null,
-        deleted_by: null,
-        notes: notesClean
-      };
-
-      const { error: updErr } = await supabase
-        .from('cash_sessions')
-        .update(updateData)
-        .eq('id', sessionId);
-
-      if (updErr) {
-        console.error('[RPC Fallback] Error actualizando tabla cash_sessions:', updErr);
-        return { success: false, error: updErr.message };
-      }
-
-      // 4. Registrar auditoría inmutable
-      try {
-        await supabase.from('audit_log').insert({
-          user_id: userId || 'system',
-          action: 'CANCEL_SESSION',
-          entity_type: 'cash_session',
-          entity_id: sessionId,
-          meta: {
-            reason: reason || 'Cancelación de turno',
-            transactions_voided: voidedCount,
-            fallback: true
-          }
-        });
-      } catch (auditErr) {
-        console.warn('[RPC Fallback] No se pudo guardar audit_log:', auditErr);
-      }
-
-      return { success: true, data: { session_id: sessionId, transactions_voided: voidedCount, fallback: true } };
-    } catch (fallbackErr: any) {
-      console.error('[RPC Fallback] Error crítico en fallback de cancelación:', fallbackErr);
-      return { success: false, error: fallbackErr?.message || e.message };
-    }
+    // No hacemos escrituras parciales desde el cliente cuando el RPC falla.
+    // Un timeout/401/5xx puede significar que el servidor ya ejecutó la
+    // operación; el replay idempotente de la cola es la ruta segura.
+    console.warn('[RPC] cancel_cash_session_v2 failed; leaving operation for queue replay:', e);
+    return { success: false, error: formatSupabaseError(e) };
   }
 }
 
@@ -330,91 +269,19 @@ export async function callCloseSessionRPC(
         baseSalary: settlement.baseSalary,
         commissions: settlement.commissions,
         total: settlement.total,
-        discrepancyDeduction: settlement.discrepancyDeduction || 0
+        salesGoal: settlement.salesGoal || 0
       }
     });
 
     if (error) throw error;
+    assertRpcSuccess(data, 'close_cash_session_v2');
     return { success: true, data };
   } catch (e: any) {
-    console.warn("[RPC] close_cash_session_v2 falló (" + (e?.message || e?.code || 'error') + "), ejecutando fallback directo:", e);
-    try {
-      const { data: s } = await supabase
-        .from('cash_sessions')
-        .select('*')
-        .eq('id', sessionId)
-        .maybeSingle();
-
-      if (s?.status === 'closed') {
-        return { success: true, data: { already_closed: true, session_id: sessionId, fallback: true } };
-      }
-
-      // Empaquetar balances en notes para compatibilidad sin updated_at
-      let extendedNotes = notes || s?.notes || '';
-      const meta = {
-        closing_balances: closingBalances || [],
-        closing_date: closedAt || new Date().toISOString()
-      };
-      if (extendedNotes.includes('__META__:')) {
-        extendedNotes = extendedNotes.split('__META__:')[0].trim();
-      }
-      extendedNotes = (extendedNotes ? extendedNotes + ' ' : '') + '__META__:' + JSON.stringify(meta);
-
-      const { error: updErr } = await supabase
-        .from('cash_sessions')
-        .update({
-          status: 'closed',
-          closed_at: closedAt || new Date().toISOString(),
-          notes: extendedNotes
-        })
-        .eq('id', sessionId);
-
-      if (updErr) {
-        return { success: false, error: updErr.message };
-      }
-
-      // Crear o actualizar liquidación salarial
-      if (settlement) {
-        const settlementId = settlement.id || `settle-${sessionId}`;
-        try {
-          await supabase.from('salary_settlements').upsert({
-            id: settlementId,
-            user_id: settlement.userId || null,
-            user_name: settlement.userName || '',
-            session_id: sessionId,
-            base_salary: settlement.baseSalary || 0,
-            commissions: settlement.commissions || 0,
-            total: settlement.total || 0,
-            discrepancy_deduction: settlement.discrepancyDeduction || 0,
-            date: closedAt || new Date().toISOString(),
-            status: 'pending'
-          });
-        } catch (setErr) {
-          console.warn('[RPC Fallback] No se pudo guardar liquidación salarial:', setErr);
-        }
-      }
-
-      try {
-        await supabase.from('audit_log').insert({
-          user_id: settlement?.userId || 'system',
-          action: 'CLOSE_SESSION',
-          entity_type: 'cash_session',
-          entity_id: sessionId,
-          meta: {
-            closing_balances: closingBalances,
-            closed_at: closedAt,
-            fallback: true
-          }
-        });
-      } catch (auditErr) {
-        console.warn('[RPC Fallback] No se pudo guardar audit_log en cierre:', auditErr);
-      }
-
-      return { success: true, data: { session_id: sessionId, fallback: true } };
-    } catch (fbErr: any) {
-      console.error("[RPC Fallback] Error cerrando sesión:", fbErr);
-      return { success: false, error: fbErr?.message || e.message };
-    }
+    // No hacemos fallback directo: cerrar el turno y guardar la liquidación
+    // deben permanecer atómicos. Si el RPC falló después de commit, el replay
+    // de close_cash_session_v2 es idempotente y recupera el resultado.
+    console.warn('[RPC] close_cash_session_v2 failed; leaving operation for queue replay:', e);
+    return { success: false, error: formatSupabaseError(e) };
   }
 }
 

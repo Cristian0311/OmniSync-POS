@@ -197,7 +197,7 @@ export interface AppState {
   isInitialized: boolean;
   
   // Notificaciones Globales
-  notifications: { id: string; message: string; type: 'success' | 'error' | 'warning' | 'info'; details?: string }[];
-  addNotification: (message: string, type?: 'success' | 'error' | 'warning' | 'info', details?: string) => void;
+  notifications: { id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }[];
+  addNotification: (message: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
   removeNotification: (id: string) => void;
 }

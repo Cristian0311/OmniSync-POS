@@ -62,7 +62,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pendingOfflineCount, setPendingOfflineCount] = useState(getOfflineQueueCount());
   const [isSyncingOffline, setIsSyncingOffline] = useState(false);
-  const [expandedNotificationId, setExpandedNotificationId] = useState<string | null>(null);
   const { currentUser, logout, notifications, removeNotification, storeConfig, syncWithSupabase, addNotification } = useStore(useShallow((state) => ({ currentUser: state.currentUser, logout: state.logout, notifications: state.notifications, removeNotification: state.removeNotification, storeConfig: state.storeConfig, syncWithSupabase: state.syncWithSupabase, addNotification: state.addNotification })));
   const location = useLocation();
   const isPosPage = location.pathname === "/pos";
@@ -104,16 +103,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       setPendingOfflineCount(res.remaining);
       const cloudResult = await syncWithSupabase();
       if (res.remaining > 0 || cloudResult?.success === false) {
-        addNotification(`Sincronización incompleta: quedan ${res.remaining} operaciones pendientes.`, 'warning', [
-          ...(res.errors || []).map(e => `${e.type} · ${e.actionId}: ${e.message}`),
-          ...(cloudResult?.errors || []).map((e: string) => `Nube: ${e}`),
-          cloudResult?.success === false && cloudResult?.message ? `Sincronización nube: ${cloudResult.message}` : ''
-        ].filter(Boolean).join('\n') || 'No se recibió un detalle específico. Abre Configuración y revisa el registro de sincronización.');
+        addNotification(`Sincronización incompleta: quedan ${res.remaining} operaciones pendientes.`, 'warning');
       } else {
         addNotification("Sincronización con la nube completada con éxito", 'success');
       }
     } catch {
-      addNotification("Error al sincronizar con Supabase", 'error', 'La sincronización lanzó una excepción antes de completar el proceso. Revisa la conexión y vuelve a intentarlo.');
+      addNotification("Error al sincronizar con Supabase", 'error');
     } finally {
       setIsSyncingOffline(false);
     }
@@ -152,22 +147,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               {n.type === 'warning' && <AlertTriangle className="w-5 h-5 text-amber-500" />}
               {n.type === 'info' && <Info className="w-5 h-5 text-indigo-500" />}
             </div>
-            <button
-              type="button"
-              onClick={() => n.details && setExpandedNotificationId(expandedNotificationId === n.id ? null : n.id)}
-              className={cn("flex-1 text-left text-[11px] font-black uppercase tracking-tight leading-tight", n.details && "cursor-pointer")}
-              title={n.details ? "Presiona para ver el detalle del error" : undefined}
-            >
-              <span>{n.message}</span>
-              {n.details && <span className="block mt-1 text-[9px] opacity-70 normal-case tracking-normal">Presiona para ver el detalle</span>}
-              {n.details && expandedNotificationId === n.id && (
-                <span className="block mt-2 p-2 rounded-lg bg-black/5 whitespace-pre-wrap break-words font-mono text-[10px] normal-case tracking-normal max-h-48 overflow-auto">{n.details}</span>
-              )}
-            </button>
+            <div className="flex-1 text-[11px] font-black uppercase tracking-tight leading-tight">
+              {n.message}
+            </div>
             <button 
               onClick={() => removeNotification(n.id)}
               className="shrink-0 p-1 hover:bg-black/5 rounded-full transition-colors"
-              aria-label="Cerrar notificación"
             >
               <X className="w-3.5 h-3.5" />
             </button>
