@@ -93,13 +93,13 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
     const branchRows = store.branches.map(b => ({
       id: b.id, name: b.name, address: b.address || '', phone: b.phone || ''
     }));
-    await safeUpsertMany(supabase, 'branches', branchRows);
+    { const r = await safeUpsertMany(supabase, 'branches', branchRows); if (!r.success) errors.push(`Sucursales: ${r.error?.message || 'fallo de guardado'}`); }
 
     // 2. Categories
     const categoryRows = store.categories.map(c => ({
       id: c.id, name: c.name, department: c.department || '', color: c.color || '#6366f1'
     }));
-    await safeUpsertMany(supabase, 'categories', categoryRows);
+    { const r = await safeUpsertMany(supabase, 'categories', categoryRows); if (!r.success) errors.push(`Categorías: ${r.error?.message || 'fallo de guardado'}`); }
 
     // 3. Users
     const userRows = store.users.map(u => ({
@@ -117,7 +117,7 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
       is_independent: u.isIndependent === true,
       assigned_branch_id: u.assignedBranchId || u.branchId || null
     }));
-    await safeUpsertMany(supabase, 'users', userRows);
+    { const r = await safeUpsertMany(supabase, 'users', userRows); if (!r.success) errors.push(`Usuarios: ${r.error?.message || 'fallo de guardado'}`); }
 
     // 4. Bank Cards
     const cardRows = (store.bankCards || []).map(bc => ({
@@ -130,7 +130,7 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
       balance: Number(bc.balance) || 0,
       currency: bc.currency || 'CUP'
     }));
-    await safeUpsertMany(supabase, 'bank_cards', cardRows);
+    { const r = await safeUpsertMany(supabase, 'bank_cards', cardRows); if (!r.success) errors.push(`Tarjetas: ${r.error?.message || 'fallo de guardado'}`); }
 
     // 5. Products
     const productRows = store.products.map(p => ({
@@ -156,7 +156,7 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
       available_sizes: p.availableSizes || [],
       available_colors: p.availableColors || []
     }));
-    await safeUpsertMany(supabase, 'products', productRows);
+    { const r = await safeUpsertMany(supabase, 'products', productRows); if (!r.success) errors.push(`Productos: ${r.error?.message || 'fallo de guardado'}`); }
 
     // Set of valid IDs for foreign key reference safety
     const validProdIds = new Set(store.products.map(p => p.id));
@@ -176,7 +176,7 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
         product_id: price.productId,
         settlement_price: price.settlementPrice
       }));
-    await safeUpsertMany(supabase, 'idn_settlement_prices', idnRows);
+    { const r = await safeUpsertMany(supabase, 'idn_settlement_prices', idnRows); if (!r.success) errors.push(`Precios IDN: ${r.error?.message || 'fallo de guardado'}`); }
 
     // 8. Customers
     const custRows = store.customers.map(cust => ({
@@ -186,7 +186,7 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
       email: cust.email || null,
       tax_id: cust.taxId || null
     }));
-    await safeUpsertMany(supabase, 'customers', custRows);
+    { const r = await safeUpsertMany(supabase, 'customers', custRows); if (!r.success) errors.push(`Clientes: ${r.error?.message || 'fallo de guardado'}`); }
 
     // 9. Suppliers
     const supRows = (store.suppliers || []).map(sup => ({
@@ -198,7 +198,7 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
       rating: Number(sup.rating) || 5,
       type_of_merchandise: sup.typeOfMerchandise || ''
     }));
-    await safeUpsertMany(supabase, 'suppliers', supRows);
+    { const r = await safeUpsertMany(supabase, 'suppliers', supRows); if (!r.success) errors.push(`Proveedores: ${r.error?.message || 'fallo de guardado'}`); }
 
     // 10. Supplier Orders
     const validSupIds = new Set((store.suppliers || []).map(s => s.id));
@@ -216,7 +216,7 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
         transport_details: o.transportDetails || '',
         transport_cost: Number(o.transportCost) || 0
       }));
-    await safeUpsertMany(supabase, 'supplier_orders', orderRows);
+    { const r = await safeUpsertMany(supabase, 'supplier_orders', orderRows); if (!r.success) errors.push(`Órdenes de compra: ${r.error?.message || 'fallo de guardado'}`); }
 
     // 11. Transactions
     // Deliberadamente no insertamos ventas con upsert: una venta debe pasar por
@@ -245,13 +245,13 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
         date: ss.date,
         status: ss.status || 'pending'
       }));
-      await safeUpsertMany(supabase, 'salary_settlements', settlementRows);
+      { const r = await safeUpsertMany(supabase, 'salary_settlements', settlementRows); if (!r.success) errors.push(`Liquidaciones: ${r.error?.message || 'fallo de guardado'}`); }
     }
 
     // 17. Inventory transfers: se procesan por RPC para mover stock atómicamente.
 
 
-    return { success: true, pushed, errors };
+    return { success: errors.length === 0, pushed, errors };
   } catch (err: any) {
     errors.push(`Error en push total: ${err.message}`);
     return { success: false, pushed, errors };

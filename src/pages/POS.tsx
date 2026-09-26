@@ -98,9 +98,11 @@ export default function POS() {
     try {
       const res = await processOfflineQueue();
       setPendingOfflineCount(res.remaining);
-      if (res.processed > 0) {
-        addNotification(`Sincronización manual: ${res.processed} operaciones subidas a la base de datos.`, 'info');
-      } else if (res.remaining === 0) {
+      if (res.remaining > 0) {
+        addNotification(`Sincronización incompleta: ${res.processed} operaciones procesadas y ${res.remaining} siguen pendientes.`, 'warning');
+      } else if (res.processed > 0) {
+        addNotification(`Sincronización manual completada: ${res.processed} operaciones confirmadas.`, 'success');
+      } else {
         addNotification('Todo está al día y sincronizado con Supabase.', 'info');
       }
     } finally {
@@ -846,7 +848,8 @@ export default function POS() {
 
   const getProductStock = (productId: string, variantLabel?: string) => {
     return (inventory || []).reduce((total, item) => {
-      if (item.branchId !== currentBranchId || item.productId !== productId) return total;
+      const stockBranchId = currentSession?.branchId || currentBranchId;
+      if (item.branchId !== stockBranchId || item.productId !== productId) return total;
       if (variantLabel) return item.variantLabel === variantLabel ? total + item.quantity : total;
       return total + item.quantity;
     }, 0);

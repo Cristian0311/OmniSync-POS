@@ -419,16 +419,21 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'Turno % no encontrado',p_session_id; END IF;
   IF s.status='closed' THEN
     SELECT row_to_json(ss.*)::jsonb INTO v_settlement FROM salary_settlements ss WHERE ss.session_id=p_session_id ORDER BY ss.created_at DESC LIMIT 1;
-    RETURN jsonb_build_object('success',true,'session_id',p_session_id,'already_closed',true,'settlement',v_settlement);
+    RETURN jsonb_build_object('success',true,'session_id',p_session_id,'already_closed',true,'settlement',v_settlement,
+      'settlement_id',CASE WHEN v_settlement IS NULL THEN NULL ELSE v_settlement->>'id' END);
   END IF;
   UPDATE cash_sessions SET status='closed',closed_at=p_closed_at,closing_balances=p_closing_balances,notes=p_notes,updated_at=NOW() WHERE id=p_session_id;
-  SELECT id INTO v_settlement_id FROM salary_settlements WHERE session_id=p_session_id LIMIT 1;
+  SELECT id INTO v_settlement_id FROM salary_settlements WHERE session_id=p_session_id ORDER BY created_at DESC LIMIT 1;
   IF v_settlement_id IS NULL THEN
-    v_settlement_id:=gen_random_uuid()::text;
-    INSERT INTO salary_settlements(id,user_id,user_name,session_id,base_salary,commissions,total,discrepancy_deduction,date,status,created_at)
+    v_settlement_id:=COALESCE(NULLIF(p_settlement_data->>'id',''),'salary-'||p_session_id);
+    INSERT INTO salary_settlements(id,user_id,user_name,session_id,base_salary,commissions,total,date,status,created_at)
     VALUES(v_settlement_id,p_settlement_data->>'userId',p_settlement_data->>'userName',p_session_id,
       COALESCE((p_settlement_data->>'baseSalary')::numeric,0),COALESCE((p_settlement_data->>'commissions')::numeric,0),
-      COALESCE((p_settlement_data->>'total')::numeric,0),COALESCE((p_settlement_data->>'discrepancyDeduction')::numeric,0),p_closed_at,'pending',NOW());
+      COALESCE((p_settlement_data->>'total')::numeric,0),p_closed_at,
+      COALESCE(NULLIF(p_settlement_data->>'status',''),'pending'),NOW())
+    ON CONFLICT (id) DO UPDATE SET user_id=EXCLUDED.user_id,user_name=EXCLUDED.user_name,session_id=EXCLUDED.session_id,
+      base_salary=EXCLUDED.base_salary,commissions=EXCLUDED.commissions,total=EXCLUDED.total,
+      date=EXCLUDED.date,status=EXCLUDED.status;
   END IF;
   INSERT INTO audit_log(user_id,action,entity_type,entity_id,meta)
   VALUES(p_settlement_data->>'userId','CLOSE_SESSION','cash_session',p_session_id,p_settlement_data);
@@ -837,3 +842,30 @@ END $$;
 UPDATE inventory SET variant_label='' WHERE variant_label IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS inventory_product_branch_variant_uidx
   ON inventory (product_id, branch_id, COALESCE(variant_label,''));
+
+-- Apertura offline determinista: conserva el ID local para ventas encoladas.
+CREATE OR REPLACE FUNCTION open_cash_session_v3(
+  p_session_id TEXT, p_user_id TEXT, p_worker_name TEXT, p_branch_id TEXT,
+  p_opening_amount NUMERIC, p_opened_at TIMESTAMPTZ,
+  p_working_employee_ids TEXT[], p_notes TEXT
+) RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER AS $$
+DECLARE v_next_turn INTEGER; v_result JSONB;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('cash-session:' || p_branch_id));
+  IF EXISTS (SELECT 1 FROM cash_sessions WHERE id=p_session_id) THEN
+    SELECT row_to_json(cash_sessions.*)::jsonb INTO v_result FROM cash_sessions WHERE id=p_session_id;
+    RETURN v_result;
+  END IF;
+  IF EXISTS (SELECT 1 FROM cash_sessions WHERE branch_id=p_branch_id AND status='open' AND deleted_at IS NULL) THEN
+    RAISE EXCEPTION 'Ya existe un turno abierto para la sucursal %', p_branch_id USING ERRCODE='23505';
+  END IF;
+  INSERT INTO settings(id,last_turn_number) VALUES('global',1)
+  ON CONFLICT(id) DO UPDATE SET last_turn_number=settings.last_turn_number+1
+  RETURNING last_turn_number INTO v_next_turn;
+  INSERT INTO cash_sessions(id,user_id,worker_name,branch_id,opened_at,opening_balance,opening_amount,status,working_employee_ids,notes,created_at)
+  VALUES(p_session_id,p_user_id,p_worker_name,p_branch_id,p_opened_at,p_opening_amount,p_opening_amount,'open',p_working_employee_ids,p_notes,NOW())
+  RETURNING row_to_json(cash_sessions.*)::jsonb INTO v_result;
+  INSERT INTO audit_log(user_id,action,entity_type,entity_id,new_data)
+  VALUES(p_user_id,'OPEN_SESSION','cash_session',p_session_id,v_result);
+  RETURN v_result;
+END $$;

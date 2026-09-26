@@ -22,7 +22,8 @@ export async function triggerBackgroundSync(force = false): Promise<void> {
     // Reconnection path: upload local operations first. Do NOT immediately pull
     // the whole database afterward; doing so was the main source of heavy UI
     // stalls and local/remote merge races.
-    if (getOfflineQueueCount() > 0) await processOfflineQueue();
+    const manualOfflineSync = useStore.getState().storeConfig?.manualOfflineSync === true;
+    if (getOfflineQueueCount() > 0 && (!manualOfflineSync || force)) await processOfflineQueue();
     if (!force) {
       await useStore.getState().refreshBranchInventory();
     }

@@ -13,6 +13,7 @@ export interface AppState {
   logout: () => void;
   clearAllData: () => Promise<void>;
   clearReportsHistory: () => Promise<void>;
+  resetSelectedData: (sections: import('../services/supabaseSync/mutations').ResetSection[]) => Promise<{ success: boolean; failed: string[] }>;
   exportData: () => string;
   importData: (jsonData: string) => Promise<{ success: boolean; error?: string }>;
   addUser: (user: User) => void;

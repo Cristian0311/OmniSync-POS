@@ -101,8 +101,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     try {
       const res = await processOfflineQueue();
       setPendingOfflineCount(res.remaining);
-      await syncWithSupabase();
-      addNotification("Sincronización con la nube completada con éxito", 'success');
+      const cloudResult = await syncWithSupabase();
+      if (res.remaining > 0 || cloudResult?.success === false) {
+        addNotification(`Sincronización incompleta: quedan ${res.remaining} operaciones pendientes.`, 'warning');
+      } else {
+        addNotification("Sincronización con la nube completada con éxito", 'success');
+      }
     } catch {
       addNotification("Error al sincronizar con Supabase", 'error');
     } finally {

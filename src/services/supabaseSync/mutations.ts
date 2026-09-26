@@ -483,6 +483,46 @@ export async function clearSupabaseData(confirmToken?: string) {
   console.debug("[clearSupabaseData] Limpieza completada.");
 }
 
+
+export type ResetSection =
+  | 'inventory' | 'reports' | 'catalog' | 'customers' | 'suppliers' | 'purchases'
+  | 'cash' | 'bank' | 'users' | 'branches' | 'quotes' | 'settings';
+
+/** Limpieza selectiva. Nunca debe interpretarse como "borrar todo". */
+export async function clearSelectedDataFromSupabase(sections: ResetSection[]): Promise<{ success: boolean; failed: string[] }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, failed: ['Supabase no configurado'] };
+  const selected = new Set(sections);
+  const failed: string[] = [];
+  const groups: Record<ResetSection, string[]> = {
+    inventory: ['inventory_movements', 'inventory_transfers', 'inventory'],
+    reports: ['transactions', 'cash_sessions', 'cash_movements', 'bank_transactions', 'inventory_audits', 'salary_settlements', 'returns', 'warranties'],
+    catalog: ['idn_settlement_prices', 'products', 'categories'],
+    customers: ['customers'],
+    suppliers: ['supplier_orders', 'suppliers'],
+    purchases: ['supplier_orders'],
+    cash: ['cash_movements', 'cash_sessions', 'salary_settlements'],
+    bank: ['bank_transactions', 'bank_cards'],
+    users: ['users'],
+    branches: ['branches'],
+    quotes: ['quotes'],
+    settings: ['currencies']
+  };
+  const tables = Array.from(new Set(Array.from(selected).flatMap(section => groups[section] || [])));
+  for (const table of tables) {
+    try {
+      const query = table === 'currencies'
+        ? supabase.from(table).delete().not('code', 'is', null)
+        : supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      const { error } = await query;
+      if (error) throw error;
+    } catch (e) {
+      failed.push(`${table}: ${e instanceof Error ? e.message : 'error'}`);
+    }
+  }
+  return { success: failed.length === 0, failed };
+}
+
 export async function clearHistoryFromSupabase() {
   const supabase = getSupabase();
   if (!supabase) return;

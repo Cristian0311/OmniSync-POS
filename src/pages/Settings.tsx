@@ -1,6 +1,6 @@
 import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useEffect } from "react";
-import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw, Usb, Bluetooth, Wifi, Printer, CheckCircle2, ExternalLink, AlertCircle, Sparkles, Smartphone, ChevronRight, Package, Search, X, Database, CloudUpload, CloudDownload, Check, Sun, Moon } from "lucide-react";
+import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw, Usb, Bluetooth, Wifi, Printer, CheckCircle2, ExternalLink, AlertCircle, Sparkles, Smartphone, ChevronRight, Package, Search, X, Database, CreditCard, CloudUpload, CloudDownload, Check, Sun, Moon } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { Branch, Category, User } from "../types";
@@ -131,6 +131,21 @@ export default function Settings() {
   const [showConfirmCache, setShowConfirmCache] = useState(false);
   const [showConfirmReset, setShowConfirmReset] = useState(false);
   const [resetInput, setResetInput] = useState("");
+  const RESET_OPTIONS = [
+    { id: 'inventory', label: 'Inventario', desc: 'Existencias, movimientos y transferencias', icon: Package },
+    { id: 'reports', label: 'Reportes e historial', desc: 'Ventas, turnos, devoluciones, garantías y auditorías', icon: Database },
+    { id: 'catalog', label: 'Catálogo', desc: 'Productos, categorías y precios IDN', icon: LayoutGrid },
+    { id: 'customers', label: 'Clientes', desc: 'Clientes registrados', icon: Users },
+    { id: 'suppliers', label: 'Proveedores', desc: 'Proveedores registrados', icon: Store },
+    { id: 'purchases', label: 'Compras', desc: 'Pedidos a proveedores', icon: CloudDownload },
+    { id: 'cash', label: 'Caja y turnos', desc: 'Turnos, movimientos de caja y liquidaciones', icon: DollarSign },
+    { id: 'bank', label: 'Bancos', desc: 'Tarjetas y movimientos bancarios', icon: CreditCard },
+    { id: 'users', label: 'Usuarios y empleados', desc: 'Restablece usuarios dejando el administrador inicial', icon: Users },
+    { id: 'branches', label: 'Sucursales', desc: 'Elimina las sucursales configuradas', icon: Building2 },
+    { id: 'quotes', label: 'Cotizaciones y pedidos', desc: 'Cotizaciones y pedidos pendientes', icon: CloudUpload },
+    { id: 'settings', label: 'Configuración', desc: 'Tasas de moneda y valores de configuración restablecibles', icon: SettingsIcon },
+  ] as const;
+  const [resetSections, setResetSections] = useState<string[]>([]);
 
   const [selectedIDNUser, setSelectedIDNUser] = useState<User | null>(null);
   const [selectedUserForConfig, setSelectedUserForConfig] = useState<User | null>(null);
@@ -142,17 +157,33 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState<'connectivity' | 'company' | 'branches' | 'categories' | 'employees' | 'advanced'>('connectivity');
 
   const handleClearData = async () => {
-    if (resetInput.trim().toUpperCase() !== 'ELIMINAR') return;
-    
+    if (resetInput.trim().toUpperCase() !== 'ELIMINAR' || resetSections.length === 0) return;
     setIsLoading(true);
     try {
-      await clearAllData();
+      const result = await useStore.getState().resetSelectedData(resetSections as any);
+      if (!result.success) {
+        showToast(`Restablecimiento parcial. No se pudieron limpiar: ${result.failed.join(', ')}`, 'error');
+        return;
+      }
+      showToast('Los módulos seleccionados fueron restablecidos correctamente.');
+      setShowConfirmReset(false);
+      setResetInput('');
+      setResetSections([]);
       window.location.reload();
     } catch (e) {
-      console.error("Error al eliminar los datos:", e);
+      console.error('Error al restablecer los datos:', e);
+      showToast('No se pudo completar el restablecimiento.', 'error');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const toggleResetSection = (id: string) => {
+    setResetSections(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const toggleAllResetSections = () => {
+    setResetSections(prev => prev.length === RESET_OPTIONS.length ? [] : RESET_OPTIONS.map(x => x.id));
   };
 
   const handleSaveRates = () => {
@@ -311,8 +342,13 @@ export default function Settings() {
         if (res.processed) addNotification(`Cola procesada: ${res.processed} operaciones.`, 'success');
         if (res.failed) addNotification(`Error en ${res.failed} operaciones.`, 'error');
       }
-      await syncWithSupabase();
-      showToast("Sincronización completa con Supabase.");
+      const cloudResult = await syncWithSupabase();
+      const remaining = getOfflineQueueCount();
+      if (remaining > 0 || cloudResult?.success === false) {
+        showToast(`Sincronización incompleta: quedan ${remaining} operaciones pendientes.`, "error");
+      } else {
+        showToast("Sincronización completa con Supabase.");
+      }
     } catch (e) {
       showToast("Error al sincronizar con la nube.", "error");
     } finally {
@@ -2302,55 +2338,55 @@ export default function Settings() {
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-red-50/50 dark:bg-red-950/20 p-4 rounded-xl border border-red-100 dark:border-red-900/30">
           <div className="flex-1">
             <h4 className="text-sm font-bold text-primary">Restablecer Sistema</h4>
-            <p className="text-xs text-muted mt-1">
-              Elimina <strong>todos</strong> los datos (inventario, ventas, clientes, usuarios). Esta acción es irreversible.
-            </p>
+            <p className="text-xs text-muted mt-1">Selecciona exactamente qué módulos quieres restablecer. Los demás datos permanecen intactos.</p>
             {showConfirmReset && (
-              <div className="mt-3 p-3 bg-primary rounded-lg border border-red-200 dark:border-red-900/50 animate-in fade-in slide-in-from-top-2">
-                <p className="text-[10px] font-black text-red-600 uppercase mb-2">Escribe "ELIMINAR" para confirmar:</p>
-                <input 
-                  type="text"
-                  value={resetInput}
-                  onChange={e => setResetInput(e.target.value)}
-                  className="w-full px-3 py-2 bg-secondary border border-base rounded-lg text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-red-500 uppercase"
-                  placeholder="ELIMINAR"
-                />
+              <div className="mt-4 w-full p-4 bg-primary rounded-xl border border-red-200 dark:border-red-900/50">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div>
+                    <p className="text-xs font-black text-primary uppercase">¿Qué deseas restablecer?</p>
+                    <p className="text-[10px] text-muted mt-1">Marca uno o varios módulos.</p>
+                  </div>
+                  <button type="button" onClick={toggleAllResetSections} className="px-3 py-2 text-[10px] font-black uppercase rounded-lg border border-base text-primary hover:bg-subtle">
+                    {resetSections.length === RESET_OPTIONS.length ? 'Desmarcar todo' : 'Marcar todo'}
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {RESET_OPTIONS.map(option => {
+                    const Icon = option.icon;
+                    const checked = resetSections.includes(option.id);
+                    return (
+                      <label key={option.id} className={cn('flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all', checked ? 'border-red-500 bg-red-50 dark:bg-red-950/20' : 'border-base hover:bg-subtle')}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleResetSection(option.id)} className="mt-1 h-4 w-4 accent-red-600" />
+                        <span className="min-w-0">
+                          <span className="flex items-center gap-2 text-xs font-black text-primary"><Icon size={14} />{option.label}</span>
+                          <span className="block text-[10px] text-muted mt-1 leading-snug">{option.desc}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="mt-4 p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50">
+                  <p className="text-[10px] font-black text-red-700 dark:text-red-300 uppercase">Se borrará únicamente lo seleccionado</p>
+                  <p className="text-[10px] text-muted mt-1">Esta acción no se puede deshacer. Antes de continuar, confirma escribiendo ELIMINAR.</p>
+                </div>
+                <input type="text" value={resetInput} onChange={e => setResetInput(e.target.value)} className="mt-3 w-full px-3 py-3 bg-secondary border border-base rounded-lg text-sm font-bold text-primary outline-none focus:ring-1 focus:ring-red-500 uppercase" placeholder="Escribe ELIMINAR" />
               </div>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 shrink-0">
             {showConfirmReset ? (
               <>
-                <button
-                  onClick={() => {
-                    setShowConfirmReset(false);
-                    setResetInput("");
-                  }}
-                  className="px-4 py-2 bg-subtle text-primary border border-base rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleClearData}
-                  disabled={isLoading || resetInput.trim().toUpperCase() !== 'ELIMINAR'}
-                  className="px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-95 disabled:opacity-30 flex items-center gap-2"
-                >
-                  {isLoading ? <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div> : <Trash2 size={12} />}
-                  Borrar Todo
+                <button onClick={() => { setShowConfirmReset(false); setResetInput(''); setResetSections([]); }} className="px-4 py-2 bg-subtle text-primary border border-base rounded-xl text-[10px] font-black uppercase tracking-widest">Cancelar</button>
+                <button onClick={handleClearData} disabled={isLoading || resetSections.length === 0 || resetInput.trim().toUpperCase() !== 'ELIMINAR'} className="px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md disabled:opacity-30 flex items-center gap-2">
+                  {isLoading ? <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white" /> : <Trash2 size={12} />} Restablecer seleccionados
                 </button>
               </>
             ) : (
-              <button
-                onClick={() => setShowConfirmReset(true)}
-                disabled={isLoading}
-                className="w-full sm:w-auto px-6 py-3 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
-              >
-                <Trash2 size={14} />
-                Restablecer Todo
+              <button onClick={() => setShowConfirmReset(true)} disabled={isLoading} className="w-full sm:w-auto px-6 py-3 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50">
+                <Trash2 size={14} /> Restablecer datos
               </button>
             )}
           </div>
-        </div>
         </div>
       </div>
     </div>
