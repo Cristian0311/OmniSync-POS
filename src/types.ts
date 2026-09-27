@@ -152,6 +152,15 @@ export interface ReturnItem {
   replacementProductId?: string;
   replacementQuantity?: number;
   processedBy?: string;
+  // Physical return and monetary refund are separate control events.
+  refundStatus?: 'not_required' | 'pending' | 'approved' | 'paid' | 'rejected';
+  refundAmount?: number;
+  refundCurrencyCode?: string;
+  refundMethod?: 'cash' | 'transfer' | 'store_credit';
+  refundBankCardId?: string;
+  refundTransactionId?: string;
+  receivedAt?: string;
+  refundedAt?: string;
 }
 
 export interface Customer {
