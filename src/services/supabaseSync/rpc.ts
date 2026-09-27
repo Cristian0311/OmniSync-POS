@@ -275,6 +275,80 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
   }
 }
 
+export async function callStartInventoryAuditRPC(
+  auditId: string, branchId: string, userId: string, mode: 'physical' | 'cycle_count',
+  blindCount: boolean, notes?: string
+): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: 'Supabase no configurado' };
+  try {
+    const { data, error } = await supabase.rpc('start_inventory_audit_v2', {
+      p_audit_id: auditId, p_branch_id: branchId, p_user_id: userId,
+      p_mode: mode, p_blind_count: blindCount, p_notes: notes || ''
+    });
+    if (error) throw error;
+    assertRpcSuccess(data, 'start_inventory_audit_v2');
+    return { success: true, data };
+  } catch (e: any) {
+    console.error('[RPC] start_inventory_audit_v2 failed:', e);
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
+  }
+}
+
+export async function callSaveInventoryAuditCountRPC(
+  auditId: string, userId: string, items: any[], notes?: string
+): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: 'Supabase no configurado' };
+  try {
+    const { data, error } = await supabase.rpc('save_inventory_audit_count_v2', {
+      p_audit_id: auditId, p_user_id: userId, p_items: items, p_notes: notes || ''
+    });
+    if (error) throw error;
+    assertRpcSuccess(data, 'save_inventory_audit_count_v2');
+    return { success: true, data };
+  } catch (e: any) {
+    console.error('[RPC] save_inventory_audit_count_v2 failed:', e);
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
+  }
+}
+
+export async function callRequestInventoryAuditRecountRPC(
+  auditId: string, userId: string, notes?: string
+): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: 'Supabase no configurado' };
+  try {
+    const { data, error } = await supabase.rpc('request_inventory_audit_recount_v2', {
+      p_audit_id: auditId, p_user_id: userId, p_notes: notes || ''
+    });
+    if (error) throw error;
+    assertRpcSuccess(data, 'request_inventory_audit_recount_v2');
+    return { success: true, data };
+  } catch (e: any) {
+    console.error('[RPC] request_inventory_audit_recount_v2 failed:', e);
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
+  }
+}
+
+export async function callApproveInventoryAuditRPC(
+  auditId: string, userId: string, notes?: string
+): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: 'Supabase no configurado' };
+  try {
+    const { data, error } = await supabase.rpc('approve_inventory_audit_v2', {
+      p_audit_id: auditId, p_user_id: userId, p_notes: notes || ''
+    });
+    if (error) throw error;
+    assertRpcSuccess(data, 'approve_inventory_audit_v2');
+    return { success: true, data };
+  } catch (e: any) {
+    console.error('[RPC] approve_inventory_audit_v2 failed:', e);
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
+  }
+}
+
 export async function callCompleteInventoryAuditRPC(auditId: string, branchId: string, userId: string, items: any[], notes?: string): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
   const supabase = getSupabase();
   if (!supabase) return { success: false, error: 'Supabase no configurado' };
