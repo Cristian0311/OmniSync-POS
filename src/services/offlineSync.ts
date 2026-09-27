@@ -53,16 +53,38 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         if (res.success) return true;
         throw new Error(res.error || 'No se pudo abrir el turno en Supabase');
       }
-      // Un snapshot de un turno ya existente no debe llamar al RPC de apertura:
-      // ese RPC puede crear otro turno si el original aún no existe en remoto.
-      // Los snapshots son reconciliaciones de estado y se escriben por ID estable.
+      // Un snapshot nunca debe reabrir ni cerrar un turno por accidente.
+      // Apertura/cierre/cancelación tienen sus propias operaciones. Aquí solo
+      // reconciliamos metadatos de una sesión ya existente.
+      const { data: remoteSession, error: remoteReadError } = await supabase
+        .from('cash_sessions')
+        .select('id,status,closed_at,deleted_at,deleted_by,delete_reason,branch_id,user_id')
+        .eq('id', session.id)
+        .maybeSingle();
+      if (remoteReadError) throw remoteReadError;
+
+      if (remoteSession && remoteSession.status !== 'open' && session.status === 'open') {
+        // El servidor ya tiene la autoridad final (cerrado/cancelado). El
+        // snapshot local quedó obsoleto; se descarta sin reabrir el turno.
+        return true;
+      }
+
       const row = {
-        id: session.id, user_id: session.userId || null, worker_name: session.workerName || null,
-        branch_id: session.branchId, opened_at: session.openedAt, closed_at: session.closedAt || null,
-        opening_balance: session.openingAmount, status: session.status,
-        notes: session.notes || '', working_employee_ids: session.workingEmployeeIds || [],
-        deleted_at: session.deletedAt || null, deleted_by: session.deletedBy || null, delete_reason: session.deleteReason || null
+        id: session.id,
+        user_id: remoteSession?.user_id || session.userId || null,
+        worker_name: session.workerName || null,
+        branch_id: session.branchId,
+        opened_at: remoteSession ? undefined : session.openedAt,
+        closed_at: remoteSession?.closed_at || (session.status === 'closed' ? session.closedAt || null : null),
+        opening_balance: session.openingAmount,
+        status: remoteSession?.status || session.status,
+        notes: session.notes || '',
+        working_employee_ids: session.workingEmployeeIds || [],
+        deleted_at: remoteSession?.deleted_at || session.deletedAt || null,
+        deleted_by: remoteSession?.deleted_by || session.deletedBy || null,
+        delete_reason: remoteSession?.delete_reason || session.deleteReason || null
       };
+      if (row.opened_at === undefined) delete (row as any).opened_at;
       const { error } = await supabase.from('cash_sessions').upsert(row);
       if (error) throw error;
       return true;
