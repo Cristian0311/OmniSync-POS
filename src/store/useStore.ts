@@ -1303,9 +1303,16 @@ export const useStore = create<AppState>()(
     const userId = state.currentUser?.id || 'system';
 
     if (action === 'complete') {
+      await enqueueOfflineItem('return_complete', { id, userId }, 'return:' + id);
       if (navigator.onLine) {
-        await enqueueOfflineItem('return_complete', { id, userId }, 'return:' + id);
         try {
+          // Primero confirmamos la existencia de la devolución en la nube. Así
+          // "Completar" nunca corre antes que "Crear devolución".
+          const { pushReturnToSupabase } = await import('../services/supabaseSync');
+          const persisted = await pushReturnToSupabase(returnReq);
+          if (!persisted) throw new Error('La devolución todavía no está confirmada en Supabase.');
+          removeFromOfflineQueueByAction('return', returnReq.id);
+
           const res = await callCompleteReturnRPC(id, userId);
           if (!res.success) throw new Error(res.error || 'No se pudo completar la devolución');
           removeFromOfflineQueueByAction('return_complete', 'return:' + id);
@@ -1313,8 +1320,6 @@ export const useStore = create<AppState>()(
           console.warn('[processReturn] Devolución no confirmada; queda durable para reintento:', err);
           return false;
         }
-      } else {
-        await enqueueOfflineItem('return_complete', { id, userId }, 'return:' + id);
       }
     }
 
