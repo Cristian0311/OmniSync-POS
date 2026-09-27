@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { Branch, Category, Product, InventoryLevel, CartItem, Transaction, ReturnItem, Currency, Customer, CashRegisterSession, User, PendingOrder, SalarySettlement, InventoryTransfer, Warranty, CashMovement, Supplier, SupplierOrder, InventoryAudit, FiscalConfig, DemandForecast, BankCard, BankTransaction, IDNSettlementPrice } from '../types';
 import { generateId, generateReadableId } from '../lib/utils';
 import { 
-  pullAllFromSupabase, pullPosBootstrapFromSupabase, pullBranchInventoryFromSupabase, pullBranchOperationalDataFromSupabase, pullGlobalCatalogDataFromSupabase, pushProductToSupabase, 
+  pullAllFromSupabase, pullPosBootstrapFromSupabase, pullBranchInventoryFromSupabase, pullBranchOperationalDataFromSupabase, pullGlobalCatalogDataFromSupabase, pullBankDataFromSupabase, pushProductToSupabase, 
   pushTransactionToSupabase, pushCashSessionToSupabase, pushWarrantyToSupabase, pushUserToSupabase, deleteUserFromSupabase, 
   pushIDNSettlementPriceToSupabase, deleteIDNSettlementPriceFromSupabase, SyncResult,
   pushBranchToSupabase, deleteBranchFromSupabase, pushCategoryToSupabase, deleteCategoryFromSupabase, deleteProductFromSupabase,
@@ -2243,11 +2243,11 @@ export const useStore = create<AppState>()(
     pushBankCardToSupabase(card).catch(() => {});
   },
   updateBankCard: (id, card) => {
+    const previousBalance = Number(get().bankCards.find(c => c.id === id)?.balance ?? 0);
     let found: import('../types').BankCard | undefined;
     set(state => {
       const updated = state.bankCards.map(c => {
         if (c.id !== id) return c;
-        // El saldo es autoritativo del servidor y solo cambia mediante RPC.
         const incomingBalance = card.balance;
         const next = {
           ...c,
@@ -2263,7 +2263,6 @@ export const useStore = create<AppState>()(
     });
     if (found) {
       const metadata = { ...found };
-      const previous = get().bankCards.find(c => c.id === id)?.balance ?? found.balance ?? 0;
       const requestedBalance = card.balance;
       // Metadatos y saldo se sincronizan por rutas independientes. El saldo usa
       // una operación compare-and-set para no pisar un movimiento bancario concurrente.
@@ -2282,7 +2281,7 @@ export const useStore = create<AppState>()(
         const balanceActionId = 'bank-balance:' + id + ':' + crypto.randomUUID();
         const balancePayload = {
           cardId: id,
-          expectedBalance: Number(previous) || 0,
+          expectedBalance: previousBalance || 0,
           newBalance: Math.max(0, Number(requestedBalance) || 0),
           userId: get().currentUser?.id || null
         };
@@ -2300,7 +2299,14 @@ export const useStore = create<AppState>()(
               }));
             } else {
               console.warn('[Bank] Saldo no confirmado; permanece en la cola durable para evitar sobrescribir movimientos concurrentes.');
-              await get().refreshBankBalances?.();
+              try {
+                const remote = await pullBankDataFromSupabase();
+                if (remote.success) {
+                  set({ bankCards: remote.bankCards, bankTransactions: remote.bankTransactions });
+                }
+              } catch (refreshError) {
+                console.warn('[Bank] No se pudo refrescar el saldo remoto tras un conflicto:', refreshError);
+              }
             }
           }
         }).catch(err => console.warn('[Bank] balance queue failed:', err));
