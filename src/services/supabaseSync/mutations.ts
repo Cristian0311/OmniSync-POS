@@ -955,6 +955,43 @@ export async function pushBankCardToSupabase(card: BankCard) {
   }
 }
 
+export async function updateBankCardMetadataToSupabase(card: BankCard) {
+  const payload = {
+    name: card.name || card.bankName || 'Tarjeta Bancaria',
+    bank: card.bank || card.bankName || 'Banco',
+    bank_name: card.bankName || card.bank || 'Banco',
+    card_holder: card.cardHolder || 'Titular',
+    account_number: card.accountNumber || card.lastFourDigits || card.lastFour || '',
+    phone: card.phone || '',
+    last_four_digits: card.lastFourDigits || card.lastFour || (card.accountNumber ? String(card.accountNumber).slice(-4) : '0000'),
+    currency: card.currency || 'CUP',
+    color: card.color || 'from-indigo-600 to-purple-800',
+    is_active: card.isActive !== false
+  };
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineItem('bank_card', { ...card, __metadata_only: true }, card.id);
+    return;
+  }
+
+  const supabase = getSupabase();
+  if (!supabase) {
+    enqueueOfflineItem('bank_card', { ...card, __metadata_only: true }, card.id);
+    return;
+  }
+
+  try {
+    const { data, error } = await supabase.from('bank_cards').update(payload).eq('id', card.id).select('id');
+    if (error) throw error;
+    if (!data?.length) {
+      await pushBankCardToSupabase(card);
+    }
+  } catch (e) {
+    enqueueOfflineItem('bank_card', { ...card, __metadata_only: true }, card.id);
+    console.warn('Supabase bank card metadata update failed:', e);
+  }
+}
+
 export async function deleteBankCardFromSupabase(id: string) {
   const supabase = getSupabase();
   if (!supabase) return;
