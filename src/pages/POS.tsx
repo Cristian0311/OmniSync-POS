@@ -438,6 +438,7 @@ export default function POS() {
   const [cancelShiftPassword, setCancelShiftPassword] = useState("");
   const [isCancellingShift, setIsCancellingShift] = useState(false);
   const [isExitingIDN, setIsExitingIDN] = useState(false);
+  const [isFinishingIDN, setIsFinishingIDN] = useState(false);
 
   const handleCancelShift = async () => {
     if (!currentSession || isCancellingShift) return;
@@ -484,40 +485,50 @@ export default function POS() {
   };
 
   const handleFinishIDNAndGoHome = async () => {
-    if (currentSession) {
-      const closingBalances: Payment[] = [
-        { currencyCode: baseCurrency.code, amount: showIDNReceiptModal?.totalToPay || 0, method: 'cash', exchangeRate: 1 }
-      ];
+    if (isFinishingIDN) return;
+    setIsFinishingIDN(true);
+    setPosError("");
 
-      setPosError("");
-      const ok = await closeSession(
-        currentSession.id,
-        closingBalances,
-        activeIDNWorker?.name || currentSession.workerName
-      );
+    try {
+      if (currentSession) {
+        const closingBalances: Payment[] = [
+          { currencyCode: baseCurrency.code, amount: showIDNReceiptModal?.totalToPay || 0, method: 'cash', exchangeRate: 1 }
+        ];
 
-      if (!ok) {
-        setPosError("El cierre no fue confirmado. El turno permanece abierto para proteger las ventas.");
-        return;
+        const ok = await closeSession(
+          currentSession.id,
+          closingBalances,
+          activeIDNWorker?.name || currentSession.workerName
+        );
+
+        if (!ok) {
+          setPosError("El cierre no fue confirmado. El turno permanece abierto para proteger las ventas.");
+          return;
+        }
+
+        setLastClosedSession({
+          ...currentSession,
+          closedAt: new Date().toISOString(),
+          closingDate: new Date().toISOString(),
+          status: 'closed',
+          closingBalances
+        });
       }
 
-      setLastClosedSession({
-        ...currentSession,
-        closedAt: new Date().toISOString(),
-        closingDate: new Date().toISOString(),
-        status: 'closed',
-        closingBalances
-      });
+      setShowIDNReceiptModal(null);
+      setIdnPhysicalCounts({});
+      setShowConfirmIDNModal(false);
+      setPosViewMode('standard');
+      setSessionWorkerName("");
+      setSessionPassword("");
+      setPosSuccess("Liquidación completada. Sesión cerrada.");
+      setTimeout(() => setPosSuccess(""), 3000);
+    } catch (err: any) {
+      console.error("[POS] Error finalizando liquidación IDN:", err);
+      setPosError(err?.message || "No se pudo finalizar la liquidación.");
+    } finally {
+      setIsFinishingIDN(false);
     }
-
-    setShowIDNReceiptModal(null);
-    setIdnPhysicalCounts({});
-    setShowConfirmIDNModal(false);
-    setPosViewMode('standard');
-    setSessionWorkerName("");
-    setSessionPassword("");
-    setPosSuccess("Liquidación completada. Sesión cerrada.");
-    setTimeout(() => setPosSuccess(""), 3000);
   };
 
   const handleCancelAndReturnToEmployeeSelector = async () => {
@@ -706,8 +717,12 @@ export default function POS() {
       };
 
       createReturn(returnData);
-      processReturn(returnId, 'complete');
-      
+      const processed = await processReturn(returnId, 'complete');
+      if (!processed) {
+        setPosError("La devolución no fue confirmada. El producto no se marcó como devuelto.");
+        return;
+      }
+
       setPosSuccess("Producto devuelto y stock actualizado correctamente");
       setReturnConfirm(null);
       setTimeout(() => setPosSuccess(""), 3000);
@@ -2502,10 +2517,11 @@ export default function POS() {
                 <button
                   type="button"
                   onClick={handleFinishIDNAndGoHome}
-                  className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-black text-[11px] sm:text-xs uppercase tracking-widest transition-all shadow-md shadow-amber-600/20 active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                  disabled={isFinishingIDN}
+                  className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-black text-[11px] sm:text-xs uppercase tracking-widest transition-all shadow-md shadow-amber-600/20 active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  <Check className="w-4 h-4" />
-                  <span>Finalizar y Volver al Inicio</span>
+                  {isFinishingIDN ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  <span>{isFinishingIDN ? "Finalizando..." : "Finalizar y Volver al Inicio"}</span>
                 </button>
               </div>
             </div>
