@@ -261,7 +261,7 @@ export const useStore = create<AppState>()(
     }
     return false;
   },
-  logout: () => set({ currentUser: null, cart: [] }), // LIMPIAR CARRITO AL SALIR
+  logout: () => set({ currentUser: null, cart: [], activeSessionId: null }), // LIMPIAR CONTEXTO DEL POS AL SALIR
   clearAllData: async () => {
     // A full reset must never leave durable business operations behind.
     // Otherwise the cloud is emptied and the offline queue can repopulate it
@@ -330,7 +330,8 @@ export const useStore = create<AppState>()(
       pendingOrders: [],
       cart: [],
       currentCustomerId: undefined,
-      lastTurnNumber: 0
+      lastTurnNumber: 0,
+      activeSessionId: null
     });
 
     // 3. Re-push minimal data to Supabase to avoid lock-out
@@ -371,7 +372,7 @@ export const useStore = create<AppState>()(
       patch.catalogConfig = { pageSize: 20, showImages: true, compactMode: false };
     }
 
-    patch.cart = []; patch.currentCustomerId = undefined;
+    patch.cart = []; patch.currentCustomerId = undefined; patch.activeSessionId = null;
     set(patch);
 
     // Persist the resulting selective state immediately.
@@ -592,7 +593,9 @@ export const useStore = create<AppState>()(
 
   branches: INITIAL_BRANCHES,
   currentBranchId: '',
-  setCurrentBranch: (id) => set({ currentBranchId: id, cart: [] }),
+  setCurrentBranch: (id) => set({ currentBranchId: id }),
+  activeSessionId: null,
+  setActiveSessionId: (id) => set({ activeSessionId: id }),
   addBranch: (branch) => {
     let shouldPush = false;
     set((state) => {
@@ -1087,12 +1090,31 @@ export const useStore = create<AppState>()(
     // The units were already consumed by the actual POS sales. Never send this
     // record through the stock-mutating POS RPC.
     if (transaction.notes === 'LIQUIDACION_IDN') {
+      // Las liquidaciones IDN también son operaciones críticas: deben quedar en
+      // la cola durable y solo se eliminan de ella cuando Supabase confirma
+      // físicamente el registro. No usamos el RPC de venta porque volvería a
+      // descontar inventario.
+      await enqueueOfflineItem('transaction', transaction, transaction.id);
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        try {
+          const synced = await pushTransactionToSupabase(transaction);
+          if (!synced) throw new Error('Supabase no confirmó la liquidación IDN');
+          removeFromOfflineQueueByTransactionId(transaction.id);
+        } catch (err) {
+          console.warn('[processTransaction] Liquidación IDN no confirmada; queda durable para reintento:', err);
+          set((state) => ({
+            transactions: [{ ...transaction }, ...state.transactions.filter(t => t.id !== transaction.id)],
+            cart: [],
+            currentCustomerId: undefined
+          }));
+          return true;
+        }
+      }
       set((state) => ({
         transactions: [{ ...transaction }, ...state.transactions.filter(t => t.id !== transaction.id)],
         cart: [],
         currentCustomerId: undefined
       }));
-      void pushTransactionToSupabase(transaction);
       return true;
     }
 
@@ -1435,6 +1457,21 @@ export const useStore = create<AppState>()(
     const finalClosingDate = closingDate || new Date().toISOString();
     const session = get().cashSessions.find(s => s.id === sessionId);
     if (!session) return false;
+
+    // Nunca cerrar remotamente mientras exista una venta/liquidación de este
+    // turno todavía pendiente en la cola durable. En offline el cierre sí se
+    // puede encolar, y el motor lo ordenará después de las ventas.
+    const pendingSessionTransactions = getOfflineQueue().filter(item =>
+      item.type === 'transaction' &&
+      item.data?.sessionId === sessionId
+    );
+    if (pendingSessionTransactions.length > 0 && typeof navigator !== 'undefined' && navigator.onLine) {
+      get().addNotification(
+        'No se puede cerrar todavía: hay ' + pendingSessionTransactions.length + ' venta(s) del turno pendientes de sincronizar.',
+        'warning'
+      );
+      return false;
+    }
 
     const sessionTxs = get().transactions.filter(t =>
       t.sessionId
@@ -2982,7 +3019,7 @@ export const useStore = create<AppState>()(
   partialize: (state) => ({
     users: state.users, currentUser: state.currentUser,
     currencies: state.currencies, storeConfig: state.storeConfig, catalogConfig: state.catalogConfig,
-    branches: state.branches, currentBranchId: state.currentBranchId, categories: state.categories,
+    branches: state.branches, currentBranchId: state.currentBranchId, activeSessionId: state.activeSessionId, categories: state.categories,
     products: state.products, inventory: state.inventory, cart: state.cart, currentCustomerId: state.currentCustomerId,
     transactions: state.transactions, returns: state.returns, warranties: state.warranties,
     cashSessions: state.cashSessions, transfers: state.transfers, suppliers: state.suppliers,
