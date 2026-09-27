@@ -398,7 +398,7 @@ Responde ESTRICTAMENTE con un objeto JSON:
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[MARÉ POS Server] Server running on http://0.0.0.0:${PORT}`);
+    console.log(`[OmniSync POS API] Server running on http://0.0.0.0:${PORT}`);
   });
 }
 
