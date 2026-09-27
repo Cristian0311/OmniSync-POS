@@ -23,8 +23,8 @@ async function reconcileRemoteState(forceBootstrap = false): Promise<void> {
   if (getOfflineQueueCount() > 0) { await triggerBackgroundSync(false); return; }
   const branchId = useStore.getState().currentBranchId || null;
   if (forceBootstrap || bootstrappedBranchId !== branchId) {
-    await useStore.getState().bootstrapPosFromSupabase();
-    bootstrappedBranchId = branchId;
+    const ok = await useStore.getState().bootstrapPosFromSupabase();
+    if (ok) bootstrappedBranchId = branchId;
   } else {
     await useStore.getState().refreshBranchInventory();
   }
@@ -40,8 +40,8 @@ export async function triggerBackgroundSync(force = false): Promise<void> {
     if (getOfflineQueueCount() === 0) {
       const branchId = useStore.getState().currentBranchId || null;
       if (force || bootstrappedBranchId !== branchId) {
-        await useStore.getState().bootstrapPosFromSupabase();
-        bootstrappedBranchId = branchId;
+        const ok = await useStore.getState().bootstrapPosFromSupabase();
+        if (ok) bootstrappedBranchId = branchId;
       } else {
         await useStore.getState().refreshBranchInventory();
       }
@@ -65,14 +65,23 @@ export function initMultiDeviceRealtimeSync(): () => void {
   const handleRemoteChange = (payload: any) => {
     window.dispatchEvent(new CustomEvent('remote_data_changed', { detail: payload }));
     const table = payload?.table;
-    const branchScoped = BRANCH_SCOPED_TABLES.has(table);
-    if (branchScoped) {
+    if (BRANCH_SCOPED_TABLES.has(table)) {
       if (debounceTimeout) clearTimeout(debounceTimeout);
       debounceTimeout = setTimeout(() => {
         if (navigator.onLine && !isSyncInProgress) {
           useStore.getState().refreshBranchOperationalData().catch(() => {});
         }
       }, 500);
+      return;
+    }
+    const globalCatalog = new Set(['branches','categories','products','users','currencies','idn_settlement_prices','settings']);
+    if (globalCatalog.has(table)) {
+      if (debounceTimeout) clearTimeout(debounceTimeout);
+      debounceTimeout = setTimeout(() => {
+        if (navigator.onLine && !isSyncInProgress) {
+          useStore.getState().refreshGlobalCatalogData().catch(() => {});
+        }
+      }, 700);
       return;
     }
     scheduleDebouncedSync();
@@ -93,7 +102,7 @@ export function initMultiDeviceRealtimeSync(): () => void {
       });
     } catch (e) { realtimeChannel = null; console.warn('[RealtimeSync] No se pudo inicializar Realtime:', e); }
   };
-  const handleOffline = () => { if (realtimeChannel && supabase) { try { supabase.removeChannel(realtimeChannel); } catch {} realtimeChannel = null; } };
+  const handleOffline = () => { bootstrappedBranchId = null; if (realtimeChannel && supabase) { try { supabase.removeChannel(realtimeChannel); } catch {} realtimeChannel = null; } };
   const handleOnline = () => { subscribeRealtime(); triggerBackgroundSync(false).catch(() => {}); };
   if (navigator.onLine) { subscribeRealtime(); triggerBackgroundSync(false).catch(() => {}); }
   const handleVisibilityChange = () => {
