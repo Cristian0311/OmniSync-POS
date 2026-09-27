@@ -24,6 +24,10 @@ export default function POS() {
   const [lastClosedSession, setLastClosedSession] = useState<CashRegisterSession | null>(null);
   const [showOpenShiftModal, setShowOpenShiftModal] = useState(false);
   const [joiningSessionId, setJoiningSessionId] = useState<string | null>(null);
+  // Identidad operativa del POS: puede ser distinta de la cuenta que inició sesión.
+  // Se conserva mientras el turno esté abierto para que móvil/tablet no vuelva
+  // al selector simplemente porque el usuario del sistema es diferente.
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, removeCashMovement, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification, joinOpenSession, salarySettlements } = useStore(useShallow((state) => ({ categories: state.categories, products: state.products, cart: state.cart, addToCart: state.addToCart, updateCartQty: state.updateCartQty, clearCart: state.clearCart, processTransaction: state.processTransaction, branches: state.branches, currentBranchId: state.currentBranchId, setCurrentBranch: state.setCurrentBranch, currencies: state.currencies, getBaseCurrency: state.getBaseCurrency, currentCustomerId: state.currentCustomerId, setCartCustomer: state.setCartCustomer, currentUser: state.currentUser, pendingOrders: state.pendingOrders, removePendingOrder: state.removePendingOrder, getCurrentSession: state.getCurrentSession, openSession: state.openSession, closeSession: state.closeSession, addCashMovement: state.addCashMovement, removeCashMovement: state.removeCashMovement, inventory: state.inventory, addCustomer: state.addCustomer, bankCards: state.bankCards, addBankTransaction: state.addBankTransaction, customers: state.customers, users: state.users, logout: state.logout, createReturn: state.createReturn, processReturn: state.processReturn, receiptConfig: state.receiptConfig, idnSettlementPrices: state.idnSettlementPrices, addIDNSettlementPrice: state.addIDNSettlementPrice, updateIDNSettlementPrice: state.updateIDNSettlementPrice, deleteIDNSettlementPrice: state.deleteIDNSettlementPrice, setInventoryQuantity: state.setInventoryQuantity, addNotification: state.addNotification, joinOpenSession: state.joinOpenSession, salarySettlements: state.salarySettlements })));
 
@@ -31,10 +35,17 @@ export default function POS() {
   // Heavy administrative collections subscribe only while their UI is visible.
   // Normal sales therefore do not re-render because a transaction/session changed elsewhere.
   const needsTransactions = showCashManagementModal || !!lastClosedSession;
-  const needsCashSessions = showOpenShiftModal || !!joiningSessionId;
   const transactions = useStore((state) => needsTransactions ? state.transactions : EMPTY_TRANSACTIONS);
-  const cashSessions = useStore((state) => needsCashSessions ? state.cashSessions : EMPTY_CASH_SESSIONS);
+  // cash_sessions es un conjunto pequeño y crítico para el selector/apertura.
+  // Debe permanecer reactivo para mostrar inmediatamente qué trabajador ya tiene turno abierto.
+  const cashSessions = useStore((state) => state.cashSessions);
   const activeCashSessions = useMemo(() => cashSessions.filter(s => !s.deletedAt), [cashSessions]);
+  const openSessionForWorker = useCallback((workerId: string) => {
+    return activeCashSessions.find(s =>
+      s.status === 'open' &&
+      (s.userId === workerId || s.workingEmployeeIds?.includes(workerId))
+    ) || null;
+  }, [activeCashSessions]);
   const activeTransactions = useMemo(() => transactions.filter(t => !t.deletedAt), [transactions]);
   const [idnFilter, setIdnFilter] = useState("");
   const [debouncedIdnFilter, setDebouncedIdnFilter] = useState("");
@@ -134,7 +145,37 @@ export default function POS() {
   
   
   const navigate = useNavigate();
-  const currentSession = getCurrentSession(currentBranchId || (currentUser?.branchId || currentUser?.assignedBranchId || branches[0]?.id || ''), currentUser?.id || '');
+  const fallbackSessionBranchId = currentBranchId || (currentUser?.branchId || currentUser?.assignedBranchId || branches[0]?.id || '');
+  const currentSession = useMemo(() => {
+    if (activeSessionId) {
+      const active = cashSessions.find(s => s.id === activeSessionId && s.status === 'open' && !s.deletedAt);
+      if (active) return active;
+    }
+    // Recuperación automática para cuentas que son propietarias del turno.
+    return getCurrentSession(fallbackSessionBranchId, currentUser?.id || '');
+  }, [activeSessionId, cashSessions, fallbackSessionBranchId, currentUser?.id, getCurrentSession]);
+
+  useEffect(() => {
+    if (activeSessionId) return;
+    if (!currentUser?.id) return;
+    const own = getCurrentSession(fallbackSessionBranchId, currentUser.id);
+    if (own?.id) setActiveSessionId(own.id);
+  }, [activeSessionId, currentUser?.id, fallbackSessionBranchId, cashSessions, getCurrentSession]);
+
+  // Al entrar al POS/volver al foco, actualizar operaciones de caja y catálogo.
+  // Esto evita que un selector abierto durante horas conserve una lista vieja.
+  useEffect(() => {
+    if (!currentUser || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
+    const run = async () => {
+      try {
+        await useStore.getState().refreshGlobalCatalogData();
+        await useStore.getState().refreshBranchOperationalData();
+      } catch (error) {
+        console.warn('[POS] No se pudo refrescar el estado operativo al entrar:', error);
+      }
+    };
+    void run();
+  }, [currentUser?.id, fallbackSessionBranchId]);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [showSalarySummary, setShowSalarySummary] = useState(false);
   const [connectedPrinterName, setConnectedPrinterName] = useState<string | null>(null);
@@ -238,26 +279,28 @@ export default function POS() {
   }, [sessionWorkerName, users]);
   
   const isBranchLocked = Boolean(
-    workerAssignedBranchId || 
+    workerAssignedBranchId ||
     (currentUser?.role !== 'admin' && currentUser?.assignedBranchId) ||
     (currentSession && ((users || []).find(u => u.id === currentSession.userId)?.assignedBranchId))
   );
 
   const allowedBranches = React.useMemo(() => {
-    // Administrators can operate across every branch.
+    // Administradores pueden operar todas las sucursales.
     if (currentUser?.role === 'admin') return branches || [];
 
-    // Employees must never inherit a previous admin branch or fall back to all branches.
-    // Their scope comes strictly from assignedBranchId, branchId, or allowedBranches.
-    const assignedId = currentUser?.assignedBranchId || currentUser?.branchId || workerAssignedBranchId;
+    // En el flujo trabajador -> seleccionar empleado -> contraseña, el alcance
+    // de sucursal debe corresponder al trabajador seleccionado, no a la cuenta
+    // que inició sesión.
+    const scopeUser = detectedWorker || currentUser;
+    const assignedId = scopeUser?.assignedBranchId || scopeUser?.branchId;
     if (assignedId) {
       return (branches || []).filter(b => b.id === assignedId);
     }
-    if (currentUser?.allowedBranches && currentUser.allowedBranches.length > 0) {
-      return (branches || []).filter(b => currentUser.allowedBranches!.includes(b.id));
+    if (scopeUser?.allowedBranches && scopeUser.allowedBranches.length > 0) {
+      return (branches || []).filter(b => scopeUser.allowedBranches!.includes(b.id));
     }
     return [];
-  }, [currentUser, branches, workerAssignedBranchId]);
+  }, [currentUser, detectedWorker, branches, workerAssignedBranchId]);
     
   const [showConfirmIDNModal, setShowConfirmIDNModal] = useState(false);
 
@@ -473,6 +516,7 @@ export default function POS() {
       setJoiningSessionId(null);
       setJoiningSessionPassword("");
       setLastClosedSession(null);
+      setActiveSessionId(null);
       clearCart();
       setPosSuccess("Turno cancelado correctamente. Regresando al selector de empleado.");
       setTimeout(() => setPosSuccess(""), 3500);
@@ -519,6 +563,7 @@ export default function POS() {
       setIdnPhysicalCounts({});
       setShowConfirmIDNModal(false);
       setPosViewMode('standard');
+      setActiveSessionId(null);
       setSessionWorkerName("");
       setSessionPassword("");
       setPosSuccess("Liquidación completada. Sesión cerrada.");
@@ -538,9 +583,10 @@ export default function POS() {
     setPosError("");
 
     try {
-      const session = useStore.getState().getCurrentSession(
-        currentBranchId,
-        currentUser?.id || ""
+      const session = currentSession || (
+        activeSessionId
+          ? (useStore.getState().cashSessions || []).find(s => s.id === activeSessionId)
+          : undefined
       );
 
       // "Cancelar / Salir" del flujo IDN cancela el turno únicamente cuando
@@ -1932,15 +1978,17 @@ export default function POS() {
         return;
       }
 
-      // Si ya existe un turno abierto para ese trabajador/sucursal, reutilizarlo
-      // en lugar de intentar crear un segundo turno y dejar la pantalla bloqueada.
+      // Si ya existe un turno abierto para ese trabajador/sucursal, reutilizarlo.
+      // La contraseña se valida antes de llegar aquí.
       const existingSession = useStore.getState().getCurrentSession(sessionBranchId, workerToAssign.id);
       if (existingSession) {
-        setCurrentBranch(sessionBranchId);
+        setActiveSessionId(existingSession.id);
+        setCurrentBranch(existingSession.branchId);
         setSessionWorkerName(existingSession.workerName || workerToAssign.name || "");
         setSessionPassword("");
+        setOpeningAmount("0");
         setShowOpenShiftModal(false);
-        setPosSuccess("Ya existe un turno abierto. Continuando con ese turno.");
+        setPosSuccess(`Turno de ${existingSession.workerName || workerToAssign.name || 'Vendedor'} ya estaba abierto. Continuando con ese turno.`);
         setTimeout(() => setPosSuccess(""), 3000);
         return;
       }
@@ -1953,6 +2001,8 @@ export default function POS() {
         return;
       }
 
+      // La contraseña SIEMPRE se valida contra el trabajador seleccionado,
+      // incluso cuando ese trabajador ya tiene un turno abierto.
       if (enteredPassword !== requiredPassword) {
         setPosError(`Contraseña incorrecta para ${workerToAssign.name || 'empleado'}. Acceso denegado.`);
         return;
@@ -1987,17 +2037,39 @@ export default function POS() {
       // Confirmar que el turno realmente está visible para este terminal.
       // Si el servidor lo aceptó pero el caché quedó desfasado, recuperar el
       // snapshot operativo antes de mostrar el POS.
-      let verifiedSession = useStore.getState().getCurrentSession(sessionBranchId, currentUser?.id || workerId);
+      let verifiedSession =
+        useStore.getState().cashSessions.find(s =>
+          s.status === 'open' &&
+          !s.deletedAt &&
+          s.branchId === sessionBranchId &&
+          (s.userId === workerId || s.workingEmployeeIds?.includes(workerId))
+        );
+
       if (!verifiedSession && navigator.onLine) {
         await useStore.getState().refreshBranchOperationalData();
-        verifiedSession = useStore.getState().getCurrentSession(sessionBranchId, currentUser?.id || workerId);
+        verifiedSession = useStore.getState().cashSessions.find(s =>
+          s.status === 'open' &&
+          !s.deletedAt &&
+          s.branchId === sessionBranchId &&
+          (s.userId === workerId || s.workingEmployeeIds?.includes(workerId))
+        );
       }
 
       if (!verifiedSession) {
-        setPosError("El turno fue procesado, pero esta terminal no pudo confirmar el estado del turno. No se registrará una falsa apertura.");
+        // Si el servidor aceptó la operación pero aún no llegó el refresh,
+        // no bloqueamos al POS: la sesión devuelta por openSession tiene el ID
+        // oficial y es el registro que debemos activar localmente.
+        verifiedSession = useStore.getState().cashSessions.find(
+          s => s.id === sessionToOpen.id && s.status === 'open' && !s.deletedAt
+        );
+      }
+
+      if (!verifiedSession) {
+        setPosError("El turno fue procesado, pero esta terminal no pudo confirmar el estado del turno. Revisa la conexión y vuelve a abrir con la misma contraseña; no se creará otro turno.");
         return;
       }
 
+      setActiveSessionId(verifiedSession.id);
       setOpeningAmount("0");
       setSessionWorkerName(verifiedSession.workerName || workerName);
       setSessionPassword("");
@@ -2016,26 +2088,31 @@ export default function POS() {
     e.preventDefault();
     if (!joiningSessionId) return;
 
-    const targetSession = (activeCashSessions || []).find(s => s.id === joiningSessionId);
+    const targetSession = (activeCashSessions || []).find(s => s.id === joiningSessionId && s.status === 'open' && !s.deletedAt);
     if (!targetSession) {
-      setPosError("No se encontró el turno seleccionado");
+      setPosError("Ese turno ya no está abierto. Actualiza la pantalla y selecciona otro trabajador.");
       return;
     }
 
-    // Identify the user owning the session
-    const targetUser = (users || []).find(u => u.id === targetSession.userId || (u.name || '').toLowerCase() === (targetSession.workerName || '').toLowerCase());
+    const targetUser = (users || []).find(u =>
+      u.id === targetSession.userId ||
+      (u.name || '').trim().toLowerCase() === (targetSession.workerName || '').trim().toLowerCase()
+    );
     if (!targetUser) {
-      setPosError("No se pudo identificar al dueño del turno");
+      setPosError("No se pudo identificar al trabajador dueño del turno.");
       return;
     }
 
-    if (currentUser?.role !== 'admin' && targetUser.id !== currentUser?.id) {
-      setPosError("No puedes unirte al turno de otro trabajador.");
-      return;
-    }
+    const targetBranchIds = new Set(
+      targetUser.assignedBranchId
+        ? [targetUser.assignedBranchId]
+        : targetUser.branchId
+          ? [targetUser.branchId]
+          : (targetUser.allowedBranches || [])
+    );
 
-    if (currentUser?.role !== 'admin' && !allowedBranches.some(b => b.id === targetSession.branchId)) {
-      setPosError("Este turno pertenece a una sucursal que no tienes autorizada.");
+    if (targetBranchIds.size > 0 && !targetBranchIds.has(targetSession.branchId) && currentUser?.role !== 'admin') {
+      setPosError("El trabajador del turno no tiene autorizada esa sucursal.");
       return;
     }
 
@@ -2043,21 +2120,24 @@ export default function POS() {
     const enteredPassword = (joiningSessionPassword || '').trim();
 
     if (!requiredPassword) {
-      setPosError(`El empleado ${targetUser?.name || 'empleado'} no tiene contraseña asignada. El administrador debe asignarle una.`);
+      setPosError(`El empleado ${targetUser.name || 'empleado'} no tiene contraseña asignada. El administrador debe asignarle una.`);
       return;
     }
 
     if (enteredPassword !== requiredPassword) {
-      setPosError("Contraseña incorrecta. Acceso denegado.");
+      setPosError(`Contraseña incorrecta para ${targetUser.name || 'empleado'}. Acceso denegado.`);
       return;
     }
 
-    // Join the session
-    joinOpenSession(targetSession.id, currentUser?.id || 'emp-tmp', targetSession.workerName);
+    // Reanudar no convierte la cuenta que inició sesión en el trabajador del turno.
+    // La identidad operativa sigue siendo targetSession.userId.
+    setActiveSessionId(targetSession.id);
+    setSessionWorkerName(targetUser.name || targetSession.workerName || "");
+    setSessionPassword("");
     setCurrentBranch(targetSession.branchId);
     setJoiningSessionId(null);
-    setJoiningSessionPassword("");
-    setPosSuccess(`Te has unido al turno de ${targetSession.workerName || 'Vendedor'} correctamente`);
+    setPosError("");
+    setPosSuccess(`Turno de ${targetSession.workerName || 'Vendedor'} reanudado correctamente.`);
     setTimeout(() => setPosSuccess(""), 3000);
   };
 
@@ -2791,44 +2871,82 @@ export default function POS() {
                         <label className="block text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">
                           Seleccionar Vendedor / Empleado del Turno
                         </label>
-                        {currentUser?.role === 'admin' ? (
-                          <select
-                            value={sessionWorkerName}
-                            onChange={e => {
-                              setSessionWorkerName(e.target.value);
-                              setSessionPassword("");
-                            }}
-                            className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
-                            required
-                          >
-                            <option value="">-- Seleccionar Trabajador / IDN --</option>
-                            {(users || []).filter(u => u.isActive !== false).map(u => (
-                              <option key={u.id} value={u.name || ''}>
-                                {u.name || 'Trabajador'} {u.isIndependent ? '(Vendedor IDN)' : (u.role === 'admin' ? '(Administrador)' : '(Empleado)')}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <select
-                            value={sessionWorkerName}
-                            onChange={e => {
-                              const value = e.target.value;
-                              setSessionWorkerName(value);
-                              setSessionPassword("");
-                            }}
-                            className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
-                            required
-                          >
-                            <option value="">-- Buscar mi nombre --</option>
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
                             {(users || [])
                               .filter(u => u.isActive !== false)
-                              .map(u => (
-                                <option key={u.id} value={u.name || ''}>
-                                  {u.name || 'Trabajador'}
-                                </option>
-                              ))}
-                          </select>
-                        )}
+                              .map(u => {
+                                const isSelected = sessionWorkerName === (u.name || '');
+                                const isIdn = u.isIndependent === true;
+                                const open = openSessionForWorker(u.id);
+                                return (
+                                  <button
+                                    key={u.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSessionWorkerName(u.name || '');
+                                      setSessionPassword('');
+                                      if (u.assignedBranchId) setSessionBranchId(u.assignedBranchId);
+                                      else if (u.branchId) setSessionBranchId(u.branchId);
+                                      else if ((u.allowedBranches || []).length === 1) setSessionBranchId(u.allowedBranches![0]);
+                                      setPosError('');
+                                    }}
+                                    className={cn(
+                                      "w-full text-left rounded-xl border px-3 py-2.5 transition-all active:scale-[0.99] flex items-center gap-2.5",
+                                      isSelected
+                                        ? (isIdn
+                                            ? "bg-amber-100 border-amber-400 ring-2 ring-amber-200"
+                                            : "bg-indigo-100 border-indigo-400 ring-2 ring-indigo-200")
+                                        : (isIdn
+                                            ? "bg-amber-50/60 border-amber-200 hover:bg-amber-100"
+                                            : "bg-slate-50 border-slate-200 hover:bg-indigo-50")
+                                    )}
+                                  >
+                                    <span
+                                      className={cn(
+                                        "w-3 h-3 rounded-full shrink-0 ring-2 ring-offset-1",
+                                        isIdn ? "bg-amber-500 ring-amber-200" : "bg-indigo-600 ring-indigo-200"
+                                      )}
+                                    />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block text-[10px] font-black text-slate-900 uppercase tracking-tight truncate">
+                                        {u.name || 'Trabajador'}
+                                      </span>
+                                      <span className={cn(
+                                        "block text-[8px] font-black uppercase tracking-wider",
+                                        isIdn ? "text-amber-700" : "text-indigo-700"
+                                      )}>
+                                        {isIdn ? "VENDEDOR IDN" : (u.role === 'admin' ? "ADMINISTRADOR" : "EMPLEADO")}
+                                      </span>
+                                    </span>
+                                    {open ? (
+                                      <span className="shrink-0 px-1.5 py-1 rounded-md bg-emerald-100 border border-emerald-300 text-emerald-700 text-[7px] font-black uppercase tracking-wider">
+                                        TURNO ABIERTO
+                                      </span>
+                                    ) : (
+                                      <span className="shrink-0 px-1.5 py-1 rounded-md bg-slate-100 border border-slate-200 text-slate-400 text-[7px] font-black uppercase tracking-wider">
+                                        DISPONIBLE
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                          </div>
+                          <div className="flex items-center justify-center gap-3 pt-1 text-[7px] font-black uppercase tracking-wider">
+                            <span className="inline-flex items-center gap-1 text-indigo-700">
+                              <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                              EMPLEADO
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-amber-700">
+                              <span className="w-2 h-2 rounded-full bg-amber-500" />
+                              VENDEDOR IDN
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-emerald-700">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                              TURNO ABIERTO
+                            </span>
+                          </div>
+                        </div>)}
                       </div>
 
                       <div>
