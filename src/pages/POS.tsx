@@ -204,6 +204,8 @@ export default function POS() {
   const [posSuccess, setPosSuccess] = useState("");
   const [openingAmount, setOpeningAmount] = useState("");
   const [sessionWorkerName, setSessionWorkerName] = useState("");
+  const [employeePickerOpen, setEmployeePickerOpen] = useState(false);
+  const [employeePickerSearch, setEmployeePickerSearch] = useState("");
   const [sessionPassword, setSessionPassword] = useState("");
   const [isOpeningSession, setIsOpeningSession] = useState(false);
   const [isClosingSession, setIsClosingSession] = useState(false);
@@ -466,7 +468,7 @@ export default function POS() {
       lines.push("CENTER|CUADRE REALIZADO CON EXITO");
 
       const { printThermalReceipt } = await import('../lib/escpos');
-      await printThermalReceipt({ lines, width: '58mm', preferRawBT: options?.preferRawBT });
+      await printThermalReceipt({ lines, (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm', preferRawBT: options?.preferRawBT });
       setPosSuccess("Enviado a imprimir vale térmico...");
       setTimeout(() => setPosSuccess(""), 3000);
     } catch (printErr) {
@@ -1442,7 +1444,9 @@ export default function POS() {
     const receiptConfig = useStore.getState().receiptConfig;
     const lines: string[] = [];
     
-    lines.push(`CENTER|BOLD|${receiptConfig.businessName || 'MARÉ POS'}`);
+    if (receiptConfig.showLogo !== false && receiptConfig.businessName) {
+      lines.push(`CENTER|BOLD|${receiptConfig.businessName}`);
+    }
     if (receiptConfig.showAddress && receiptConfig.businessAddress) lines.push(`CENTER|${receiptConfig.businessAddress}`);
     if (receiptConfig.showPhone && receiptConfig.businessPhone) lines.push(`CENTER|${receiptConfig.businessPhone}`);
     
@@ -1556,7 +1560,6 @@ export default function POS() {
 
     const baseSalary = isIndependent ? 0 : (employee?.baseSalary || 0);
     const totalSalary = isIndependent ? 0 : (baseSalary + commissions);
-    const sellerProfit = isIndependent ? (totalSales - totalShopCost) : totalSalary;
 
     const lines: string[] = [];
     lines.push(`CENTER|BOLD|${receiptConfig.businessName || 'MARÉ POS'}`);
@@ -1593,11 +1596,7 @@ export default function POS() {
       const shopLabel = "Costo Fijo Tienda:";
       const shopVal = formatMoney(totalShopCost, baseCurrency.symbol);
       lines.push(`${shopLabel}${" ".repeat(Math.max(1, 32 - shopLabel.length - shopVal.length))}${shopVal}`);
-      
-      const profitLabel = "Ganancia Vendedor:";
-      const profitVal = formatMoney(sellerProfit, baseCurrency.symbol);
-      lines.push(`BOLD|${profitLabel}${" ".repeat(Math.max(1, 32 - profitLabel.length - profitVal.length))}${profitVal}`);
-    } else {
+} else {
       lines.push("BOLD|NOMINA / COMISIONES:");
       const salLabel = "Salario Base:";
       const salVal = formatMoney(baseSalary, baseCurrency.symbol);
@@ -1685,7 +1684,7 @@ export default function POS() {
         await printThermalReceipt({
           lines,
           openDrawer: receiptConfig.openDrawer ?? true,
-          width: '58mm',
+          (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           preferRawBT: true,
           onSuccess: () => {
             setPosSuccess("Enviado a impresora (RawBT)");
@@ -1700,7 +1699,7 @@ export default function POS() {
         const printed = await printThermalReceipt({
           lines,
           openDrawer: receiptConfig.openDrawer ?? true,
-          width: '58mm',
+          (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           onSuccess: (method) => {
             setPosSuccess(`Ticket enviado (${method === 'bluetooth' ? 'Bluetooth' : method === 'rawbt' ? 'RawBT' : 'USB'})`);
             setTimeout(() => setPosSuccess(""), 2500);
@@ -1720,7 +1719,7 @@ export default function POS() {
         await printThermalReceipt({
           lines,
           openDrawer: receiptConfig.openDrawer ?? true,
-          width: '58mm',
+          (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           onSuccess: (method) => {
             setPosSuccess(`Ticket impreso (${method === 'bluetooth' ? 'Bluetooth' : 'USB'})`);
             setTimeout(() => setPosSuccess(""), 2500);
@@ -1749,7 +1748,7 @@ export default function POS() {
         await printThermalReceipt({
           lines,
           openDrawer: false,
-          width: '58mm',
+          (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           preferRawBT: true,
           onSuccess: () => {
             setPosSuccess("Cierre enviado a impresora (RawBT)");
@@ -1763,7 +1762,7 @@ export default function POS() {
         const printed = await printThermalReceipt({
           lines,
           openDrawer: false,
-          width: '58mm',
+          (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           onSuccess: (method) => {
             setPosSuccess(`Comprobante impreso (${method === 'bluetooth' ? 'Bluetooth' : method === 'rawbt' ? 'RawBT' : 'USB'})`);
             setTimeout(() => setPosSuccess(""), 2500);
@@ -1781,7 +1780,7 @@ export default function POS() {
         await printThermalReceipt({
           lines,
           openDrawer: false,
-          width: '58mm',
+          (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           onSuccess: (method) => {
             setPosSuccess(`Comprobante impreso (${method === 'bluetooth' ? 'Bluetooth' : 'USB'})`);
             setTimeout(() => setPosSuccess(""), 2500);
@@ -2915,69 +2914,96 @@ export default function POS() {
                           Seleccionar Vendedor / Empleado del Turno
                         </label>
                         <div className="space-y-1.5">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-[30vh] sm:max-h-[25vh] overflow-y-auto pr-1 custom-scrollbar">
-                            {(users || [])
-                              .filter(u => u.isActive !== false)
-                              .map(u => {
-                                const isSelected = sessionWorkerName === (u.name || '');
-                                const isIdn = u.isIndependent === true;
-                                const open = openSessionForWorker(u.id);
-                                return (
-                                  <button
-                                    key={u.id}
-                                    type="button"
-                                    onClick={() => {
-                                      setSessionWorkerName(u.name || '');
-                                      setSessionPassword('');
-                                      if (u.assignedBranchId) setSessionBranchId(u.assignedBranchId);
-                                      else if (u.branchId) setSessionBranchId(u.branchId);
-                                      else if ((u.allowedBranches || []).length === 1) setSessionBranchId(u.allowedBranches![0]);
-                                      setPosError('');
-                                    }}
-                                    className={cn(
-                                      "w-full min-w-0 text-left rounded-xl border px-2.5 py-2 transition-all active:scale-[0.99]",
-                                      isSelected
-                                        ? (isIdn
-                                            ? "bg-amber-100 border-amber-400 ring-1 ring-amber-200"
-                                            : "bg-indigo-100 border-indigo-400 ring-1 ring-indigo-200")
-                                        : (isIdn
-                                            ? "bg-amber-50/60 border-amber-200 hover:bg-amber-100"
-                                            : "bg-slate-50 border-slate-200 hover:bg-indigo-50")
-                                    )}
-                                  >
-                                    <div className="flex items-start gap-2 min-w-0">
-                                      <span
-                                        className={cn(
-                                          "w-2.5 h-2.5 rounded-full shrink-0 mt-1 ring-2 ring-offset-1",
-                                          isIdn ? "bg-amber-500 ring-amber-200" : "bg-indigo-600 ring-indigo-200"
-                                        )}
-                                      />
-                                      <span className="min-w-0 flex-1">
-                                        <span className="block text-[10px] sm:text-[11px] font-black text-slate-900 uppercase tracking-tight leading-tight whitespace-normal break-words">
-                                          {u.name || 'Trabajador'}
-                                        </span>
-                                        <span className={cn(
-                                          "mt-0.5 block text-[7px] font-black uppercase tracking-wider leading-tight",
-                                          isIdn ? "text-amber-700" : "text-indigo-700"
-                                        )}>
-                                          {isIdn ? "VENDEDOR IDN" : (u.role === 'admin' ? "ADMINISTRADOR" : "EMPLEADO")}
-                                        </span>
-                                      </span>
+                          <div className="relative">
+                            <div className="relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                              <input
+                                type="text"
+                                value={employeePickerOpen ? employeePickerSearch : sessionWorkerName}
+                                onFocus={() => {
+                                  setEmployeePickerSearch(sessionWorkerName);
+                                  setEmployeePickerOpen(true);
+                                }}
+                                onChange={e => {
+                                  setEmployeePickerSearch(e.target.value);
+                                  setSessionWorkerName('');
+                                  setSessionPassword('');
+                                  setPosError('');
+                                  setEmployeePickerOpen(true);
+                                }}
+                                placeholder="Presiona y busca el nombre del empleado..."
+                                className="w-full pl-9 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                                autoComplete="off"
+                              />
+                              <ChevronDown className={cn(
+                                "absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 transition-transform pointer-events-none",
+                                employeePickerOpen && "rotate-180"
+                              )} />
+                            </div>
+
+                            {employeePickerOpen && (
+                              <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+                                <div className="max-h-[30vh] overflow-y-auto custom-scrollbar p-1">
+                                  {(users || [])
+                                    .filter(u => u.isActive !== false)
+                                    .filter(u => {
+                                      const q = employeePickerSearch.trim().toLowerCase();
+                                      return !q || (u.name || '').toLowerCase().includes(q);
+                                    })
+                                    .map(u => {
+                                      const isSelected = sessionWorkerName === (u.name || '');
+                                      const isIdn = u.isIndependent === true;
+                                      const open = openSessionForWorker(u.id);
+                                      return (
+                                        <button
+                                          key={u.id}
+                                          type="button"
+                                          onClick={() => {
+                                            setSessionWorkerName(u.name || '');
+                                            setEmployeePickerSearch(u.name || '');
+                                            setEmployeePickerOpen(false);
+                                            setSessionPassword('');
+                                            if (u.assignedBranchId) setSessionBranchId(u.assignedBranchId);
+                                            else if (u.branchId) setSessionBranchId(u.branchId);
+                                            else if ((u.allowedBranches || []).length === 1) setSessionBranchId(u.allowedBranches![0]);
+                                            setPosError('');
+                                          }}
+                                          className={cn(
+                                            "w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left transition-colors",
+                                            isSelected ? "bg-indigo-100 text-indigo-900" : "hover:bg-slate-50 text-slate-900"
+                                          )}
+                                        >
+                                          <div className="min-w-0">
+                                            <span className="block text-[10px] sm:text-[11px] font-black uppercase tracking-tight leading-tight truncate">
+                                              {u.name || 'Trabajador'}
+                                            </span>
+                                            <span className={cn(
+                                              "block text-[7px] font-black uppercase tracking-wider mt-0.5",
+                                              isIdn ? "text-amber-700" : "text-slate-400"
+                                            )}>
+                                              {isIdn ? "VENDEDOR IDN" : (u.role === 'admin' ? "ADMINISTRADOR" : "EMPLEADO")}
+                                            </span>
+                                          </div>
+                                          <span className={cn(
+                                            "shrink-0 px-1.5 py-0.5 rounded-md border text-[7px] font-black uppercase tracking-wider",
+                                            open ? "bg-emerald-100 border-emerald-300 text-emerald-700" : "bg-slate-100 border-slate-200 text-slate-400"
+                                          )}>
+                                            {open ? "ABIERTO" : "DISPONIBLE"}
+                                          </span>
+                                        </button>
+                                      );
+                                    })}
+                                  {!(users || []).some(u => {
+                                    const q = employeePickerSearch.trim().toLowerCase();
+                                    return u.isActive !== false && (!q || (u.name || '').toLowerCase().includes(q));
+                                  }) && (
+                                    <div className="px-3 py-4 text-center text-[9px] font-bold text-slate-400 uppercase">
+                                      No se encontraron empleados.
                                     </div>
-                                    <div className="mt-1.5 flex justify-end">
-                                      {open ? (
-                                        <span className="px-1.5 py-0.5 rounded-md bg-emerald-100 border border-emerald-300 text-emerald-700 text-[7px] font-black uppercase tracking-wider">
-                                          TURNO ABIERTO
-                                        </span>
-                                      ) : (
-                                        <span className="px-1.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-400 text-[7px] font-black uppercase tracking-wider">
-                                          DISPONIBLE
-                                        </span>
-                                      )}
-                                    </div>
-                                  </button>
-                                );
-                              })}
+                                  )}
+                                </div>
+                              </div>
+                            )}
                           </div>
 
                           <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 pt-0.5 text-[7px] font-black uppercase tracking-wider">
