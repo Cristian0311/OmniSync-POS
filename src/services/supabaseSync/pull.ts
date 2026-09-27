@@ -71,6 +71,63 @@ export async function pullBranchOperationalDataFromSupabase(branchId: string): P
   }
 }
 
+export async function pullGlobalCatalogDataFromSupabase(): Promise<{ success: boolean; data?: any; message?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, message: 'Supabase no configurado' };
+  try {
+    const [branchesRes, categoriesRes, productsRes, usersRes, currenciesRes, idnRes, settingsRes] = await Promise.all([
+      supabase.from('branches').select('*'),
+      supabase.from('categories').select('*'),
+      supabase.from('products').select('*').eq('status', 'active'),
+      supabase.from('users').select('*').eq('is_active', true),
+      supabase.from('currencies').select('*'),
+      supabase.from('idn_settlement_prices').select('*'),
+      supabase.from('settings').select('*').eq('id', 'global').maybeSingle()
+    ]);
+    const firstError = [branchesRes, categoriesRes, productsRes, usersRes, currenciesRes, idnRes].find(r => r.error)?.error;
+    if (firstError) throw firstError;
+
+    return {
+      success: true,
+      data: {
+        branches: (branchesRes.data || []).map((b:any) => ({ id:b.id, name:b.name, address:b.address, phone:b.phone, isMain:b.is_main })),
+        categories: (categoriesRes.data || []).map((c:any) => ({ id:c.id, name:c.name, department:c.department || '', color:c.color })),
+        products: (productsRes.data || []).map((p:any) => ({
+          id:p.id,name:p.name,sku:p.sku||'',barcode:p.barcode||'',
+          costPrice:Number(p.cost_price)||0,price:Number(p.price)||0,
+          margin:Number(p.margin)||0,categoryId:p.category_id||'',
+          color:p.color||'bg-slate-100 text-slate-700',
+          commissionType:p.commission_type||'percentage',
+          commissionValue:Number(p.commission_value)||0,unit:p.unit||'unidad',
+          status:p.status||'active',minStockAlert:Number(p.min_stock_alert)||5,
+          hasSerial:Boolean(p.has_serial),warrantyDays:Number(p.warranty_days)||0,
+          isKit:Boolean(p.is_kit),kitItems:Array.isArray(p.kit_items)?p.kit_items:[],
+          kitComponents:Array.isArray(p.kit_components)?p.kit_components:(Array.isArray(p.kit_items)?p.kit_items:[]),
+          deviceColor:p.device_color||'',availableSizes:Array.isArray(p.available_sizes)?p.available_sizes:[],
+          availableColors:Array.isArray(p.available_colors)?p.available_colors:[]
+        })),
+        users: (usersRes.data || []).map((u:any) => ({
+          id:u.id,name:u.name,email:u.email||'',password:u.password||'',
+          role:u.role||'employee',commissionRate:Number(u.commission_rate)||0,
+          baseSalary:Number(u.base_salary)||0,salesGoal:Number(u.sales_goal)||0,
+          branchId:u.branch_id||undefined,allowedBranches:Array.isArray(u.allowed_branches)?u.allowed_branches:undefined,
+          permissions:Array.isArray(u.permissions)?u.permissions:undefined,isActive:u.is_active!==false,
+          isIndependent:u.is_independent===true,assignedBranchId:u.assigned_branch_id||undefined
+        })),
+        currencies: (currenciesRes.data || []).map((c:any) => ({
+          code:c.code,name:c.name||c.code,symbol:c.symbol||c.code,rateToBase:Number(c.rate_to_base)||1,isBase:Boolean(c.is_base)
+        })),
+        idnSettlementPrices: (idnRes.data || []).map((p:any) => ({
+          id:p.id,userId:p.user_id,productId:p.product_id,settlementPrice:Number(p.settlement_price)||0
+        })),
+        settings: settingsRes.data || null
+      }
+    };
+  } catch (e:any) {
+    return { success: false, message: e?.message || 'No se pudo actualizar el catálogo remoto' };
+  }
+}
+
 export async function pullPosBootstrapFromSupabase(branchId?: string): Promise<{ success: boolean; data: any; message?: string }> {
   const supabase = getSupabase();
   if (!supabase) return { success: false, data: null, message: 'Supabase no configurado' };
