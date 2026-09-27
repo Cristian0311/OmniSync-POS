@@ -52,7 +52,19 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       }
       if (session.__operation === 'open' || String(item.actionId).startsWith('cash-open:')) {
         const res = await callOpenSessionRPCWithId(session);
-        if (res.success) return true;
+        if (res.success) {
+          // Reconcile the optimistic local turn number with the authoritative
+          // number assigned by Supabase. The server owns the global sequence.
+          if (res.data?.turn_number != null) {
+            useStore.setState(state => ({
+              cashSessions: (state.cashSessions || []).map(s =>
+                s.id === session.id ? { ...s, turnNumber: Number(res.data.turn_number) } : s
+              ),
+              lastTurnNumber: Math.max(state.lastTurnNumber || 0, Number(res.data.turn_number) || 0)
+            }));
+          }
+          return true;
+        }
         throw new Error(res.error || 'No se pudo abrir el turno en Supabase');
       }
       // Un snapshot nunca debe reabrir ni cerrar un turno por accidente.
