@@ -1882,40 +1882,141 @@ export const useStore = create<AppState>()(
   },
 
   inventoryAudits: [],
-  createInventoryAudit: (a) => {
-    set(state => ({ inventoryAudits: [a, ...state.inventoryAudits] }));
+  createInventoryAudit: async (audit) => {
+    const userId = get().currentUser?.id || audit.userId || 'system';
+    const actionId = 'audit-start:' + audit.id;
+    const queueData = {
+      id: audit.id,
+      branchId: audit.branchId,
+      userId,
+      mode: audit.mode || 'cycle_count',
+      blindCount: audit.blindCount === true,
+      notes: audit.notes || '',
+      date: audit.date
+    };
+    await enqueueOfflineItem('audit_start', queueData, actionId);
+
+    if (navigator.onLine) {
+      try {
+        const res = await callStartInventoryAuditRPC(
+          audit.id, audit.branchId, userId, audit.mode || 'cycle_count', audit.blindCount === true, audit.notes
+        );
+        if (!res.success) throw new Error(res.error || 'No se pudo iniciar la auditoría');
+        removeFromOfflineQueueByAction('audit_start', actionId);
+        const serverItems = Array.isArray(res.data?.items) ? res.data.items : audit.items;
+        set(state => ({
+          inventoryAudits: [
+            { ...audit, userId, mode: audit.mode || 'cycle_count', blindCount: audit.blindCount === true,
+              snapshotAt: res.data?.snapshot_at || audit.snapshotAt || audit.date, reviewStatus: 'counting',
+              items: serverItems.map((item: any) => ({ ...item, difference: Number(item.difference || 0) })) },
+            ...state.inventoryAudits.filter(a => a.id !== audit.id)
+          ]
+        }));
+        return { success: true };
+      } catch (err: any) {
+        console.warn('[createInventoryAudit] Inicio no confirmado; queda durable para reintento:', err);
+        set(state => ({ inventoryAudits: [{ ...audit, userId, reviewStatus: 'counting' }, ...state.inventoryAudits.filter(a => a.id !== audit.id)] }));
+        return { success: true };
+      }
+    }
+
+    set(state => ({ inventoryAudits: [{ ...audit, userId, reviewStatus: 'counting' }, ...state.inventoryAudits.filter(a => a.id !== audit.id)] }));
+    return { success: true };
   },
   completeInventoryAudit: async (id, items, notes) => {
     const audit = get().inventoryAudits.find(a => a.id === id);
-    if (!audit || audit.status === 'completed') return;
+    if (!audit || audit.status === 'completed') return { success: false, error: 'La auditoría ya está cerrada.' };
     const userId = get().currentUser?.id || audit.userId || 'system';
     const actionId = 'audit:' + id;
     await enqueueOfflineItem('audit_complete', { id, branchId: audit.branchId, userId, items, notes }, actionId);
 
     if (navigator.onLine) {
       try {
-        const res = await callCompleteInventoryAuditRPC(id, audit.branchId, userId, items, notes);
-        if (!res.success) throw new Error(res.error || 'No se pudo completar la auditoría');
+        const res = await callSaveInventoryAuditCountRPC(id, userId, items, notes);
+        if (!res.success) throw new Error(res.error || 'No se pudo guardar el conteo');
         removeFromOfflineQueueByAction('audit_complete', actionId);
-      } catch (err) {
-        console.warn('[completeInventoryAudit] Auditoría no confirmada; queda durable para reintento:', err);
-        return;
+        const serverItems = Array.isArray(res.data?.items) ? res.data.items : items;
+        set(state => ({
+          inventoryAudits: state.inventoryAudits.map(a => a.id === id
+            ? { ...a, items: serverItems, notes: notes || a.notes, submittedAt: new Date().toISOString(), reviewStatus: 'pending_approval' }
+            : a)
+        }));
+        return { success: true };
+      } catch (err: any) {
+        console.warn('[completeInventoryAudit] Conteo no confirmado; queda durable para reintento:', err);
+        set(state => ({
+          inventoryAudits: state.inventoryAudits.map(a => a.id === id
+            ? { ...a, items, notes: notes || a.notes, submittedAt: new Date().toISOString(), reviewStatus: 'pending_approval' }
+            : a)
+        }));
+        return { success: true };
       }
     }
 
-    set(state => {
-      const currentAudit = state.inventoryAudits.find(a => a.id === id);
-      if (!currentAudit || currentAudit.status === 'completed') return state;
-      const normalizedItems = items.map((item: any) => ({ ...item, difference: (Number(item.counted ?? item.actual) || 0) - (Number(item.expected) || 0) }));
-      const updatedAudits = state.inventoryAudits.map(a => a.id === id ? { ...a, status: 'completed' as const, items: normalizedItems, notes, date: new Date().toISOString() } : a);
-      let inventory = [...state.inventory];
-      for (const item of normalizedItems) {
-        if (!item.difference) continue;
-        const idx = inventory.findIndex(i => i.productId === item.productId && i.branchId === audit.branchId && (i.variantLabel || '') === (item.variantLabel || ''));
-        if (idx !== -1) inventory[idx] = { ...inventory[idx], quantity: Math.max(0, inventory[idx].quantity + item.difference) };
+    set(state => ({
+      inventoryAudits: state.inventoryAudits.map(a => a.id === id
+        ? { ...a, items, notes: notes || a.notes, submittedAt: new Date().toISOString(), reviewStatus: 'pending_approval' }
+        : a)
+    }));
+    return { success: true };
+  },
+  requestInventoryAuditRecount: async (id, notes) => {
+    const audit = get().inventoryAudits.find(a => a.id === id);
+    if (!audit) return { success: false, error: 'Auditoría no encontrada.' };
+    const userId = get().currentUser?.id || 'system';
+    const actionId = 'audit-recount:' + id + ':' + Date.now();
+    await enqueueOfflineItem('audit_recount', { id, userId, notes }, actionId);
+
+    if (navigator.onLine) {
+      try {
+        const res = await callRequestInventoryAuditRecountRPC(id, userId, notes);
+        if (!res.success) throw new Error(res.error || 'No se pudo solicitar el recuento');
+        removeFromOfflineQueueByAction('audit_recount', actionId);
+        set(state => ({ inventoryAudits: state.inventoryAudits.map(a => a.id === id ? { ...a, reviewStatus: 'recount_requested', recountCount: res.data?.recount_count || ((a.recountCount || 0) + 1), reviewedBy: userId, reviewedAt: new Date().toISOString() } : a) }));
+        return { success: true };
+      } catch (err: any) {
+        console.warn('[requestInventoryAuditRecount] No confirmado; queda durable:', err);
+        return { success: false, error: err?.message || 'No se pudo solicitar el recuento.' };
       }
-      return { inventoryAudits: updatedAudits, inventory };
-    });
+    }
+
+    set(state => ({ inventoryAudits: state.inventoryAudits.map(a => a.id === id ? { ...a, reviewStatus: 'recount_requested', recountCount: (a.recountCount || 0) + 1 } : a) }));
+    return { success: true };
+  },
+  approveInventoryAudit: async (id, notes) => {
+    const audit = get().inventoryAudits.find(a => a.id === id);
+    if (!audit) return { success: false, error: 'Auditoría no encontrada.' };
+    if (audit.reviewStatus !== 'pending_approval') return { success: false, error: 'El conteo aún no está pendiente de aprobación.' };
+    if (!navigator.onLine) return { success: false, error: 'La aprobación del ajuste físico requiere conexión para validar que el inventario no haya cambiado.' };
+
+    const userId = get().currentUser?.id || 'system';
+    const actionId = 'audit-approve:' + id;
+    await enqueueOfflineItem('audit_approve', { id, userId, notes }, actionId);
+    try {
+      const res = await callApproveInventoryAuditRPC(id, userId, notes);
+      if (!res.success) throw new Error(res.error || 'No se pudo aprobar la auditoría');
+      removeFromOfflineQueueByAction('audit_approve', actionId);
+      const adjustments = Array.isArray(res.data?.adjustments) ? res.data.adjustments : [];
+      set(state => {
+        const auditNow = state.inventoryAudits.find(a => a.id === id);
+        let inventory = [...state.inventory];
+        for (const adj of adjustments) {
+          const idx = inventory.findIndex(i => i.productId === adj.productId && i.branchId === audit?.branchId && (i.variantLabel || '') === (adj.variantLabel || ''));
+          if (idx >= 0) inventory[idx] = { ...inventory[idx], quantity: Math.max(0, Number(inventory[idx].quantity || 0) + Number(adj.delta || 0)) };
+        }
+        return {
+          inventory,
+          inventoryAudits: state.inventoryAudits.map(a => a.id === id
+            ? { ...a, status: 'completed' as const, reviewStatus: 'approved', reviewedBy: userId, reviewedAt: new Date().toISOString(), adjustmentPostedAt: new Date().toISOString(), notes: notes || a.notes,
+              items: Array.isArray(res.data?.items) ? res.data.items : a.items }
+            : a)
+        };
+      });
+      return { success: true };
+    } catch (err: any) {
+      removeFromOfflineQueueByAction('audit_approve', actionId);
+      return { success: false, error: err?.message || 'No se pudo aprobar la auditoría.' };
+    }
   },
 
   fiscalConfigs: INITIAL_FISCAL_CONFIGS,
