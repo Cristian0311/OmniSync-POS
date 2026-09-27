@@ -8,7 +8,7 @@ import { useStore } from "../store/useStore";
 import { Product, Payment, Transaction, CashRegisterSession } from "../types";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { InfoTooltip } from "../components/InfoTooltip";
-import { getOfflineQueueCount, processOfflineQueue } from "../services/offlineSync";
+import { getOfflineQueueCount } from "../services/offlineQueue";
 import { normalizeSemanticText } from "../utils/textUtils";
 import { POSCatalog } from "../components/POSCatalog";
 const CheckoutModal = lazy(() => import("../components/pos/CheckoutModal"));
@@ -98,6 +98,7 @@ export default function POS() {
     }
     setIsSyncingOffline(true);
     try {
+      const { processOfflineQueue } = await import("../services/offlineSync");
       const res = await processOfflineQueue();
       setPendingOfflineCount(res.remaining);
       if (res.remaining > 0) {
