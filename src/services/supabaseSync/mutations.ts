@@ -820,7 +820,15 @@ export async function pushReturnToSupabase(returnItem: ReturnItem) {
       branch_id: returnItem.branchId || null,
       replacement_product_id: returnItem.replacementProductId || null,
       replacement_quantity: returnItem.replacementQuantity || null,
-      processed_by: returnItem.processedBy || null
+      processed_by: returnItem.processedBy || null,
+      refund_status: returnItem.refundStatus || (returnItem.type === 'refund' ? 'pending' : 'not_required'),
+      refund_amount: returnItem.refundAmount ?? null,
+      refund_currency_code: returnItem.refundCurrencyCode || null,
+      refund_method: returnItem.refundMethod || null,
+      refund_bank_card_id: returnItem.refundBankCardId || null,
+      refund_transaction_id: returnItem.refundTransactionId || null,
+      received_at: returnItem.receivedAt || null,
+      refunded_at: returnItem.refundedAt || null
     };
     const result = await safeUpsert(supabase, 'returns', row);
     if (result?.error) throw result.error;
