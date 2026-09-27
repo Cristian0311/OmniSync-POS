@@ -48,8 +48,10 @@ export async function triggerBackgroundSync(force = false): Promise<void> {
       } else {
         await useStore.getState().refreshBranchInventory();
       }
-    } else if (!force) {
-      await useStore.getState().refreshBranchInventory();
+    } else {
+      // Mientras queden operaciones pendientes, no descargamos un snapshot
+      // remoto anterior que pueda pisar visualmente cambios locales todavía no
+      // confirmados. El siguiente ciclo volverá a intentar la cola.
     }
   } catch (err) { console.warn('[RealtimeSync] Error en sincronización de fondo:', err); }
   finally { isSyncInProgress = false; }
