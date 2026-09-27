@@ -361,7 +361,8 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   if (!reachability.ok) {
     return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), errors: [{ type: 'network', actionId: 'connectivity', message: reachability.message || 'Supabase no está accesible todavía.' }] };
   }
-  const queueAtStart = getOfflineQueue().filter(item => item.status !== 'conflict');
+  const allQueueAtStart = getOfflineQueue();
+  const queueAtStart = allQueueAtStart.filter(item => item.status !== 'conflict');
   if (!queueAtStart.length) return { processed: 0, failed: 0, remaining: 0, errors: [] };
 
   isProcessingQueue = true;
@@ -373,16 +374,23 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   // anterior. Solo adelantamos una operación cuando otra operación ENCOLADA
   // es una dependencia explícita de ella.
   const queued = new Map<string, OfflineQueueItem>();
+  const allQueued = new Map<string, OfflineQueueItem>();
+  const blockedExistingIds = new Set(
+    allQueueAtStart.filter(q => q.status === 'conflict').map(q => q.id)
+  );
   const cashBySessionId = new Map<string, OfflineQueueItem[]>();
+  for (const q of allQueueAtStart) {
+    allQueued.set(q.type + ':' + q.actionId, q);
+  }
   for (const q of queueAtStart) {
-    queued.set(`${q.type}:${q.actionId}`, q);
+    queued.set(q.type + ':' + q.actionId, q);
     if (q.type === 'cash_session' && q.data?.id) {
       const list = cashBySessionId.get(String(q.data.id)) || [];
       list.push(q);
       cashBySessionId.set(String(q.data.id), list);
     }
   }
-  const dep = (type: OfflineActionType, id?: string | null) => id ? queued.get(`${type}:${id}`) : undefined;
+  const dep = (type: OfflineActionType, id?: string | null) => id ? allQueued.get(type + ':' + id) : undefined;
   const cashOp = (sessionId: string | undefined, operation: 'open' | 'close' | 'cancel' | 'join' | 'snapshot') => {
     if (!sessionId) return undefined;
     const list = cashBySessionId.get(String(sessionId)) || [];
@@ -467,9 +475,17 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   const errors: Array<{ type: string; actionId: string; message: string; retryCount?: number }> = [];
   const remainingFromRun: OfflineQueueItem[] = [];
   const handledIds = new Set<string>();
+  const failedDependencyIds = new Set<string>();
 
   for (let index = 0; index < sorted.length; index++) {
     const item = sorted[index];
+    const itemDependencies = dependencies(item);
+    if (itemDependencies.some(d => failedDependencyIds.has(d.id) || blockedExistingIds.has(d.id))) {
+      // Un padre falló o quedó en conflicto: el hijo permanece en cola y no se
+      // ejecuta con un estado incompleto.
+      remainingFromRun.push({ ...item, status: 'failed' });
+      continue;
+    }
     item.status = 'processing';
     try {
       await processQueueItem(supabase, item);
@@ -489,6 +505,7 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
       // Una tablet puede permanecer offline muchas horas o días; el elemento
       // queda pendiente hasta una confirmación real o un rechazo explícitamente permanente.
       item.status = permanent ? 'conflict' : 'failed';
+      failedDependencyIds.add(item.id);
       remainingFromRun.push(item);
       errors.push({ type: item.type, actionId: item.actionId, message: item.lastError, retryCount: item.retryCount });
       addSyncLog({ level:'error', source:'offline_queue', title:`Error al procesar item (${item.type})`, details:item.lastError, entityType:item.type, actionId:item.actionId, retryAttempt:item.retryCount, maxRetries:8 });
