@@ -68,6 +68,7 @@ export default function POS() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pendingOfflineCount, setPendingOfflineCount] = useState(getOfflineQueueCount());
   const [isSyncingOffline, setIsSyncingOffline] = useState(false);
+  const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false);
 
   useEffect(() => {
     const updateCount = () => setPendingOfflineCount(getOfflineQueueCount());
@@ -1653,7 +1654,10 @@ export default function POS() {
   };
 
   const handleCheckout = async () => {
-    // Final payments with rounded USD
+    if (isSubmittingCheckout) return;
+    setIsSubmittingCheckout(true);
+    try {
+      // Final payments with rounded USD
     const finalizedPayments: import('../types').Payment[] = paymentLines
       .filter(p => p.amount > 0)
       .map(p => {
@@ -1686,6 +1690,11 @@ export default function POS() {
       const match = t.id?.match(/TIKECT ID-MARE(\d+)/i);
       return match ? Math.max(max, parseInt(match[1], 10)) : max;
     }, 0);
+    const activeSellerId = currentSession.userId || currentUser?.id || 'u1';
+    const activeSellerName = currentSession.workerName || currentUser?.name || 'Vendedor';
+    const sellerUser = (users || []).find(u => u.id === activeSellerId) || currentUser;
+    const effectiveBranchId = currentSession.branchId || sellerUser?.assignedBranchId || currentBranchId || (branches[0]?.id || 'b1');
+
     let nextTicketNum = Math.max(txCount, maxTicketNum) + 1;
     let txId = `TIKECT ID-MARE${nextTicketNum.toString().padStart(2, '0')}`;
     if (currentTransactions.some(t => t.id === txId)) {
@@ -1693,11 +1702,6 @@ export default function POS() {
       const bCode = bObj?.name?.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase() || 'TG';
       txId = `TIKECT ID-MARE${nextTicketNum.toString().padStart(2, '0')}-${bCode}`;
     }
-
-    const activeSellerId = currentSession.userId || currentUser?.id || 'u1';
-    const activeSellerName = currentSession.workerName || currentUser?.name || 'Vendedor';
-    const sellerUser = (users || []).find(u => u.id === activeSellerId) || currentUser;
-    const effectiveBranchId = currentSession.branchId || sellerUser?.assignedBranchId || currentBranchId || (branches[0]?.id || 'b1');
 
     const tx: import('../types').Transaction = {
       id: txId,
@@ -1759,8 +1763,11 @@ export default function POS() {
     // Show receipt modal so cashier gets receipt details & print option
     setShowReceiptModal(tx);
 
-    if (useStore.getState().receiptConfig.autoPrint) {
-      handleThermalPrint(tx, { silent: true }).catch(console.error);
+      if (useStore.getState().receiptConfig.autoPrint) {
+        handleThermalPrint(tx, { silent: true }).catch(console.error);
+      }
+    } finally {
+      setIsSubmittingCheckout(false);
     }
   };
 
@@ -3194,11 +3201,11 @@ export default function POS() {
 
             <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0">
               <button 
-                disabled={remainingBase > 0.01 || paymentLines.length === 0 || paymentLines.some(l => l.method === 'transfer' && bankCards.length > 0 && !l.bankCardId)}
+                disabled={isSubmittingCheckout || remainingBase > 0.01 || paymentLines.length === 0 || paymentLines.some(l => l.method === 'transfer' && bankCards.length > 0 && !l.bankCardId)}
                 onClick={handleCheckout}
                 className="w-full py-3 sm:py-3.5 bg-indigo-600 text-white rounded-xl sm:rounded-2xl font-black text-sm sm:text-base uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-30 disabled:grayscale disabled:shadow-none active:scale-95 cursor-pointer"
               >
-                CONFIRMAR COBRO
+                {isSubmittingCheckout ? 'PROCESANDO...' : 'CONFIRMAR COBRO'}
               </button>
             </div>
           </div>
