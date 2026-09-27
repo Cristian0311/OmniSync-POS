@@ -24,12 +24,7 @@ export default function POS() {
   const [lastClosedSession, setLastClosedSession] = useState<CashRegisterSession | null>(null);
   const [showOpenShiftModal, setShowOpenShiftModal] = useState(false);
   const [joiningSessionId, setJoiningSessionId] = useState<string | null>(null);
-  // Identidad operativa del POS: puede ser distinta de la cuenta que inició sesión.
-  // Se conserva mientras el turno esté abierto para que móvil/tablet no vuelva
-  // al selector simplemente porque el usuario del sistema es diferente.
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-
-  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, removeCashMovement, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification, joinOpenSession, salarySettlements } = useStore(useShallow((state) => ({ categories: state.categories, products: state.products, cart: state.cart, addToCart: state.addToCart, updateCartQty: state.updateCartQty, clearCart: state.clearCart, processTransaction: state.processTransaction, branches: state.branches, currentBranchId: state.currentBranchId, setCurrentBranch: state.setCurrentBranch, currencies: state.currencies, getBaseCurrency: state.getBaseCurrency, currentCustomerId: state.currentCustomerId, setCartCustomer: state.setCartCustomer, currentUser: state.currentUser, pendingOrders: state.pendingOrders, removePendingOrder: state.removePendingOrder, getCurrentSession: state.getCurrentSession, openSession: state.openSession, closeSession: state.closeSession, addCashMovement: state.addCashMovement, removeCashMovement: state.removeCashMovement, inventory: state.inventory, addCustomer: state.addCustomer, bankCards: state.bankCards, addBankTransaction: state.addBankTransaction, customers: state.customers, users: state.users, logout: state.logout, createReturn: state.createReturn, processReturn: state.processReturn, receiptConfig: state.receiptConfig, idnSettlementPrices: state.idnSettlementPrices, addIDNSettlementPrice: state.addIDNSettlementPrice, updateIDNSettlementPrice: state.updateIDNSettlementPrice, deleteIDNSettlementPrice: state.deleteIDNSettlementPrice, setInventoryQuantity: state.setInventoryQuantity, addNotification: state.addNotification, joinOpenSession: state.joinOpenSession, salarySettlements: state.salarySettlements })));
+  const { categories, products, cart, addToCart, updateCartQty, clearCart, processTransaction, branches, currentBranchId, setCurrentBranch, activeSessionId, setActiveSessionId, currencies, getBaseCurrency, currentCustomerId, setCartCustomer, currentUser, pendingOrders, removePendingOrder, getCurrentSession, openSession, closeSession, addCashMovement, removeCashMovement, inventory, addCustomer, bankCards, addBankTransaction, customers, users, logout, createReturn, processReturn, receiptConfig, idnSettlementPrices, addIDNSettlementPrice, updateIDNSettlementPrice, deleteIDNSettlementPrice, setInventoryQuantity, addNotification, joinOpenSession, salarySettlements } = useStore(useShallow((state) => ({ categories: state.categories, products: state.products, cart: state.cart, addToCart: state.addToCart, updateCartQty: state.updateCartQty, clearCart: state.clearCart, processTransaction: state.processTransaction, branches: state.branches, currentBranchId: state.currentBranchId, setCurrentBranch: state.setCurrentBranch, activeSessionId: state.activeSessionId, setActiveSessionId: state.setActiveSessionId, currencies: state.currencies, getBaseCurrency: state.getBaseCurrency, currentCustomerId: state.currentCustomerId, setCartCustomer: state.setCartCustomer, currentUser: state.currentUser, pendingOrders: state.pendingOrders, removePendingOrder: state.removePendingOrder, getCurrentSession: state.getCurrentSession, openSession: state.openSession, closeSession: state.closeSession, addCashMovement: state.addCashMovement, removeCashMovement: state.removeCashMovement, inventory: state.inventory, addCustomer: state.addCustomer, bankCards: state.bankCards, addBankTransaction: state.addBankTransaction, customers: state.customers, users: state.users, logout: state.logout, createReturn: state.createReturn, processReturn: state.processReturn, receiptConfig: state.receiptConfig, idnSettlementPrices: state.idnSettlementPrices, addIDNSettlementPrice: state.addIDNSettlementPrice, updateIDNSettlementPrice: state.updateIDNSettlementPrice, deleteIDNSettlementPrice: state.deleteIDNSettlementPrice, setInventoryQuantity: state.setInventoryQuantity, addNotification: state.addNotification, joinOpenSession: state.joinOpenSession, salarySettlements: state.salarySettlements })));
 
 
   // Heavy administrative collections subscribe only while their UI is visible.
@@ -159,8 +154,8 @@ export default function POS() {
     if (activeSessionId) return;
     if (!currentUser?.id) return;
     const own = getCurrentSession(fallbackSessionBranchId, currentUser.id);
-    if (own?.id) setActiveSessionId(own.id);
-  }, [activeSessionId, currentUser?.id, fallbackSessionBranchId, cashSessions, getCurrentSession]);
+    if (own?.id && activeSessionId !== own.id) setActiveSessionId(own.id);
+  }, [activeSessionId, currentUser?.id, fallbackSessionBranchId, cashSessions, getCurrentSession, setActiveSessionId]);
 
   // Al entrar al POS/volver al foco, actualizar operaciones de caja y catálogo.
   // Esto evita que un selector abierto durante horas conserve una lista vieja.
@@ -439,8 +434,13 @@ export default function POS() {
         status: 'completed'
       };
 
-      // Register transaction in store
-      useStore.getState().processTransaction(transaction);
+      // La liquidación IDN debe quedar confirmada o durablemente encolada
+      // antes de mostrar éxito y, especialmente, antes de cerrar el turno.
+      const saved = await useStore.getState().processTransaction(transaction);
+      if (!saved) {
+        setPosError('La liquidación IDN no fue confirmada. El turno permanece abierto y la operación sigue protegida para reintento.');
+        return;
+      }
 
       const branchName = branches.find(b => b.id === branchId)?.name || 'Almacén Asignado';
       const totalPublicSales = settlementDetails.reduce((sum, d) => sum + ((d.publicPrice || d.price) * d.qty), 0);
