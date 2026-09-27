@@ -180,7 +180,7 @@ export interface AppState {
   deleteBankCard: (id: string) => Promise<boolean>;
   
   bankTransactions: import('../types').BankTransaction[];
-  addBankTransaction: (transaction: import('../types').BankTransaction) => void;
+  addBankTransaction: (transaction: import('../types').BankTransaction) => Promise<boolean>;
   deleteBankTransaction: (id: string) => Promise<boolean>;
   reconcileBankBalances: () => Promise<{ removedDuplicates: number; totalSales?: number; totalMovements?: number; message: string }>;
 
