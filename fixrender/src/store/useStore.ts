@@ -662,7 +662,7 @@ export const useStore = create<AppState>()(
 
     const operationId = transactionId || crypto.randomUUID();
     const userId = (get().currentUser?.id && get().users.some(u => u.id === get().currentUser?.id)) ? get().currentUser!.id : 'system';
-    const serverPayload = { operationId, productId, fromBranchId, toBranchId, variants: activeVariants, userId };
+    const serverPayload = { operationId, batchId: batchId || undefined, productId, fromBranchId, toBranchId, variants: activeVariants, userId };
 
     // Online: DB performs one atomic move and owns the inventory mutation.
     if (navigator.onLine) {
