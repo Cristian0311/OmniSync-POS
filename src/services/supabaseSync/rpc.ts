@@ -171,9 +171,19 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
       if (!item) return null;
       const prod = item.product;
       return {
+        id: item.id,
         product_id: typeof prod === 'string' ? prod : prod?.id,
+        product_name: typeof prod === 'object' ? prod?.name || null : null,
+        product_sku: typeof prod === 'object' ? prod?.sku || null : null,
+        product_snapshot: typeof prod === 'object' ? prod : null,
         quantity: item.quantity || 0,
+        price: item.price ?? (typeof prod === 'object' ? prod?.price : null),
+        total: item.total ?? ((item.price ?? (typeof prod === 'object' ? prod?.price : 0)) * (item.quantity || 0)),
         variant_label: item.variantLabel || null,
+        selected_size: item.selectedSize || null,
+        selected_color: item.selectedColor || null,
+        serial_number: item.serialNumber || null,
+        warranty_code: item.warrantyCode || null,
         is_kit: (prod && typeof prod === 'object' && 'isKit' in prod) ? (prod as any).isKit === true : false,
         kit_components: (prod && typeof prod === 'object' && 'kitComponents' in prod) ? (prod as any).kitComponents || [] : []
       };
