@@ -326,6 +326,48 @@ export async function callTransferInventoryRPC(params: {
   }
 }
 
+export async function callDeleteBankInternalTransferRPC(operationId: string): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: 'Supabase no configurado' };
+  try {
+    const { data, error } = await supabase.rpc('delete_bank_internal_transfer_v2', { p_operation_id: operationId });
+    if (error) throw error;
+    assertRpcSuccess(data, 'delete_bank_internal_transfer_v2');
+    return { success: true, data };
+  } catch (e: any) {
+    console.error('[RPC] delete_bank_internal_transfer_v2 failed:', e);
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
+  }
+}
+
+export async function callDeleteBankTransactionRPC(transactionId: string): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: 'Supabase no configurado' };
+  try {
+    const { data, error } = await supabase.rpc('delete_bank_transaction_v2', { p_transaction_id: transactionId });
+    if (error) throw error;
+    assertRpcSuccess(data, 'delete_bank_transaction_v2');
+    return { success: true, data };
+  } catch (e: any) {
+    console.error('[RPC] delete_bank_transaction_v2 failed:', e);
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
+  }
+}
+
+export async function callDeleteBankCardRPC(cardId: string): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: 'Supabase no configurado' };
+  try {
+    const { data, error } = await supabase.rpc('delete_bank_card_safe_v2', { p_card_id: cardId });
+    if (error) throw error;
+    assertRpcSuccess(data, 'delete_bank_card_safe_v2');
+    return { success: true, data };
+  } catch (e: any) {
+    console.error('[RPC] delete_bank_card_safe_v2 failed:', e);
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
+  }
+}
+
 export async function callCompleteReturnRPC(returnId: string, userId: string): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
   const supabase = getSupabase();
   if (!supabase) return { success: false, error: 'Supabase no configurado' };
