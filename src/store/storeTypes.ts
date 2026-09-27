@@ -152,8 +152,10 @@ export interface AppState {
   updateSupplierOrder: (id: string, order: Partial<SupplierOrder>) => void;
   
   inventoryAudits: InventoryAudit[];
-  createInventoryAudit: (audit: InventoryAudit) => void;
-  completeInventoryAudit: (id: string, items: any[], notes?: string) => void;
+  createInventoryAudit: (audit: InventoryAudit) => Promise<{ success: boolean; error?: string }>;
+  completeInventoryAudit: (id: string, items: any[], notes?: string) => Promise<{ success: boolean; error?: string }>;
+  requestInventoryAuditRecount: (id: string, notes?: string) => Promise<{ success: boolean; error?: string }>;
+  approveInventoryAudit: (id: string, notes?: string) => Promise<{ success: boolean; error?: string }>;
   
   fiscalConfigs: FiscalConfig[];
   updateFiscalConfig: (id: string, config: Partial<FiscalConfig>) => void;
