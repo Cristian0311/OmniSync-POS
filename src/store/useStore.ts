@@ -41,26 +41,57 @@ function applyLocalVoidTransaction(transaction: Transaction) {
     const updatedInventory = [...state.inventory];
     const restore = (productId: string, qty: number, variantLabel?: string) => {
       if (!productId) return;
-      const idx = updatedInventory.findIndex((i: any) => i.productId === productId && i.branchId === transaction.branchId && (i.variantLabel || '') === (variantLabel || ''));
+      const idx = updatedInventory.findIndex((i: any) =>
+        i.productId === productId &&
+        i.branchId === transaction.branchId &&
+        (i.variantLabel || '') === (variantLabel || '')
+      );
       if (idx !== -1) {
         updatedInventory[idx] = { ...updatedInventory[idx], quantity: updatedInventory[idx].quantity + qty };
       }
     };
-    
+
     (transaction.items || []).forEach((item: any) => {
       if (!item) return;
       const prod = item.product;
       if (!prod) return;
       if (typeof prod === 'object' && prod.isKit && Array.isArray(prod.kitComponents)) {
-        prod.kitComponents.forEach((c: any) => restore(c.productId, c.quantity * (item.quantity || 1)));
+        prod.kitComponents.forEach((component: any) =>
+          restore(component.productId, component.quantity * (item.quantity || 1))
+        );
       } else if (typeof prod === 'object') {
         restore(prod.id, item.quantity || 1, item.variantLabel);
       } else if (typeof prod === 'string') {
         restore(prod, item.quantity || 1, item.variantLabel);
       }
     });
-    
-    return { inventory: updatedInventory };
+
+    // Anulación de una venta también debe revertir localmente los ingresos por
+    // transferencia asociados a esa venta. El servidor hace la misma reversión
+    // atómicamente; este espejo evita que la UI muestre un saldo artificial hasta
+    // que llegue el siguiente bootstrap/realtime.
+    const bankToReverse = (state.bankTransactions || []).filter(
+      (bt: any) => bt.transactionId === transaction.id && bt.type === 'payment_received'
+    );
+
+    const updatedBankCards = (state.bankCards || []).map((card: any) => {
+      const amount = bankToReverse
+        .filter((bt: any) => bt.cardId === card.id)
+        .reduce((sum: number, bt: any) => sum + Number(bt.amount || 0), 0);
+      return amount > 0
+        ? { ...card, balance: Math.max(0, Number(card.balance || 0) - amount) }
+        : card;
+    });
+
+    const remainingBankTransactions = (state.bankTransactions || []).filter(
+      (bt: any) => !(bt.transactionId === transaction.id && bt.type === 'payment_received')
+    );
+
+    return {
+      inventory: updatedInventory,
+      bankTransactions: remainingBankTransactions,
+      bankCards: updatedBankCards
+    };
   });
 }
 
