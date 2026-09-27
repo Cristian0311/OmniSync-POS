@@ -2269,7 +2269,10 @@ export const useStore = create<AppState>()(
             : mergedReturnsRaw;
 
           // --- 6. Inventario (Deduplicación por combinación única) ---
-          const baseInv = data.inventory !== undefined ? data.inventory : state.inventory;
+          // An empty inventory response during reconnect is not authoritative:
+          // keep the last local snapshot instead of blanking the POS.
+          const hasRemoteInventory = Array.isArray(data.inventory) && data.inventory.length > 0;
+          const baseInv = hasRemoteInventory ? data.inventory : (state.inventory || []);
           const invMap = new Map<string, InventoryLevel>();
           baseInv.forEach(inv => {
             const key = `${inv.productId}_${inv.branchId}_${inv.variantLabel || ''}`;
