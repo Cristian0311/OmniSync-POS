@@ -1801,20 +1801,28 @@ export default function POS() {
     const { users } = useStore.getState();
     const trimmedWorkerName = sessionWorkerName.trim();
 
-    // An employee can only open a shift for their own account. The administrator
-    // may explicitly select another worker/IDN from the POS.
-    const workerToAssign = currentUser?.role === 'admin'
-      ? (detectedWorker || (trimmedWorkerName ? users.find(u => (u.name || '').toLowerCase() === trimmedWorkerName.toLowerCase()) : currentUser))
-      : currentUser;
+    // Flujo obligatorio: seleccionar/buscar el empleado y después validar
+    // su contraseña. Un trabajador normal solo puede seleccionar su propia
+    // identidad; el administrador puede seleccionar cualquier empleado.
+    if (!trimmedWorkerName) {
+      setPosError("Debes buscar y seleccionar tu nombre antes de continuar.");
+      setTimeout(() => setPosError(""), 3000);
+      return;
+    }
+
+    const workerToAssign = detectedWorker ||
+      users.find(u => (u.name || '').trim().toLowerCase() === trimmedWorkerName.toLowerCase()) ||
+      null;
 
     if (!workerToAssign) {
-      setPosError("Debes seleccionar un vendedor para abrir la caja");
+      setPosError("No se encontró el empleado seleccionado. Elige un nombre válido del selector.");
       setTimeout(() => setPosError(""), 3000);
       return;
     }
 
     if (currentUser?.role !== 'admin' && workerToAssign.id !== currentUser?.id) {
-      setPosError("Un trabajador solo puede abrir su propio turno.");
+      setPosError("Un trabajador solo puede abrir su propio turno. Selecciona tu nombre.");
+      setTimeout(() => setPosError(""), 3000);
       return;
     }
 
