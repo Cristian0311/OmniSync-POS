@@ -10,6 +10,66 @@ import {
   ReceiptConfig, StoreConfig
 } from '../../types';
 import { fetchAllRows, safeUpsert, safeUpsertMany, SyncResult } from './core';
+function normalizeTransactionItems(items: any[], products: Product[]): any[] {
+  const productById = new Map((products || []).map((p: Product) => [p.id, p]));
+  return (Array.isArray(items) ? items : []).map((raw: any, index: number) => {
+    if (!raw) return raw;
+    const rawProduct = raw.product;
+    const productId =
+      (typeof rawProduct === 'string' ? rawProduct : rawProduct?.id) ||
+      raw.product_id ||
+      raw.productId ||
+      rawProduct?.product_id;
+    const resolved = typeof rawProduct === 'object' && rawProduct?.id
+      ? rawProduct
+      : (productId ? productById.get(productId) : undefined);
+    const storedSnapshot =
+      raw.product_snapshot && typeof raw.product_snapshot === 'object'
+        ? raw.product_snapshot
+        : undefined;
+    const productSource = storedSnapshot || resolved || (typeof rawProduct === 'object' ? rawProduct : undefined);
+    const historicalName =
+      raw.product_name ||
+      raw.productName ||
+      productSource?.name ||
+      (productId ? productById.get(productId)?.name : undefined) ||
+      'Producto desconocido';
+    const historicalPrice = Number(
+      raw.price ??
+      raw.product_price ??
+      productSource?.price ??
+      (productId ? productById.get(productId)?.price : 0)
+    ) || 0;
+    const quantity = Number(raw.quantity) || 0;
+    const product = productSource
+      ? { ...productSource, id: productSource.id || productId, name: historicalName, price: historicalPrice }
+      : {
+          id: productId || ('unknown-' + index),
+          name: historicalName,
+          sku: raw.product_sku || '',
+          barcode: '',
+          costPrice: 0,
+          price: historicalPrice,
+          margin: 0,
+          categoryId: '',
+          color: 'bg-slate-100 text-slate-700',
+          commissionValue: 0,
+        };
+    return {
+      id: raw.id || ((productId || 'item') + '-' + index),
+      product,
+      quantity,
+      price: historicalPrice,
+      total: Number(raw.total) || historicalPrice * quantity,
+      serialNumber: raw.serialNumber || raw.serial_number || undefined,
+      warrantyCode: raw.warrantyCode || raw.warranty_code || undefined,
+      selectedSize: raw.selectedSize || raw.selected_size || undefined,
+      selectedColor: raw.selectedColor || raw.selected_color || undefined,
+      variantLabel: raw.variantLabel || raw.variant_label || undefined
+    };
+  });
+}
+
 
 export async function pullBranchInventoryFromSupabase(branchId?: string): Promise<{ success: boolean; inventory: InventoryLevel[]; message?: string }> {
   const supabase = getSupabase();
@@ -45,11 +105,12 @@ export async function pullBranchOperationalDataFromSupabase(branchId: string): P
     ]);
     const firstError = [txRes, sessionsRes, invRes].find(r => r.error)?.error;
     if (firstError) throw firstError;
+    const catalogProducts = useStore.getState().products || [];
     const transactions: Transaction[] = (txRes.data || []).map((t:any) => ({
       id:t.id,date:t.date,total:Number(t.total)||0,tax:Number(t.tax)||0,discount:Number(t.discount)||0,
       branchId:t.branch_id,customerId:t.customer_id,userId:t.user_id,status:t.status||'completed',
       notes:t.notes||'',paymentMethod:t.payment_method||'cash',sessionId:t.session_id,
-      changeGiven:Number(t.change_given)||0,items:Array.isArray(t.items)?t.items:[],
+      changeGiven:Number(t.change_given)||0,items:normalizeTransactionItems(t.items, catalogProducts),
       payments:Array.isArray(t.payments)?t.payments:[],changePayments:Array.isArray(t.change_payments)?t.change_payments:[],
       sellerEmployeeIds:Array.isArray(t.seller_employee_ids)?t.seller_employee_ids:[],
       deletedAt:t.deleted_at||undefined,deletedBy:t.deleted_by||undefined,deleteReason:t.delete_reason||undefined
@@ -148,10 +209,11 @@ export async function pullPosBootstrapFromSupabase(branchId?: string): Promise<{
     const firstError = [branchesRes,categoriesRes,productsRes,inventoryRes,usersRes,customersRes,currenciesRes,idnRes,txRes,sessionsRes].find(r => r.error)?.error;
     if (firstError) throw firstError;
     const mapProduct = (p:any): Product => ({ id:p.id,name:p.name,sku:p.sku||'',barcode:p.barcode||'',costPrice:Number(p.cost_price)||0,price:Number(p.price)||0,margin:Number(p.margin)||0,categoryId:p.category_id||'',color:p.color||'bg-slate-100 text-slate-700',commissionType:p.commission_type||'percentage',commissionValue:Number(p.commission_value)||0,unit:p.unit||'unidad',status:p.status||'active',minStockAlert:Number(p.min_stock_alert)||5,hasSerial:Boolean(p.has_serial),warrantyDays:Number(p.warranty_days)||0,isKit:Boolean(p.is_kit),kitItems:Array.isArray(p.kit_items)?p.kit_items:[],kitComponents:Array.isArray(p.kit_components)?p.kit_components:(Array.isArray(p.kit_items)?p.kit_items:[]),deviceColor:p.device_color||'',availableSizes:Array.isArray(p.available_sizes)?p.available_sizes:[],availableColors:Array.isArray(p.available_colors)?p.available_colors:[] });
+    const mappedProducts = (productsRes.data||[]).map(mapProduct);
     const mapInventory = (i:any): InventoryLevel => ({ id:i.id,productId:i.product_id,branchId:i.branch_id,variantLabel:i.variant_label||undefined,quantity:Number(i.quantity)||0,minQuantity:Number(i.min_quantity)||0 });
     const mapUser = (u:any): User => ({ id:u.id,name:u.name,email:u.email||'',password:u.password||'',role:u.role||'employee',commissionRate:Number(u.commission_rate)||0,baseSalary:Number(u.base_salary)||0,salesGoal:Number(u.sales_goal)||0,branchId:u.branch_id||undefined,allowedBranches:Array.isArray(u.allowed_branches)?u.allowed_branches:undefined,permissions:Array.isArray(u.permissions)?u.permissions:undefined,isActive:u.is_active!==false,isIndependent:u.is_independent===true,assignedBranchId:u.assigned_branch_id||undefined });
     const mapCustomer = (c:any): Customer => ({ id:c.id,name:c.name,email:c.email||'',phone:c.phone||'',taxId:c.tax_id||'' });
-    const mapTx = (t:any): Transaction => ({ id:t.id,date:t.date,total:Number(t.total)||0,tax:Number(t.tax)||0,discount:Number(t.discount)||0,branchId:t.branch_id,customerId:t.customer_id,userId:t.user_id,status:t.status||'completed',notes:t.notes||'',paymentMethod:t.payment_method||'cash',sessionId:t.session_id,changeGiven:Number(t.change_given)||0,items:Array.isArray(t.items)?t.items:[],payments:Array.isArray(t.payments)?t.payments:[],changePayments:Array.isArray(t.change_payments)?t.change_payments:[],sellerEmployeeIds:Array.isArray(t.seller_employee_ids)?t.seller_employee_ids:[],deletedAt:t.deleted_at||undefined,deletedBy:t.deleted_by||undefined,deleteReason:t.delete_reason||undefined });
+    const mapTx = (t:any): Transaction => ({ id:t.id,date:t.date,total:Number(t.total)||0,tax:Number(t.tax)||0,discount:Number(t.discount)||0,branchId:t.branch_id,customerId:t.customer_id,userId:t.user_id,status:t.status||'completed',notes:t.notes||'',paymentMethod:t.payment_method||'cash',sessionId:t.session_id,changeGiven:Number(t.change_given)||0,items:normalizeTransactionItems(t.items, mappedProducts),payments:Array.isArray(t.payments)?t.payments:[],changePayments:Array.isArray(t.change_payments)?t.change_payments:[],sellerEmployeeIds:Array.isArray(t.seller_employee_ids)?t.seller_employee_ids:[],deletedAt:t.deleted_at||undefined,deletedBy:t.deleted_by||undefined,deleteReason:t.delete_reason||undefined });
     const mapSession = (s:any): CashRegisterSession => ({ id:s.id,userId:s.user_id,workerName:s.worker_name,branchId:s.branch_id,openedAt:s.opened_at,closedAt:s.closed_at,openingBalance:Number(s.opening_balance??s.opening_amount)||0,openingAmount:Number(s.opening_amount??s.opening_balance)||0,closingBalances:Array.isArray(s.closing_balances)?s.closing_balances:[],status:s.status||'open',notes:s.notes||'',closingDate:s.closing_date||undefined,workingEmployeeIds:Array.isArray(s.working_employee_ids)?s.working_employee_ids:[],movements:Array.isArray(s.movements)?s.movements:[] });
     return { success:true, data:{
       branches:(branchesRes.data||[]).map((b:any)=>({id:b.id,name:b.name,address:b.address,phone:b.phone,isMain:b.is_main})),
@@ -406,7 +468,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
           paymentMethod: t.payment_method || 'cash',
           sessionId: t.session_id,
           changeGiven: Number(t.change_given) || 0,
-          items: Array.isArray(t.items) ? t.items : [],
+          items: normalizeTransactionItems(t.items, fetchedData.products || []),
           payments: Array.isArray(t.payments) ? t.payments : [],
           changePayments: Array.isArray(t.change_payments) ? t.change_payments : [],
           sellerEmployeeIds: Array.isArray(t.seller_employee_ids) ? t.seller_employee_ids : [],
