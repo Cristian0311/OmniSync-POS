@@ -283,7 +283,7 @@ export default function CashRegister() {
       </header>
 
       {!session ? (
-        <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 text-center max-w-sm mx-auto mt-8 animate-in zoom-in-95">
+        <div className="bg-white rounded-2xl sm:rounded-3xl shadow-sm border border-slate-100 p-4 sm:p-5 text-center w-full max-w-[min(94vw,420px)] mx-auto mt-4 sm:mt-6 animate-in zoom-in-95">
           <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-slate-100">
             <Lock className="w-6 h-6 text-slate-300" />
           </div>
@@ -303,7 +303,7 @@ export default function CashRegister() {
                 ))}
               </select>
             ) : (
-              <p className="text-sm font-black text-indigo-900 uppercase">{currentBranch?.name}</p>
+              <p className="text-sm font-black text-indigo-900 uppercase break-words whitespace-normal leading-tight">{currentBranch?.name}</p>
             )}
             <p className="text-[10px] font-bold text-indigo-500 uppercase mt-1">Usuario: {currentUser?.name || 'Vendedor'}</p>
           </div>
@@ -332,7 +332,7 @@ export default function CashRegister() {
                 </label>
                 <div className="flex flex-col gap-2 max-h-32 overflow-y-auto custom-scrollbar pr-1">
                   {branchStaff.map(staff => (
-                    <label key={staff.id} className="flex items-center gap-2 p-2 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-indigo-300 transition-colors">
+                    <label key={staff.id} className="flex items-start gap-2 p-2 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-indigo-300 transition-colors min-w-0">
                       <input 
                         type="checkbox" 
                         className="rounded text-indigo-600 focus:ring-indigo-500 bg-slate-100 border-slate-300 w-4 h-4"
@@ -345,8 +345,8 @@ export default function CashRegister() {
                           }
                         }}
                       />
-                      <span className="text-[10px] font-black text-slate-700 uppercase">{staff.name}</span>
-                      <span className="ml-auto text-[8px] font-bold text-slate-400 uppercase bg-slate-50 px-2 py-0.5 rounded-md">
+                      <span className="text-[10px] font-black text-slate-700 uppercase whitespace-normal break-words leading-tight flex-1 min-w-0">{staff.name}</span>
+                      <span className="ml-auto shrink-0 text-[8px] font-bold text-slate-400 uppercase bg-slate-50 px-2 py-0.5 rounded-md">
                         {staff.role}
                       </span>
                     </label>
@@ -614,6 +614,7 @@ export default function CashRegister() {
           <table className="w-full text-left">
             <thead>
               <tr className="border-b border-slate-50">
+                <th className="px-5 py-3 text-[8px] font-black text-slate-400 uppercase tracking-widest">Turno</th>
                 <th className="px-5 py-3 text-[8px] font-black text-slate-400 uppercase tracking-widest">Apertura / Cierre</th>
                 <th className="px-5 py-3 text-[8px] font-black text-slate-400 uppercase tracking-widest text-right">Fondo Inic.</th>
                 <th className="px-5 py-3 text-[8px] font-black text-slate-400 uppercase tracking-widest text-right">Efectivo Final</th>
@@ -629,6 +630,11 @@ export default function CashRegister() {
                   const finalCash = s.closingBalances?.find(b => b.currencyCode === baseCurrency.code && b.method === 'cash')?.amount || 0;
                   return (
                     <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-5 py-3">
+                        <span className="inline-flex items-center px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 text-[9px] font-black uppercase tracking-wider">
+                          {s.turnNumber ? `Turno-${s.turnNumber}` : s.id}
+                        </span>
+                      </td>
                       <td className="px-5 py-3">
                         <p className="text-[10px] font-black text-slate-900 uppercase tracking-tight">
                           {new Date(s.openedAt).toLocaleDateString()}
