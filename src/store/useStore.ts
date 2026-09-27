@@ -1340,83 +1340,67 @@ export const useStore = create<AppState>()(
     const session = get().cashSessions.find(s => s.id === sessionId);
     if (!session) return;
 
-    const sessionTxs = get().transactions.filter(t => 
-      t.sessionId 
+    const sessionTxs = get().transactions.filter(t =>
+      t.sessionId
         ? t.sessionId === session.id
-        : (t.branchId === session.branchId && 
+        : (t.branchId === session.branchId &&
            new Date(t.date).getTime() >= new Date(session.openedAt).getTime() &&
            (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
     );
-    
     const user = get().users.find(u => u.id === session.userId || u.name?.toLowerCase() === (workerName || session.workerName)?.toLowerCase());
-    const commissions = sessionTxs.reduce((sum, tx) => {
-      return sum + (tx.items || []).reduce((itemSum, item) => {
+    const commissions = sessionTxs.reduce((sum, tx) =>
+      sum + (tx.items || []).reduce((itemSum, item) => {
         const prodObj = typeof item.product === 'object' ? item.product : get().products.find(p => p.id === (item.product as unknown as string));
-        const commVal = prodObj?.commissionValue || 0;
-        const comm = commVal * (item.quantity || 0);
-        return itemSum + comm;
-      }, 0);
-    }, 0);
-
+        return itemSum + ((prodObj?.commissionValue || 0) * (item.quantity || 0));
+      }, 0), 0);
     const baseSalary = user?.baseSalary || 0;
     const deduction = discrepancyDeduction || 0;
-    const totalSalary = (baseSalary + commissions) - deduction;
-
-    const finalSellerName = workerName || session.workerName || user?.name || 'Vendedor';
-
     const settlement: SalarySettlement = {
       id: crypto.randomUUID(),
       userId: session.userId,
-      userName: finalSellerName,
-      sessionId: sessionId,
-      baseSalary: baseSalary,
-      commissions: commissions,
+      userName: workerName || session.workerName || user?.name || 'Vendedor',
+      sessionId,
+      baseSalary,
+      commissions,
       discrepancyDeduction: deduction,
-      total: totalSalary,
+      total: (baseSalary + commissions) - deduction,
       date: finalClosingDate,
       status: 'pending'
     };
-
     const updatedSession = {
       ...session,
       closedAt: finalClosingDate,
       status: 'closed' as 'closed',
       closingBalances: closingBalances || [],
-      workerName: finalSellerName,
+      workerName: settlement.userName,
       closingDate: finalClosingDate,
       ...(sessionMeta || {})
     };
+    const actionId = 'cash-close:' + sessionId;
+    await enqueueOfflineItem('cash_session', { ...updatedSession, __operation: 'close', settlement }, actionId);
 
-    // Intentar RPC atómico
     if (navigator.onLine) {
       try {
-        const res = await callCloseSessionRPC(sessionId, closingBalances, finalClosingDate, session.notes || '', settlement);
-        if (res.success) {
-          // Actualizar localmente
-          set((state) => ({
-            cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s),
-            salarySettlements: [...(state.salarySettlements || []), { ...settlement, id: res.data?.settlement_id || settlement.id }],
-            cart: []
-          }));
-          return;
-        }
+        const res = await callCloseSessionRPC(sessionId, closingBalances || [], finalClosingDate, session.notes || '', settlement);
+        if (!res.success) throw new Error(res.error || 'No se pudo cerrar el turno');
+        set((state) => ({
+          cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s),
+          salarySettlements: [...(state.salarySettlements || []).filter(st => st.sessionId !== sessionId), { ...settlement, id: res.data?.settlement_id || settlement.id }],
+          cart: []
+        }));
+        removeFromOfflineQueueByAction('cash_session', actionId);
+        return;
       } catch (err) {
-        console.warn("[closeSession] RPC callCloseSessionRPC failed/errored, falling back to offline push:", err);
+        console.warn("[closeSession] El cierre no fue confirmado; queda durable para reintento:", err);
+        return;
       }
     }
 
     set((state) => ({
-      cashSessions: (state.cashSessions || []).map(s => 
-        s.id === sessionId ? updatedSession : s
-      ),
-      salarySettlements: [...(state.salarySettlements || []), settlement],
-      cart: [] // ASEGURAR QUE EL CARRITO ESTÉ VACÍO AL CERRAR TURNO
+      cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s),
+      salarySettlements: [...(state.salarySettlements || []).filter(st => st.sessionId !== sessionId), settlement],
+      cart: []
     }));
-
-    // Preserve the complete close operation offline. The queue replays the
-    // atomic close RPC and the settlement, rather than fire-and-forget upserts.
-    enqueueOfflineItem('cash_session', { ...updatedSession, __operation: 'close', settlement }, `cash-close:${sessionId}`);
-    enqueueOfflineItem('salary_settlement', settlement, `salary:${settlement.id}`);
   },
   updateCashSession: (id, updates) => {
     set((state) => ({
