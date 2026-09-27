@@ -362,13 +362,27 @@ export interface InventoryAudit {
   branchId: string;
   userId: string;
   status: 'pending' | 'completed';
+  mode?: 'physical' | 'cycle_count';
+  blindCount?: boolean;
+  snapshotAt?: string;
+  submittedAt?: string;
+  reviewStatus?: 'counting' | 'recount_requested' | 'pending_approval' | 'approved';
+  countedBy?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  recountCount?: number;
+  adjustmentPostedAt?: string;
   items: {
     productId: string;
     productName: string;
     variantLabel?: string;
     expected: number;
-    counted: number;
+    counted?: number | null;
+    actual?: number | null;
     difference: number;
+    adjustmentDelta?: number;
+    systemAtSubmission?: number;
+    countCycle?: number;
   }[];
   notes?: string;
 }
