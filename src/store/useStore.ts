@@ -1416,11 +1416,8 @@ export const useStore = create<AppState>()(
     const existingSessions = get().cashSessions || [];
     let maxTurn = 0;
     existingSessions.forEach(s => {
-      const match = s.id?.match(/^Turno-(\d+)$/i);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        if (!isNaN(num) && num > maxTurn) maxTurn = num;
-      }
+      const persisted = Number(s.turnNumber);
+      if (Number.isFinite(persisted) && persisted > maxTurn) maxTurn = persisted;
     });
     
     // Si hay red, usar RPC para garantizar integridad y turno único
@@ -1432,6 +1429,7 @@ export const useStore = create<AppState>()(
             ...res.data,
             openingBalance: Number(res.data.opening_balance || res.data.opening_amount) || 0,
             openingAmount: Number(res.data.opening_amount || res.data.opening_balance) || 0,
+            turnNumber: Number(res.data.turn_number) || undefined,
             workingEmployeeIds: res.data.working_employee_ids || [],
             movements: res.data.movements || []
           };
@@ -1439,7 +1437,7 @@ export const useStore = create<AppState>()(
             const sessions = (state.cashSessions || []).filter(s => s.id !== officialSession.id);
             return {
               cashSessions: [...sessions, officialSession],
-              lastTurnNumber: Math.max(state.lastTurnNumber, parseInt(officialSession.id.split('-')[1]) || 0),
+              lastTurnNumber: Math.max(state.lastTurnNumber, Number(officialSession.turnNumber) || 0),
               cart: []
             };
           });
@@ -1455,11 +1453,14 @@ export const useStore = create<AppState>()(
       }
     }
 
-    const nextTurn = Math.max(maxTurn, get().lastTurnNumber || 0, existingSessions.length) + 1;
+    const nextTurn = Math.max(maxTurn, get().lastTurnNumber || 0) + 1;
     // El turno creado offline necesita un ID estable y único que también pueda
     // usar la venta offline como session_id cuando llegue a Supabase.
     const sessionWithSequentialId = {
       ...session,
+      // Local optimistic label only. Supabase assigns the authoritative number
+      // atomically on INSERT; the queue payload must never force a client number.
+      turnNumber: nextTurn,
       // Keep the original stable ID. If the online insert actually succeeded
       // but its response was lost, replaying this exact operation becomes an
       // idempotent lookup instead of creating a second turn.
