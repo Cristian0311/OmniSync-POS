@@ -1,16 +1,22 @@
 /**
- * Offline-first operation queue.
+ * Offline synchronization engine.
  *
- * IMPORTANT: this queue stores operations, not a copy of the whole application
- * state. IndexedDB is used because POS devices can remain offline for long
- * periods and localStorage is too fragile for a growing transactional queue.
+ * The durable queue itself lives in offlineQueue.ts so the application store can
+ * enqueue operations without importing the replay engine or Supabase adapters.
  */
 import { getSupabase, checkSupabaseReachability } from '../lib/supabase';
 import { useStore } from '../store/useStore';
+import type { OfflineActionType, OfflineQueueItem } from './offlineQueue';
 import {
-  Transaction, CashRegisterSession,
-  Customer, ReturnItem, Branch, Product, Category
-} from '../types';
+  getOfflineQueue,
+  waitForOfflineQueueReady,
+  getOfflineQueueCount,
+  getOfflineConflictCount,
+  isOfflineQueueItemRemoved,
+  clearOfflineQueueRemovalMark,
+  setOfflineQueueMemory,
+  persistOfflineQueueSnapshot
+} from './offlineQueue';
 import {
   callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCancelSessionRPC,
   callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC,
@@ -19,329 +25,10 @@ import {
 } from './supabaseSync';
 import { addSyncLog } from '../utils/syncLogger';
 
-export type OfflineActionType =
-  | 'transaction' | 'void_transaction' | 'return_complete' | 'transfer'
-  | 'supplier_receive' | 'audit_complete' | 'cash_session' | 'inventory' | 'inventory_adjustment' | 'inventory_reconcile'
-  | 'customer' | 'customer_delete' | 'return' | 'bank_transaction'
-  | 'branch' | 'product' | 'category' | 'receipt_config' | 'store_config' | 'catalog_config' | 'salary_settlement'
-  | 'user' | 'currency' | 'idn_settlement_price' | 'warranty' | 'time_shift' | 'quote' | 'bank_internal_transfer' | 'bank_internal_transfer_delete' | 'bank_transaction_delete' | 'bank_card_delete'
-  | 'bank_card' | 'supplier' | 'supplier_order' | 'inventory_audit';
-
-export interface OfflineQueueItem {
-  id: string;
-  actionId: string;
-  type: OfflineActionType;
-  data: any;
-  timestamp: string;
-  retryCount: number;
-  status?: 'pending' | 'processing' | 'failed' | 'conflict';
-  lastError?: string;
-  deviceId?: string;
-}
-
-const STORAGE_KEY = 'pos_offline_sync_queue';
-const DB_NAME = 'omnisync-pos-offline';
-const DB_VERSION = 1;
-const STORE_NAME = 'operations';
-const DEVICE_KEY = 'omnisync_device_id';
-
 let isProcessingQueue = false;
-let memoryQueue: OfflineQueueItem[] = [];
-let queueReady = false;
-let persistenceChain: Promise<void> = Promise.resolve();
-let persistenceError: Error | null = null;
-let queueInitPromise: Promise<void>;
-let removedDuringQueueProcess = new Set<string>();
 
 class PermanentSyncError extends Error {
   permanent = true;
-}
-
-function getDeviceId(): string {
-  if (typeof window === 'undefined') return 'server';
-  const existing = localStorage.getItem(DEVICE_KEY);
-  if (existing) return existing;
-  const id = crypto.randomUUID();
-  localStorage.setItem(DEVICE_KEY, id);
-  return id;
-}
-
-function openDb(): Promise<IDBDatabase | null> {
-  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        store.createIndex('status', 'status', { unique: false });
-        store.createIndex('action', ['type', 'actionId'], { unique: true });
-        store.createIndex('timestamp', 'timestamp', { unique: false });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('IndexedDB open failed'));
-  });
-}
-
-async function idbGetAll(): Promise<OfflineQueueItem[] | null> {
-  const db = await openDb();
-  if (!db) return null;
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const request = tx.objectStore(STORE_NAME).getAll();
-    request.onsuccess = () => resolve((request.result || []) as OfflineQueueItem[]);
-    request.onerror = () => reject(request.error || new Error('IndexedDB read failed'));
-    tx.onerror = () => reject(tx.error || new Error('IndexedDB transaction read failed'));
-    tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction read aborted'));
-    tx.oncomplete = () => db.close();
-  });
-}
-
-async function idbReplaceAll(queue: OfflineQueueItem[]): Promise<void> {
-  const db = await openDb();
-  if (!db) throw new Error('IndexedDB no disponible');
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    store.clear();
-    queue.forEach(item => store.put(item));
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error('IndexedDB write failed'));
-    tx.onabort = () => reject(tx.error || new Error('IndexedDB write aborted'));
-  });
-  db.close();
-}
-
-async function idbPut(item: OfflineQueueItem): Promise<void> {
-  const db = await openDb();
-  if (!db) throw new Error('IndexedDB no disponible');
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(item);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error('IndexedDB put failed'));
-    tx.onabort = () => reject(tx.error || new Error('IndexedDB put aborted'));
-  });
-  db.close();
-}
-
-async function idbDelete(id: string): Promise<void> {
-  const db = await openDb();
-  if (!db) throw new Error('IndexedDB no disponible');
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error('IndexedDB delete failed'));
-    tx.onabort = () => reject(tx.error || new Error('IndexedDB delete aborted'));
-  });
-  db.close();
-}
-
-async function idbClear(): Promise<void> {
-  const db = await openDb();
-  if (!db) throw new Error('IndexedDB no disponible');
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).clear();
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error('IndexedDB clear failed'));
-    tx.onabort = () => reject(tx.error || new Error('IndexedDB clear aborted'));
-  });
-  db.close();
-}
-
-async function migrateLegacyQueue(): Promise<void> {
-  if (typeof window === 'undefined') { queueReady = true; return; }
-  const legacyRaw = localStorage.getItem(STORAGE_KEY);
-  const legacy = legacyRaw ? (() => { try { return JSON.parse(legacyRaw); } catch { return []; } })() : [];
-  let existing: OfflineQueueItem[] | null = null;
-  try {
-    existing = await idbGetAll();
-  } catch (e) {
-    // Never replace IndexedDB with an empty queue when a read itself failed.
-    // The old behavior could erase durable pending sales during startup.
-    console.error('[offlineSync] No se pudo leer la cola IndexedDB; se conserva sin sobrescribir:', e);
-    memoryQueue = Array.isArray(legacy) ? legacy : [];
-    queueReady = true;
-    emitQueueEvent();
-    return;
-  }
-  // Merge every source instead of choosing one. This prevents an enqueue that
-  // happens during startup from being overwritten by the migration itself.
-  const merged = new Map<string, OfflineQueueItem>();
-  for (const item of [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(legacy) ? legacy : []), ...memoryQueue]) {
-    const normalized = { ...item, deviceId: item.deviceId || getDeviceId() };
-    merged.set(`${normalized.type}:${normalized.actionId}`, normalized);
-  }
-  memoryQueue = Array.from(merged.values()).sort((a,b) => a.timestamp.localeCompare(b.timestamp));
-  try {
-    await idbReplaceAll(memoryQueue);
-    if (legacyRaw) localStorage.removeItem(STORAGE_KEY);
-  } catch (e) {
-    persistenceError = e instanceof Error ? e : new Error(String(e));
-    // Si IndexedDB está dañado/bloqueado, conservamos una copia durable en
-    // localStorage y NO eliminamos la cola heredada.
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch { /* se conserva en memoria */ }
-    console.error('[offlineSync] IndexedDB no disponible durante migración; usando respaldo local:', e);
-  }
-  queueReady = true;
-  emitQueueEvent();
-
-  // El replay automático se inicia desde App después de que el store termine
-  // de hidratarse. No procesamos la cola aquí para evitar que IndexedDB y
-  // Zustand compitan durante el arranque y posteriormente se pisen el estado.
-}
-
-// Hydrate once at module load. Synchronous readers use the memory snapshot.
-// Writers wait for this migration so a first offline operation cannot be lost
-// when the legacy localStorage queue is being imported.
-queueInitPromise = migrateLegacyQueue();
-
-function emitQueueEvent() {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('offline_queue_updated', { detail: { count: memoryQueue.length } }));
-  }
-}
-
-export function getOfflineQueue(): OfflineQueueItem[] {
-  return [...memoryQueue];
-}
-
-/**
- * Espera a que la cola persistida haya terminado de migrarse antes de leerla.
- * Esto evita una condición de carrera al reconectar justo después de abrir la app:
- * antes de la migración memoryQueue puede estar vacía aunque IndexedDB tenga ventas.
- */
-export async function waitForOfflineQueueReady(): Promise<void> {
-  if (queueInitPromise) await queueInitPromise;
-}
-
-function persistQueueSnapshot(queue: OfflineQueueItem[]): void {
-  memoryQueue = [...queue];
-  emitQueueEvent();
-  const snapshot = [...memoryQueue];
-  // El snapshot completo se usa solo durante la migración/recuperación.
-  // Las operaciones normales usan put/delete incrementales para no reescribir
-  // miles de operaciones cada vez que entra una venta nueva.
-  persistenceChain = persistenceChain.then(async () => {
-    if (!queueReady && queueInitPromise) await queueInitPromise;
-    if (typeof indexedDB !== 'undefined') {
-      await idbReplaceAll(snapshot);
-      return;
-    }
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot)); } catch (e) {
-      console.error('[offlineSync] Error al guardar cola offline:', e);
-    }
-  }).catch(async e => {
-    persistenceError = e instanceof Error ? e : new Error(String(e));
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot)); } catch { /* se conserva en memoria y se reporta al sincronizador */ }
-    console.error('[offlineSync] Error persistiendo cola:', e);
-  });
-}
-
-function persistQueueItem(item: OfflineQueueItem): Promise<void> {
-  persistenceChain = persistenceChain.then(async () => {
-    if (!queueReady && queueInitPromise) await queueInitPromise;
-    if (typeof indexedDB !== 'undefined') {
-      await idbPut(item);
-      return;
-    }
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch (e) {
-      console.error('[offlineSync] Error al guardar cola offline:', e);
-    }
-  }).catch(async e => {
-    persistenceError = e instanceof Error ? e : new Error(String(e));
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch { /* se reporta y se conserva en memoria */ }
-    console.error('[offlineSync] Error persistiendo cola:', e);
-  });
-  return persistenceChain;
-}
-
-function persistQueueDelete(id: string): Promise<void> {
-  persistenceChain = persistenceChain.then(async () => {
-    if (!queueReady && queueInitPromise) await queueInitPromise;
-    if (typeof indexedDB !== 'undefined') {
-      await idbDelete(id);
-      return;
-    }
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch (e) {
-      console.error('[offlineSync] Error al guardar cola offline:', e);
-    }
-  }).catch(async e => {
-    persistenceError = e instanceof Error ? e : new Error(String(e));
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch { /* se reporta y se conserva en memoria */ }
-    console.error('[offlineSync] Error persistiendo cola:', e);
-  });
-  return persistenceChain;
-}
-
-async function waitForQueuePersistence(): Promise<void> {
-  await persistenceChain;
-  if (persistenceError) { const error = persistenceError; persistenceError = null; throw error; }
-}
-
-function persistQueueClear(): void {
-  persistenceChain = persistenceChain.then(async () => {
-    if (!queueReady && queueInitPromise) await queueInitPromise;
-    if (typeof indexedDB !== 'undefined') {
-      await idbClear();
-      return;
-    }
-    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {
-      console.error('[offlineSync] Error al limpiar cola offline:', e);
-    }
-  }).catch(e => console.error('[offlineSync] Error persistiendo cola:', e));
-}
-
-export function enqueueOfflineItem(type: OfflineActionType, data: any, actionId?: string): Promise<void> {
-  const finalActionId = actionId || data?.id || crypto.randomUUID();
-  const currentQueue = getOfflineQueue();
-  const existingIdx = currentQueue.findIndex(item => item.type === type && item.actionId === finalActionId);
-  const base = {
-    id: existingIdx >= 0 ? currentQueue[existingIdx].id : crypto.randomUUID(),
-    actionId: finalActionId,
-    type,
-    data,
-    timestamp: new Date().toISOString(),
-    retryCount: existingIdx >= 0 ? currentQueue[existingIdx].retryCount : 0,
-    status: 'pending' as const,
-    deviceId: getDeviceId()
-  };
-  if (existingIdx >= 0) {
-    removedDuringQueueProcess.delete(currentQueue[existingIdx].id);
-    currentQueue[existingIdx] = { ...currentQueue[existingIdx], ...base, data: { ...currentQueue[existingIdx].data, ...data } };
-  } else {
-    currentQueue.push(base);
-  }
-  memoryQueue = currentQueue;
-  emitQueueEvent();
-  const persistence = persistQueueItem(currentQueue[existingIdx >= 0 ? existingIdx : currentQueue.length - 1]);
-  addSyncLog({ level: 'info', source: 'offline_queue', title: `Elemento encolado (${type})`, details: `Operación ${finalActionId} añadida a la cola durable. Pendientes: ${currentQueue.length}`, entityType: type, actionId: finalActionId });
-  return persistence;
-}
-
-export function removeFromOfflineQueue(id: string): void {
-  removedDuringQueueProcess.add(id);
-  memoryQueue = memoryQueue.filter(item => item.id !== id);
-  emitQueueEvent();
-  persistQueueDelete(id);
-}
-
-export function clearOfflineQueue(): void {
-  for (const item of memoryQueue) removedDuringQueueProcess.add(item.id);
-  memoryQueue = [];
-  emitQueueEvent();
-  persistQueueClear();
-}
-export function getOfflineQueueCount(): number {
-  // Los conflictos definitivos ya no son operaciones pendientes y no deben
-  // despertar el sincronizador cada 30s indefinidamente.
-  return memoryQueue.filter(item => item.status !== 'conflict').length;
-}
-export function getOfflineConflictCount(): number {
-  return memoryQueue.filter(item => item.status === 'conflict').length;
 }
 
 async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<boolean> {
@@ -773,11 +460,11 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   const currentById = new Map(currentAfterRun.map(item => [item.id, item]));
   const finalById = new Map<string, OfflineQueueItem>();
   for (const item of remainingFromRun) {
-    if (!removedDuringQueueProcess.has(item.id)) finalById.set(item.id, item);
+    if (!isOfflineQueueItemRemoved(item.id)) finalById.set(item.id, item);
   }
 
   for (const [id, current] of currentById) {
-    if (removedDuringQueueProcess.has(id)) continue;
+    if (isOfflineQueueItemRemoved(id)) continue;
     const original = startById.get(id);
     if (!original) {
       // Operación agregada mientras procesábamos.
@@ -798,23 +485,11 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   }
 
   const finalQueue = Array.from(finalById.values()).sort((a,b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id));
-  for (const item of sorted) removedDuringQueueProcess.delete(item.id);
-  memoryQueue = finalQueue;
-  emitQueueEvent();
-
+  for (const item of sorted) clearOfflineQueueRemovalMark(item.id);
   // Reconciliamos contra el estado final, no contra la instantánea inicial.
   // Esto evita que un enqueue concurrente sea borrado por el commit de la cola.
-  persistenceChain = persistenceChain.then(async () => {
-    if (!queueReady && queueInitPromise) await queueInitPromise;
-    if (typeof indexedDB !== 'undefined') {
-      await idbReplaceAll(finalQueue);
-      return;
-    }
-    if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, JSON.stringify(finalQueue));
-  });
-
   try {
-    await waitForQueuePersistence();
+    await persistOfflineQueueSnapshot(finalQueue);
   } catch (persistenceError: any) {
     // El servidor puede haber confirmado la operación, pero si la cola local no
     // pudo persistir su nuevo estado, conservamos todas las operaciones de esta
@@ -826,8 +501,7 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
     }));
     const fallbackById = new Map(durableFallback.map(item => [item.id, item]));
     for (const item of currentAfterRun) fallbackById.set(item.id, item);
-    memoryQueue = Array.from(fallbackById.values());
-    emitQueueEvent();
+    setOfflineQueueMemory(Array.from(fallbackById.values()));
     isProcessingQueue = false;
     const persistenceMessage = persistenceError?.message || 'Error de IndexedDB/localStorage. Las operaciones se conservaron para reintento.';
     errors.push({ type: 'offline_queue', actionId: 'persistence', message: persistenceMessage });
