@@ -58,6 +58,23 @@ BEGIN
     RAISE EXCEPTION 'Pagos insuficientes: el total cobrado no cubre la venta' USING ERRCODE='P0001';
   END IF;
 
+  -- El importe de la venta debe cuadrar con sus líneas + impuesto - descuento.
+  -- Esto impide que un cliente/aplicación mal sincronizado cree una venta con
+  -- total distinto a la mercancía realmente registrada.
+  IF abs((
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN jsonb_typeof(x.item->'total')='number' THEN COALESCE((x.item->>'total')::numeric,0)
+        WHEN jsonb_typeof(x.item->'price')='number' THEN
+          COALESCE((x.item->>'price')::numeric,0) * COALESCE((x.item->>'quantity')::numeric,0)
+        ELSE 0
+      END
+    ),0)
+    FROM jsonb_array_elements(p_items) x(item)
+  ) + COALESCE(p_tax,0) - COALESCE(p_discount,0) - COALESCE(p_total,0)) > 0.009 THEN
+    RAISE EXCEPTION 'El total de la venta no coincide con sus líneas, impuesto y descuento' USING ERRCODE='P0001';
+  END IF;
+
   SELECT * INTO v_existing FROM transactions WHERE id=p_id OR idempotency_key=p_id LIMIT 1;
   IF FOUND THEN
     IF v_existing.branch_id IS NOT DISTINCT FROM p_branch_id
