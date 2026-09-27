@@ -59,6 +59,9 @@ export default function Banks() {
 
     const cardPayload: Partial<BankCard> = {
       ...formData,
+      balance: formData.balance !== undefined && Number.isFinite(Number(formData.balance))
+        ? Number(formData.balance)
+        : 0,
       accountNumber: cleanAccount,
       lastFour: derivedLastFour
     };
