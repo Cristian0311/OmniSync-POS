@@ -47,7 +47,7 @@ export async function pullPosBootstrapFromSupabase(branchId?: string): Promise<{
       supabase.from('customers').select('*').order('name').limit(5000),
       supabase.from('currencies').select('*'),
       supabase.from('idn_settlement_prices').select('*'),
-      branchId ? supabase.from('transactions').select('*').eq('branch_id', branchId).order('date', { ascending: false }).limit(200) : supabase.from('transactions').select('*').order('date', { ascending: false }).limit(200),
+      branchId ? supabase.from('transactions').select('*').eq('branch_id', branchId).order('created_at', { ascending: false }).limit(1000) : supabase.from('transactions').select('*').order('created_at', { ascending: false }).limit(1000),
       branchId ? supabase.from('cash_sessions').select('*').eq('branch_id', branchId).order('opened_at', { ascending: false }).limit(20) : supabase.from('cash_sessions').select('*').order('opened_at', { ascending: false }).limit(20),
       supabase.from('settings').select('*').eq('id', 'global').maybeSingle()
     ]);
