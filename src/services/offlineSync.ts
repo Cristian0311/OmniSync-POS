@@ -21,7 +21,8 @@ import {
   callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCancelSessionRPC,
   callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC,
   callStartInventoryAuditRPC, callSaveInventoryAuditCountRPC, callRequestInventoryAuditRecountRPC, callApproveInventoryAuditRPC,
-  callBankInternalTransferRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC
+  callBankInternalTransferRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC,
+  pushCashSessionToSupabase
 } from './supabaseSync';
 import { addSyncLog } from '../utils/syncLogger';
 
@@ -69,24 +70,10 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         return true;
       }
 
-      const row = {
-        id: session.id,
-        user_id: remoteSession?.user_id || session.userId || null,
-        worker_name: session.workerName || null,
-        branch_id: session.branchId,
-        opened_at: remoteSession ? undefined : session.openedAt,
-        closed_at: remoteSession?.closed_at || (session.status === 'closed' ? session.closedAt || null : null),
-        opening_balance: session.openingAmount,
-        status: remoteSession?.status || session.status,
-        notes: session.notes || '',
-        working_employee_ids: session.workingEmployeeIds || [],
-        deleted_at: remoteSession?.deleted_at || session.deletedAt || null,
-        deleted_by: remoteSession?.deleted_by || session.deletedBy || null,
-        delete_reason: remoteSession?.delete_reason || session.deleteReason || null
-      };
-      if (row.opened_at === undefined) delete (row as any).opened_at;
-      const { error } = await supabase.from('cash_sessions').upsert(row);
-      if (error) throw error;
+      // Usamos el mismo adaptador protegido que el flujo online: mezcla
+      // movimientos/colaboradores y evita reabrir un turno cerrado.
+      const synced = await pushCashSessionToSupabase(session);
+      if (!synced) throw new Error('El snapshot del turno no fue confirmado en Supabase.');
       return true;
     }
     case 'audit_start': {
