@@ -2011,8 +2011,22 @@ export default function POS() {
         return;
       }
 
+      const requiredPassword = (workerToAssign.password || '').trim();
+      const enteredPassword = (sessionPassword || '').trim();
+
+      if (!requiredPassword) {
+        setPosError(`El empleado ${workerToAssign.name || 'empleado'} no tiene contraseña asignada. El administrador debe asignarle una en Configuración -> Usuarios.`);
+        return;
+      }
+
+      // La contraseña SIEMPRE se valida contra el trabajador seleccionado.
+      // También al reanudar un turno que ya estaba abierto.
+      if (enteredPassword !== requiredPassword) {
+        setPosError(`Contraseña incorrecta para ${workerToAssign.name || 'empleado'}. Acceso denegado.`);
+        return;
+      }
+
       // Si ya existe un turno abierto para ese trabajador/sucursal, reutilizarlo.
-      // La contraseña se valida antes de llegar aquí.
       const existingSession = useStore.getState().getCurrentSession(sessionBranchId, workerToAssign.id);
       if (existingSession) {
         setActiveSessionId(existingSession.id);
@@ -2023,21 +2037,6 @@ export default function POS() {
         setShowOpenShiftModal(false);
         setPosSuccess(`Turno de ${existingSession.workerName || workerToAssign.name || 'Vendedor'} ya estaba abierto. Continuando con ese turno.`);
         setTimeout(() => setPosSuccess(""), 3000);
-        return;
-      }
-
-      const requiredPassword = (workerToAssign.password || '').trim();
-      const enteredPassword = (sessionPassword || '').trim();
-
-      if (!requiredPassword) {
-        setPosError(`El empleado ${workerToAssign.name || 'empleado'} no tiene contraseña asignada. El administrador debe asignarle una en Configuración -> Usuarios.`);
-        return;
-      }
-
-      // La contraseña SIEMPRE se valida contra el trabajador seleccionado,
-      // incluso cuando ese trabajador ya tiene un turno abierto.
-      if (enteredPassword !== requiredPassword) {
-        setPosError(`Contraseña incorrecta para ${workerToAssign.name || 'empleado'}. Acceso denegado.`);
         return;
       }
 
