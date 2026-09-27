@@ -218,6 +218,17 @@ export const useStore = create<AppState>()(
       } else if (!get().currentBranchId && (get().branches || []).length > 0) {
         set({ currentBranchId: (get().branches || [])[0].id });
       }
+
+      // Cargar el directorio global antes de mostrar el POS. Esto evita que
+      // una tablet con caché antiguo muestre un selector sin los empleados
+      // que ya están registrados en Configuración.
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        try {
+          await get().refreshGlobalCatalogData();
+        } catch (syncError) {
+          console.warn('[login] No se pudo refrescar el directorio de empleados; se conserva el caché local.', syncError);
+        }
+      }
       
       return true;
     }
@@ -1355,12 +1366,12 @@ export const useStore = create<AppState>()(
             lastTurnNumber: Math.max(state.lastTurnNumber, parseInt(officialSession.id.split('-')[1]) || 0),
             cart: []
           }));
-          return;
+          return true;
         }
         if (res.errorCode) {
           console.warn("[openSession] Apertura rechazada por Supabase:", res.error);
           get().addNotification(res.error || 'No se pudo abrir el turno.', 'error');
-          return;
+          return false;
         }
       } catch (err) {
         console.warn("[openSession] Fallo de transporte al abrir; se conservará como operación offline:", err);
@@ -1385,6 +1396,7 @@ export const useStore = create<AppState>()(
     // Offline-first: never fire-and-forget a master write. The session must
     // survive a reload and be retried through the operation queue.
     await enqueueOfflineItem('cash_session', sessionWithSequentialId, `cash-open:${sessionWithSequentialId.id}`);
+    return true;
   },
   closeSession: async (sessionId, closingBalances, workerName, closingDate, discrepancyDeduction, sessionMeta) => {
     const finalClosingDate = closingDate || new Date().toISOString();
