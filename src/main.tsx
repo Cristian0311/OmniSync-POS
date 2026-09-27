@@ -20,16 +20,66 @@ window.addEventListener('vite:preloadError', (event) => {
   }
 });
 
-// Register Service Worker for Offline-First PWA support with immediate auto-refresh
+// Register Service Worker for Offline-First PWA support.
+// The app must update itself after every Render deployment without requiring
+// the user to manually clear the browser cache.
 import { registerSW } from 'virtual:pwa-register';
+
+const SW_CHECK_INTERVAL_MS = 60_000;
+let swCheckTimer: ReturnType<typeof setInterval> | null = null;
 
 const updateSW = registerSW({
   immediate: true,
   onNeedRefresh() {
+    // autoUpdate already enables skipWaiting/clientsClaim; explicitly applying
+    // the new worker makes the freshly deployed shell/chunks active immediately.
     updateSW(true);
+  },
+  onRegisteredSW(swUrl, registration) {
+    if (!registration) return;
+
+    const checkForFreshWorker = async () => {
+      try {
+        // Bypass intermediary/browser caching when checking the worker script.
+        await fetch(swUrl, {
+          cache: 'no-store',
+          headers: {
+            'cache-control': 'no-cache',
+            'pragma': 'no-cache',
+          },
+        });
+        await registration.update();
+      } catch (error) {
+        // Connectivity can be transient on mobile; the next interval/focus
+        // check will retry without disrupting the offline POS.
+        console.debug('[PWA] Service Worker update check deferred:', error);
+      }
+    };
+
+    void checkForFreshWorker();
+    swCheckTimer = setInterval(checkForFreshWorker, SW_CHECK_INTERVAL_MS);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void checkForFreshWorker();
+    };
+    window.addEventListener('focus', checkForFreshWorker);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    // Store cleanup on the registration object without changing its public API.
+    (registration as ServiceWorkerRegistration & { __omniCleanup?: () => void }).__omniCleanup = () => {
+      if (swCheckTimer) {
+        clearInterval(swCheckTimer);
+        swCheckTimer = null;
+      }
+      window.removeEventListener('focus', checkForFreshWorker);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   },
   onOfflineReady() {
     console.log('App is ready for offline use.');
+  },
+  onRegisterError(error) {
+    console.warn('[PWA] Service Worker registration error:', error);
   },
 });
 
