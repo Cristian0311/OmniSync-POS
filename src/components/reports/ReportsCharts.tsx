@@ -2,7 +2,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell
 } from "recharts";
-import { PieChart as PieChartIcon } from "lucide-react";
+import { PieChart as PieChartIcon, BarChart3 } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 type HourRow = { hour: string | number; total: number };
@@ -30,14 +30,10 @@ function CustomTooltip({ active, payload, label, formatMoney }: any) {
   return null;
 }
 
-export default function ReportsCharts({
-  hourData,
-  categoryData,
-  formatMoney,
-}: ReportsChartsProps) {
+export default function ReportsCharts({ hourData, categoryData, formatMoney }: ReportsChartsProps) {
   return (
-    <>
       <div className={cn("grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4", !showChartsOnMobile && "hidden md:grid")}>
+        {/* Sales by Hour Bar Chart */}
         <div className="lg:col-span-2 bg-secondary rounded-[2rem] p-5 shadow-sm border border-base flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <div>
@@ -51,20 +47,33 @@ export default function ReportsCharts({
               Actividad Diaria
             </div>
           </div>
-
+          
           <div className="h-[200px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={hourData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="hour" fontSize={8} fontWeight="bold" tickLine={false} axisLine={false} interval={2} />
+                <XAxis 
+                  dataKey="hour" 
+                  fontSize={8} 
+                  fontWeight="bold" 
+                  tickLine={false} 
+                  axisLine={false}
+                  interval={2}
+                />
                 <YAxis hide />
-                <Tooltip content={<CustomTooltip formatMoney={formatMoney} />} />
-                <Bar dataKey="total" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={20} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar 
+                  dataKey="total" 
+                  fill="#6366f1" 
+                  radius={[4, 4, 0, 0]} 
+                  barSize={20}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
+        {/* Top Categories Pie Chart */}
         <div className="bg-secondary rounded-[2rem] p-5 shadow-sm border border-base flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <div>
@@ -80,12 +89,20 @@ export default function ReportsCharts({
             <div className="h-[140px] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={categoryData} cx="50%" cy="50%" innerRadius={40} outerRadius={60} paddingAngle={5} dataKey="value">
+                  <Pie
+                    data={categoryData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={40}
+                    outerRadius={60}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
                     {categoryData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip content={<CustomTooltip formatMoney={formatMoney} />} />
+                  <Tooltip content={<CustomTooltip />} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -104,6 +121,6 @@ export default function ReportsCharts({
           </div>
         </div>
       </div>
-    </>
+
   );
 }
