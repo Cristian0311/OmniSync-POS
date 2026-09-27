@@ -5649,7 +5649,7 @@ export default function Reports() {
         </div>
       )}
 
-      {/* Modal: Añadir Producto Vendido al Informe (Sin afectar stock físico) */
+      {/* Modal: Añadir Producto Vendido al Informe (Sin afectar stock físico) */}
       {addItemToShiftModal && (
         <Suspense
           fallback={
