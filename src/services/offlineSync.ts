@@ -7,11 +7,11 @@
 import { getSupabase, checkSupabaseReachability } from '../lib/supabase';
 import { useStore } from '../store/useStore';
 import type { OfflineActionType, OfflineQueueItem } from './offlineQueue';
+import type { Transaction, CashRegisterSession, Customer, ReturnItem, Branch, Product, Category } from '../types';
 import {
   getOfflineQueue,
   waitForOfflineQueueReady,
   getOfflineQueueCount,
-  getOfflineConflictCount,
   isOfflineQueueItemRemoved,
   clearOfflineQueueRemovalMark,
   setOfflineQueueMemory,
@@ -21,7 +21,7 @@ import {
   callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCancelSessionRPC,
   callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC,
   callStartInventoryAuditRPC, callSaveInventoryAuditCountRPC, callRequestInventoryAuditRecountRPC, callApproveInventoryAuditRPC,
-  callCompleteInventoryAuditRPC, callBankInternalTransferRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC
+  callBankInternalTransferRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC
 } from './supabaseSync';
 import { addSyncLog } from '../utils/syncLogger';
 
