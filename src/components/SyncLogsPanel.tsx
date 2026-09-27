@@ -7,7 +7,7 @@ import {
 import { 
   getSyncLogs, addSyncLog, clearSyncLogs, exportSyncLogsJSON, exportSyncLogsTXT, SyncLogEntry 
 } from '../utils/syncLogger';
-import { getOfflineQueueCount, processOfflineQueue } from '../services/offlineSync';
+import { getOfflineQueueCount } from '../services/offlineQueue';
 import { testSupabaseTables } from '../services/supabaseSync';
 import { useStore } from '../store/useStore';
 import { cn } from '../lib/utils';
@@ -129,6 +129,7 @@ export function SyncLogsPanel() {
     });
 
     try {
+      const { processOfflineQueue } = await import('../services/offlineSync');
       const res = await processOfflineQueue();
       setPendingQueueCount(res.remaining);
       await syncWithSupabase();
