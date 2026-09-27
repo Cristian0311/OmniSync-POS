@@ -2186,11 +2186,10 @@ export const useStore = create<AppState>()(
 
     if (navigator.onLine) {
       const synced = await pushCashSessionToSupabase(updated);
-      // The movement snapshot was only an outbox safety net. Once the canonical
-      // session write succeeds (or a fallback snapshot has been queued), remove
-      // this extra movement-specific entry so the UI never reports a phantom
-      // pending operation for an already uploaded movement.
-      removeFromOfflineQueueByAction('cash_session', actionId);
+      // Solo retiramos la operación cuando el snapshot fue confirmado. Si falla,
+      // pushCashSessionToSupabase deja una operación durable para replay.
+      if (synced) removeFromOfflineQueueByAction('cash_session', actionId);
+      else console.warn('[addCashMovement] Movimiento no confirmado; permanece protegido para replay.');
       return synced;
     }
     return true;
@@ -2209,7 +2208,8 @@ export const useStore = create<AppState>()(
 
     if (navigator.onLine) {
       const synced = await pushCashSessionToSupabase(updated);
-      removeFromOfflineQueueByAction('cash_session', actionId);
+      if (synced) removeFromOfflineQueueByAction('cash_session', actionId);
+      else console.warn('[removeCashMovement] Eliminación de movimiento no confirmada; permanece protegida para replay.');
       return synced;
     }
     return true;
