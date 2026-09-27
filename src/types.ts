@@ -173,6 +173,8 @@ export interface Customer {
 
 export interface CashRegisterSession {
   id: string;
+  /** Persisted global sequential cash-turn number assigned by Supabase. */
+  turnNumber?: number;
   branchId: string;
   openedAt: string;
   closedAt?: string;
