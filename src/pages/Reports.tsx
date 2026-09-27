@@ -220,7 +220,7 @@ export default function Reports() {
   const [sessionClosingNotesInput, setSessionClosingNotesInput] = useState<string>("");
   const [isClosingShiftFromReports, setIsClosingShiftFromReports] = useState(false);
   const [showChartsOnMobile, setShowChartsOnMobile] = useState(false);
-  const [isReportsMobile, setIsReportsMobile] = useState(false);
+  const [isReportsMobile, setIsReportsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
@@ -1390,20 +1390,31 @@ export default function Reports() {
                 {tab.badge !== undefined && tab.badge > 0 && (
                   <span className={cn(
                     "px-1.5 py-0.2 text-[7px] font-black rounded-full ml-1",
-                    activeTab === tab.id ? "bg-white/30 text-white" : (tab.badgeClass || "bg-indigo-100      {/* Visual Analytics */}
+                    activeTab === tab.id ? "bg-white/30 text-white" : (tab.badgeClass || "bg-indigo-100      {/* Visual Analytics Toggle for Mobile */}
+      <div className="md:hidden flex items-center justify-between p-2.5 bg-secondary rounded-2xl border border-base shadow-xs">
+        <span className="text-[11px] font-black text-primary uppercase tracking-tight flex items-center gap-1.5">
+          <BarChart3 className="w-3.5 h-3.5 text-indigo-600" />
+          Gráficos y Tendencias
+        </span>
+        <button
+          onClick={() => setShowChartsOnMobile(v => !v)}
+          className="px-2.5 py-1 text-[9px] font-black uppercase tracking-wider rounded-lg bg-subtle hover:bg-secondary border border-base text-primary transition-all cursor-pointer"
+        >
+          {showChartsOnMobile ? 'Ocultar' : 'Ver Gráficos'}
+        </button>
+      </div>
+
+      {/* Visual Analytics Section */}
       {(showChartsOnMobile || !isReportsMobile) && (
         <Suspense fallback={
-          <div className="md:hidden flex items-center justify-between p-2.5 bg-secondary rounded-2xl border border-base shadow-xs">
-            <span className="text-[11px] font-black text-primary uppercase tracking-tight">Cargando gráficos...</span>
+          <div className="hidden md:flex items-center justify-center p-5 bg-secondary rounded-[2rem] border border-base text-[10px] font-black text-muted uppercase">
+            Cargando gráficos…
           </div>
         }>
           <ReportsCharts
             hourData={hourData}
             categoryData={categoryData}
-            showChartsOnMobile={showChartsOnMobile}
-            onToggleMobileCharts={() => setShowChartsOnMobile(v => !v)}
             formatMoney={formatMoney}
-            isMobile={isReportsMobile}
           />
         </Suspense>
       )}
