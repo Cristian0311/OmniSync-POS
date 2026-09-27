@@ -31,19 +31,29 @@ BEGIN
   -- Permitimos sobrepago porque el POS calcula vuelto, pero nunca pago insuficiente.
   IF EXISTS (
     SELECT 1
-    FROM jsonb_to_recordset(p_payments) x(amount numeric,exchangeRate numeric,method text,currencyCode text)
-    WHERE COALESCE(x.amount,0) > 0
-      AND (COALESCE(x.exchangeRate,0) <= 0
-        OR COALESCE(x.method,'') NOT IN ('cash','transfer')
-        OR COALESCE(x.currencyCode,'') NOT IN ('CUP','USD','EUR','MN'))
+    FROM jsonb_array_elements(p_payments) x(payment)
+    WHERE COALESCE((x.payment->>'amount')::numeric,0) > 0
+      AND (
+        COALESCE(NULLIF(x.payment->>'exchangeRate','')::numeric,
+                 NULLIF(x.payment->>'exchange_rate','')::numeric,0) <= 0
+        OR COALESCE(x.payment->>'method','') NOT IN ('cash','transfer')
+        OR COALESCE(NULLIF(x.payment->>'currencyCode',''), x.payment->>'currency_code','') NOT IN ('CUP','USD','EUR','MN')
+      )
   ) THEN
     RAISE EXCEPTION 'Hay un pago con moneda, método o tasa inválidos' USING ERRCODE='P0001';
   END IF;
 
   IF (
-    SELECT COALESCE(SUM(COALESCE(x.amount,0) * COALESCE(x.exchangeRate,0)),0)
-    FROM jsonb_to_recordset(p_payments) x(amount numeric,exchangeRate numeric,method text,currencyCode text)
-    WHERE COALESCE(x.amount,0) > 0
+    SELECT COALESCE(SUM(
+      COALESCE((x.payment->>'amount')::numeric,0) *
+      COALESCE(
+        NULLIF(x.payment->>'exchangeRate','')::numeric,
+        NULLIF(x.payment->>'exchange_rate','')::numeric,
+        1
+      )
+    ),0)
+    FROM jsonb_array_elements(p_payments) x(payment)
+    WHERE COALESCE((x.payment->>'amount')::numeric,0) > 0
   ) + 0.009 < COALESCE(p_total,0) THEN
     RAISE EXCEPTION 'Pagos insuficientes: el total cobrado no cubre la venta' USING ERRCODE='P0001';
   END IF;
