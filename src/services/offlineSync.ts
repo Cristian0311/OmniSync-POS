@@ -14,7 +14,7 @@ import {
 import {
   callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCancelSessionRPC,
   callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC,
-  callCompleteInventoryAuditRPC
+  callCompleteInventoryAuditRPC, callBankInternalTransferRPC
 } from './supabaseSync';
 import { addSyncLog } from '../utils/syncLogger';
 
@@ -23,7 +23,7 @@ export type OfflineActionType =
   | 'supplier_receive' | 'audit_complete' | 'cash_session' | 'inventory' | 'inventory_adjustment' | 'inventory_reconcile'
   | 'customer' | 'customer_delete' | 'return' | 'bank_transaction'
   | 'branch' | 'product' | 'category' | 'receipt_config' | 'store_config' | 'catalog_config' | 'salary_settlement'
-  | 'user' | 'currency' | 'idn_settlement_price' | 'warranty' | 'time_shift' | 'quote'
+  | 'user' | 'currency' | 'idn_settlement_price' | 'warranty' | 'time_shift' | 'quote' | 'bank_internal_transfer'
   | 'bank_card' | 'supplier' | 'supplier_order' | 'inventory_audit';
 
 export interface OfflineQueueItem {
@@ -476,6 +476,7 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     case 'void_transaction': { const res = await callVoidTransactionRPC(data.id, data.userId, data.reason || 'Anulación de venta'); if (!res.success) throw new Error(res.error || 'No se pudo anular la venta'); return true; }
     case 'return_complete': { const res = await callCompleteReturnRPC(data.id, data.userId); if (!res.success) throw new Error(res.error || 'No se pudo completar la devolución'); return true; }
     case 'transfer': { const res = await callTransferInventoryRPC(data); if (!res.success) throw new Error(res.error || 'No se pudo sincronizar la transferencia'); return true; }
+    case 'bank_internal_transfer': { const res = await callBankInternalTransferRPC(data); if (!res.success) throw new Error(res.error || 'No se pudo sincronizar la transferencia bancaria'); return true; }
     case 'supplier_receive': { const res = await callReceiveSupplierOrderRPC(data.id, data.userId || 'system'); if (!res.success) throw new Error(res.error || 'No se pudo recibir la orden'); return true; }
     case 'audit_complete': { const res = await callCompleteInventoryAuditRPC(data.id, data.branchId, data.userId, data.items || [], data.notes); if (!res.success) throw new Error(res.error || 'No se pudo completar la auditoría'); return true; }
     case 'inventory': {
