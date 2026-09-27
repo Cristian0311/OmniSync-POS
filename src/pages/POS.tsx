@@ -2979,7 +2979,7 @@ export default function POS() {
                               TURNO ABIERTO
                             </span>
                           </div>
-                        </div>)}
+                        </div>
                       </div>
 
                       <div>
