@@ -954,3 +954,24 @@ END
 $function$;
 
 NOTIFY pgrst,'reload schema';
+
+-- FASE 31: return workflow metadata
+ALTER TABLE public.returns
+  ADD COLUMN IF NOT EXISTS branch_id text,
+  ADD COLUMN IF NOT EXISTS replacement_product_id text,
+  ADD COLUMN IF NOT EXISTS replacement_quantity integer,
+  ADD COLUMN IF NOT EXISTS processed_by text,
+  ADD COLUMN IF NOT EXISTS refund_status text NOT NULL DEFAULT 'not_required',
+  ADD COLUMN IF NOT EXISTS refund_amount numeric,
+  ADD COLUMN IF NOT EXISTS refund_currency_code text,
+  ADD COLUMN IF NOT EXISTS refund_method text,
+  ADD COLUMN IF NOT EXISTS refund_bank_card_id text,
+  ADD COLUMN IF NOT EXISTS refund_transaction_id text,
+  ADD COLUMN IF NOT EXISTS received_at timestamptz,
+  ADD COLUMN IF NOT EXISTS refunded_at timestamptz;
+
+CREATE INDEX IF NOT EXISTS idx_returns_transaction ON public.returns(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_returns_refund_status ON public.returns(refund_status);
+CREATE INDEX IF NOT EXISTS idx_returns_branch_status ON public.returns(branch_id,status);
+
+NOTIFY pgrst,'reload schema';
