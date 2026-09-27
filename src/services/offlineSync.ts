@@ -580,6 +580,14 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
                    String(item.actionId).startsWith('cash-cancel:') ||
                    String(item.actionId).startsWith('cash-join:')) {
           add(cashOp(data.id, 'open'));
+          if (data.__operation === 'close' || data.__operation === 'cancel' ||
+              String(item.actionId).startsWith('cash-close:') || String(item.actionId).startsWith('cash-cancel:')) {
+            // A close/cancel must replay after every queued sale created before
+            // that operation. This protects against clock/order races between devices.
+            for (const candidate of queueAtStart) {
+              if (candidate.type === 'transaction' && candidate.data?.sessionId === data.id && candidate.timestamp <= item.timestamp) add(candidate);
+            }
+          }
         } else {
           add(cashOp(data.id, 'open'));
         }
