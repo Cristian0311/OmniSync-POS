@@ -32,7 +32,7 @@ function CustomTooltip({ active, payload, label, formatMoney }: any) {
 
 export default function ReportsCharts({ hourData, categoryData, formatMoney }: ReportsChartsProps) {
   return (
-      <div className={cn("grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4", !showChartsOnMobile && "hidden md:grid")}>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
         {/* Sales by Hour Bar Chart */}
         <div className="lg:col-span-2 bg-secondary rounded-[2rem] p-5 shadow-sm border border-base flex flex-col gap-4">
           <div className="flex items-center justify-between">
@@ -61,7 +61,7 @@ export default function ReportsCharts({ hourData, categoryData, formatMoney }: R
                   interval={2}
                 />
                 <YAxis hide />
-                <Tooltip content={<CustomTooltip />} />
+                <Tooltip content={<CustomTooltip formatMoney={formatMoney} />} />
                 <Bar 
                   dataKey="total" 
                   fill="#6366f1" 
