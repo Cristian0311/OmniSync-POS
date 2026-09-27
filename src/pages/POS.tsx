@@ -436,42 +436,71 @@ export default function POS() {
 
   const [showCancelShiftModal, setShowCancelShiftModal] = useState(false);
   const [cancelShiftPassword, setCancelShiftPassword] = useState("");
+  const [isCancellingShift, setIsCancellingShift] = useState(false);
+  const [isExitingIDN, setIsExitingIDN] = useState(false);
 
-  const handleCancelShift = () => {
-    if (!currentSession) return;
-    
-    // Find worker to check password
-    const worker = users.find(u => u.id === currentSession.userId || (u.name && currentSession.workerName && u.name.toLowerCase() === currentSession.workerName.toLowerCase()));
-    
-    const isPasswordValid = 
+  const handleCancelShift = async () => {
+    if (!currentSession || isCancellingShift) return;
+
+    const worker = users.find(u =>
+      u.id === currentSession.userId ||
+      (u.name && currentSession.workerName && u.name.toLowerCase() === currentSession.workerName.toLowerCase())
+    );
+
+    const isPasswordValid =
       (worker?.password && cancelShiftPassword === worker.password) ||
       (currentUser?.password && cancelShiftPassword === currentUser.password) ||
       users.some(u => u.role === 'admin' && u.password === cancelShiftPassword);
 
-    if (isPasswordValid) {
-      void useStore.getState().cancelSession(currentSession.id).then((ok) => {
-        if (ok) {
-          setShowCancelShiftModal(false);
-          setCancelShiftPassword("");
-          setPosSuccess("Turno cancelado y guardado. Las ventas quedaron anuladas y el inventario fue revertido.");
-          setTimeout(() => setPosSuccess(""), 3500);
-        } else {
-          setPosError("No se pudo cancelar el turno. No se realizó ninguna confirmación.");
-          setTimeout(() => setPosError(""), 3500);
-        }
-      });
-    } else {
+    if (!isPasswordValid) {
       setPosError("Contraseña incorrecta. Por favor ingresa la contraseña asignada al trabajador.");
       setTimeout(() => setPosError(""), 3000);
+      return;
+    }
+
+    setIsCancellingShift(true);
+    try {
+      const ok = await useStore.getState().cancelSession(currentSession.id);
+      if (!ok) {
+        setPosError("No se pudo cancelar el turno. La operación no fue confirmada.");
+        return;
+      }
+
+      setShowCancelShiftModal(false);
+      setCancelShiftPassword("");
+      setShowOpenShiftModal(false);
+      setJoiningSessionId(null);
+      setJoiningSessionPassword("");
+      setLastClosedSession(null);
+      clearCart();
+      setPosSuccess("Turno cancelado correctamente. Regresando al selector de empleado.");
+      setTimeout(() => setPosSuccess(""), 3500);
+    } catch (err: any) {
+      console.error("[POS] Error cancelando turno:", err);
+      setPosError(err?.message || "No se pudo cancelar el turno.");
+    } finally {
+      setIsCancellingShift(false);
     }
   };
 
-  const handleFinishIDNAndGoHome = () => {
+  const handleFinishIDNAndGoHome = async () => {
     if (currentSession) {
       const closingBalances: Payment[] = [
         { currencyCode: baseCurrency.code, amount: showIDNReceiptModal?.totalToPay || 0, method: 'cash', exchangeRate: 1 }
       ];
-      closeSession(currentSession.id, closingBalances, activeIDNWorker?.name || currentSession.workerName);
+
+      setPosError("");
+      const ok = await closeSession(
+        currentSession.id,
+        closingBalances,
+        activeIDNWorker?.name || currentSession.workerName
+      );
+
+      if (!ok) {
+        setPosError("El cierre no fue confirmado. El turno permanece abierto para proteger las ventas.");
+        return;
+      }
+
       setLastClosedSession({
         ...currentSession,
         closedAt: new Date().toISOString(),
@@ -480,6 +509,7 @@ export default function POS() {
         closingBalances
       });
     }
+
     setShowIDNReceiptModal(null);
     setIdnPhysicalCounts({});
     setShowConfirmIDNModal(false);
@@ -490,25 +520,67 @@ export default function POS() {
     setTimeout(() => setPosSuccess(""), 3000);
   };
 
-  const handleCancelAndReturnToEmployeeSelector = () => {
-    setIdnPhysicalCounts({});
-    clearCart();
-    setIdnFilter("");
-    setDebouncedIdnFilter("");
-    setIdnSelectedProductFilter("all");
-    setShowConfirmIDNModal(false);
-    setShowIDNReceiptModal(null);
-    setShowCheckoutModal(false);
-    setShowMobileCart(false);
-    setPosViewMode('standard');
-    setSessionWorkerName("");
-    setSessionPassword("");
-    setSelectedAdminIDNUserId("");
-    setJoiningSessionId(null);
-    setJoiningSessionPassword("");
+  const handleCancelAndReturnToEmployeeSelector = async () => {
+    if (isExitingIDN) return;
+
+    setIsExitingIDN(true);
     setPosError("");
-    setPosSuccess("Punto de venta cancelado. No se contó ni descontó inventario. Regresando al selector de empleado.");
-    setTimeout(() => setPosSuccess(""), 3000);
+
+    try {
+      const session = useStore.getState().getCurrentSession(
+        currentBranchId,
+        currentUser?.id || ""
+      );
+
+      // "Cancelar / Salir" del flujo IDN cancela el turno únicamente cuando
+      // todavía no existen ventas confirmadas. Nunca se deben borrar ventas
+      // silenciosamente desde este botón.
+      const sessionTransactions = session
+        ? (useStore.getState().transactions || []).filter(
+            tx => tx.sessionId === session.id && !tx.deletedAt
+          )
+        : [];
+
+      if (session && sessionTransactions.length > 0) {
+        setPosError("Este turno ya tiene ventas registradas. No se puede cancelar silenciosamente desde aquí; usa Cerrar Caja o Cancelar Turno.");
+        return;
+      }
+
+      if (session) {
+        const cancelled = await useStore.getState().cancelSession(
+          session.id,
+          'Cancelación del POS IDN antes de registrar ventas'
+        );
+        if (!cancelled) {
+          setPosError("No se pudo cancelar el turno. La operación no fue confirmada.");
+          return;
+        }
+      }
+
+      setIdnPhysicalCounts({});
+      clearCart();
+      setIdnFilter("");
+      setDebouncedIdnFilter("");
+      setIdnSelectedProductFilter("all");
+      setShowConfirmIDNModal(false);
+      setShowIDNReceiptModal(null);
+      setShowCheckoutModal(false);
+      setShowMobileCart(false);
+      setPosViewMode('standard');
+      setSessionWorkerName("");
+      setSessionPassword("");
+      setSelectedAdminIDNUserId("");
+      setJoiningSessionId(null);
+      setJoiningSessionPassword("");
+      setLastClosedSession(null);
+      setPosSuccess("Punto de venta cancelado. Turno cancelado correctamente. Regresando al selector de empleado.");
+      setTimeout(() => setPosSuccess(""), 3000);
+    } catch (err: any) {
+      console.error("[POS] Error al cancelar/salir del flujo IDN:", err);
+      setPosError(err?.message || "No se pudo cancelar y salir del punto de venta.");
+    } finally {
+      setIsExitingIDN(false);
+    }
   };
 
   const handleSaveIDNSettlementPrice = (e: React.FormEvent) => {
@@ -2039,11 +2111,12 @@ export default function POS() {
             <button
               type="button"
               onClick={handleCancelAndReturnToEmployeeSelector}
-              className="px-2.5 sm:px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 rounded-xl text-[10px] sm:text-[10px] font-black uppercase transition-all shadow-sm flex items-center gap-1.5 active:scale-95 cursor-pointer"
-              title="Cancelar punto de venta y volver al selector de empleado"
+              disabled={isExitingIDN}
+              className="px-2.5 sm:px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 rounded-xl text-[10px] sm:text-[10px] font-black uppercase transition-all shadow-sm flex items-center gap-1.5 active:scale-95 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              title="Cancelar el flujo IDN y volver al selector de empleado"
             >
-              <X className="w-3.5 h-3.5" />
-              <span>Cancelar / Salir</span>
+              {isExitingIDN ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+              <span>{isExitingIDN ? "Saliendo..." : "Cancelar / Salir"}</span>
             </button>
 
             {/* Admin worker selector */}
@@ -4750,9 +4823,10 @@ export default function POS() {
                   </button>
                   <button 
                     onClick={handleCancelShift}
-                    className="flex-2 py-4 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-200 active:scale-95"
+                    disabled={isCancellingShift}
+                    className="flex-2 py-4 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-200 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    Confirmar Anulación
+                    {isCancellingShift ? "Cancelando..." : "Confirmar Anulación"}
                   </button>
                 </div>
               </div>
