@@ -2481,7 +2481,7 @@ export const useStore = create<AppState>()(
     }));
   },
 
-  isInitialized: true
+  isInitialized: false
 }),
 {
   name: 'pos-store-storage',
@@ -2489,6 +2489,10 @@ export const useStore = create<AppState>()(
   // El estado operativo sigue persistiendo para poder trabajar offline, pero
   // evitamos guardar datos puramente transitorios y el historial bancario pesado
   // en cada cambio de UI.
+  onRehydrateStorage: () => (state, error) => {
+    if (error) console.error('[Store] Error hidratando el estado local:', error);
+    useStore.setState({ isInitialized: true });
+  },
   partialize: (state) => ({
     users: state.users, currentUser: state.currentUser,
     currencies: state.currencies, storeConfig: state.storeConfig, catalogConfig: state.catalogConfig,
