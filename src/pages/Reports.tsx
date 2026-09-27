@@ -13,7 +13,6 @@ import {
 } from "recharts";
 import { useStore } from "../store/useStore";
 import { Transaction, Product, CashRegisterSession, CashMovement } from "../types";
-import AddItemToShiftModalFallback from "../components/reports/AddItemToShiftModal";
 
 const AddItemToShiftModal = lazy(() => import("../components/reports/AddItemToShiftModal"));
 import { cn } from "../lib/utils";
