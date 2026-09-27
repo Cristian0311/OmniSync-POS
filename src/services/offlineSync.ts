@@ -156,19 +156,6 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       if (!ok) throw new Error('El saldo bancario cambió en el servidor o no pudo confirmarse; se conserva la operación pendiente.');
       return true;
     }
-    case 'bank_card_balance': {
-      const d = data;
-      const expected = Number(d.expectedBalance) || 0;
-      const next = Math.max(0, Number(d.newBalance) || 0);
-      const { data: updated, error } = await supabase.from('bank_cards')
-        .update({ balance: next })
-        .eq('id', d.cardId)
-        .eq('balance', expected)
-        .select('id,balance');
-      if (error) throw error;
-      if (!updated?.length) throw new PermanentSyncError('Conflicto de saldo bancario: el saldo cambió antes del ajuste manual.');
-      return true;
-    }
     case 'bank_card': {
       const d=data;
       if (d.__balance_only) {
