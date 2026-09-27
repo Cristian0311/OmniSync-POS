@@ -109,16 +109,35 @@ export async function callOpenSessionRPCWithId(session: CashRegisterSession): Pr
 
     const { data, error } = await supabase
       .from('cash_sessions')
-      .upsert(row, { onConflict: 'id' })
+      .insert(row)
       .select()
       .single();
 
-    if (error) {
-      console.error('[CashSession] No se pudo crear el turno estable:', error);
-      return { success: false, error: formatSupabaseError(error), errorCode: error.code || undefined };
+    if (!error) return { success: true, data };
+
+    // A retry must never reopen a session that was already closed/cancelled.
+    // The previous upsert could overwrite its status back to "open".
+    if (error.code === '23505') {
+      const existing = await supabase
+        .from('cash_sessions')
+        .select('*')
+        .eq('id', session.id)
+        .maybeSingle();
+
+      if (existing.data) {
+        if (existing.data.status === 'open' && existing.data.branch_id === session.branchId) {
+          return { success: true, data: existing.data };
+        }
+        return {
+          success: false,
+          error: 'El turno ya existe y no está abierto; no se puede reabrir automáticamente.',
+          errorCode: 'CASH_SESSION_REOPEN_BLOCKED'
+        };
+      }
     }
 
-    return { success: true, data };
+    console.error('[CashSession] No se pudo crear el turno estable:', error);
+    return { success: false, error: formatSupabaseError(error), errorCode: error.code || undefined };
   } catch (e: any) {
     console.error('[CashSession] Error creando turno estable:', e);
     return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
