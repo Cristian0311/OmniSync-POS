@@ -2910,18 +2910,28 @@ export const useStore = create<AppState>()(
           // Si una operación de inventario sigue en la cola, su valor local es el
           // estado que todavía no está confirmado por Supabase. Conservamos esa fila
           // durante el merge para evitar que un snapshot remoto anterior la revierta.
-          const pendingInventoryKeys = new Set(
-            getOfflineQueue()
-              .filter(i => ['inventory_adjustment','inventory_reconcile','inventory'].includes(i.type))
-              .map(i => `${i.data?.productId}_${i.data?.branchId}_${i.data?.variantLabel || ''}`)
-          );
-          const localByKey = new Map<string, InventoryLevel>();
-          (state.inventory || []).forEach(inv => {
-            const key = `${inv.productId}_${inv.branchId}_${inv.variantLabel || ''}`;
-            if (pendingInventoryKeys.has(key)) localByKey.set(key, inv);
+          const pendingInventoryKeys = new Set<string>();
+          getOfflineQueue().forEach(i => {
+            if (i.type === 'inventory_adjustment' || i.type === 'inventory_reconcile' || i.type === 'inventory') {
+              pendingInventoryKeys.add(`${i.data?.productId}_${i.data?.branchId}_${i.data?.variantLabel || ''}`);
+              return;
+            }
+            if (i.type === 'transfer') {
+              const d = i.data || {};
+              for (const v of Array.isArray(d.variants) ? d.variants : []) {
+                const label = v?.variantLabel || '';
+                pendingInventoryKeys.add(`${d.productId}_${d.fromBranchId}_${label}`);
+                pendingInventoryKeys.add(`${d.productId}_${d.toBranchId}_${label}`);
+              }
+              return;
+            }
+            if (i.type === 'supplier_receive') {
+              const order = (state.supplierOrders || []).find((o: any) => o.id === i.data?.id);
+              for (const item of Array.isArray(order?.items) ? order.items : []) {
+                pendingInventoryKeys.add(`${item.productId}_${order.branchId}_${item.variantLabel || ''}`);
+              }
+            }
           });
-
-          for (const [key, localInv] of localByKey) invMap.set(key, localInv);
 
           let mergedInventory = Array.from(invMap.values()).filter(inv =>
             !inv.branchId || validBranchIds.has(inv.branchId)
