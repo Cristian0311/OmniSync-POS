@@ -463,11 +463,10 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
       const hint = err?.hint ? ` — ${err.hint}` : '';
       item.lastError = `${err?.message || 'Error desconocido'}${code}${status}${detail}${hint}`;
       const permanent = err?.permanent === true;
-      // Las operaciones críticas nunca se abandonan por cantidad de reintentos.
-      // Una tablet puede permanecer offline durante muchas horas/días y la
-      // operación debe seguir pendiente hasta recibir una confirmación real.
-      const criticalDurable = ['transaction', 'cash_session'].includes(item.type);
-      item.status = permanent || (!criticalDurable && item.retryCount >= 8) ? 'conflict' : 'failed';
+      // Ninguna operación durable válida se abandona por cantidad de reintentos.
+      // Una tablet puede permanecer offline muchas horas o días; el elemento
+      // queda pendiente hasta una confirmación real o un rechazo explícitamente permanente.
+      item.status = permanent ? 'conflict' : 'failed';
       remainingFromRun.push(item);
       errors.push({ type: item.type, actionId: item.actionId, message: item.lastError, retryCount: item.retryCount });
       addSyncLog({ level:'error', source:'offline_queue', title:`Error al procesar item (${item.type})`, details:item.lastError, entityType:item.type, actionId:item.actionId, retryAttempt:item.retryCount, maxRetries:8 });
