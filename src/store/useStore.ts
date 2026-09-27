@@ -14,7 +14,7 @@ import {
   deleteBankTransactionFromSupabase, clearSelectedDataFromSupabase, callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC, callCompleteInventoryAuditRPC, callCloseSessionRPC, callCancelSessionRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC
 } from '../services/supabaseSync';
 import { getSupabaseCredentials } from '../lib/supabase';
-import { getOfflineQueue, enqueueOfflineItem, removeFromOfflineQueue } from '../services/offlineSync';
+import { getOfflineQueue, enqueueOfflineItem, removeFromOfflineQueue } from '../services/offlineQueue';
 import { normalizeSemanticText, areSemanticallyEqual } from '../utils/textUtils';
 import { localStateStorage, clearLocalStateStorage } from '../services/localStateStorage';
 import type { AppState } from './storeTypes';
