@@ -209,31 +209,8 @@ export const useStore = create<AppState>()(
       u.password === pass
     );
     
-    // 2. Fallback de emergencia para cuentas administrativas críticas (siempre funcionan offline)
-    if (!user) {
-      if ((cleanIdentifier === 'cristianmarco2003@gmail.com' || cleanIdentifier === 'admin') && pass === '03111166702') {
-        user = get().users.find(u => u.id === 'admin-1') || {
-          id: 'admin-1',
-          name: 'Administrador Cristian',
-          email: 'cristianmarco2003@gmail.com',
-          role: 'admin',
-          baseSalary: 0,
-          permissions: ['pos_access', 'reports_access', 'inventory_access', 'admin_access', 'cash_audit'],
-          isActive: true
-        };
-      } else if ((cleanIdentifier === 'trabajador@gmail.com' || cleanIdentifier === 'trabajador') && pass === '03111166702') {
-        user = get().users.find(u => u.id === 'employee-1') || {
-          id: 'employee-1',
-          name: 'Trabajador',
-          email: 'trabajador@gmail.com',
-          role: 'employee',
-          baseSalary: 0,
-          permissions: ['pos_access'],
-          isActive: true
-        };
-      }
-    }
-
+    // El acceso debe validar contra el directorio local/sincronizado. No existen
+    // credenciales maestras incrustadas en el frontend.
     if (user) {
       set({ currentUser: user });
       
