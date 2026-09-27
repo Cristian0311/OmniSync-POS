@@ -2277,11 +2277,15 @@ export const useStore = create<AppState>()(
           .catch(queueErr => console.warn('[Bank] metadata queue failed:', queueErr));
       });
 
-      if (requestedBalance !== undefined && Number.isFinite(Number(requestedBalance))) {
+      if (
+        requestedBalance !== undefined &&
+        Number.isFinite(Number(requestedBalance)) &&
+        Math.abs(Number(requestedBalance) - previousBalance) > 0.000001
+      ) {
         const balanceActionId = 'bank-balance:' + id + ':' + crypto.randomUUID();
         const balancePayload = {
           cardId: id,
-          expectedBalance: previousBalance || 0,
+          expectedBalance: previousBalance,
           newBalance: Math.max(0, Number(requestedBalance) || 0),
           userId: get().currentUser?.id || null
         };
