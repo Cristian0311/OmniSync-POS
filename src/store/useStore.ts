@@ -2192,6 +2192,7 @@ export const useStore = create<AppState>()(
         return {
           transactions: mergeById(res.transactions, state.transactions || []),
           cashSessions: mergeById(res.cashSessions, state.cashSessions || []),
+          transfers: mergeById(res.transfers, state.transfers || []),
           inventory: Array.from(invMap.values())
         };
       });
@@ -2253,6 +2254,9 @@ export const useStore = create<AppState>()(
         idnSettlementPrices: mergeById(d.idnSettlementPrices, state.idnSettlementPrices || []),
         transactions: mergeById(d.transactions, state.transactions || []),
         cashSessions: mergeById(d.cashSessions, state.cashSessions || []),
+        transfers: mergeById(d.transfers, state.transfers || []),
+        bankCards: mergeById(d.bankCards, state.bankCards || []),
+        bankTransactions: mergeById(d.bankTransactions, state.bankTransactions || []),
         lastSyncTime: new Date().toISOString(),
         syncResult: { success: true, message: 'Caché POS actualizado de forma incremental.' }
       };
