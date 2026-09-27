@@ -192,6 +192,7 @@ export interface AppState {
   bootstrapPosFromSupabase: () => Promise<boolean>;
   refreshBranchInventory: () => Promise<boolean>;
   refreshBranchOperationalData: () => Promise<boolean>;
+  refreshGlobalCatalogData: () => Promise<boolean>;
   seedDemoProducts: () => void;
   restoreTransactionsFromBackup: () => void;
 
