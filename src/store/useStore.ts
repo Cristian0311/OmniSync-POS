@@ -891,9 +891,19 @@ export const useStore = create<AppState>()(
       enqueueOfflineItem('inventory_adjustment', payload, operationId);
       return;
     }
-    applyInventoryAdjustmentToSupabase(payload).then(res => {
-      if (!res.success || res.conflict) enqueueOfflineItem('inventory_adjustment', payload, operationId);
-    }).catch(() => enqueueOfflineItem('inventory_adjustment', payload, operationId));
+    applyInventoryAdjustmentToSupabase(payload).then(async res => {
+      if (!res.success || res.conflict) {
+        await enqueueOfflineItem('inventory_adjustment', payload, operationId);
+        // En un conflicto multi-tablet, el stock local ya no es confiable:
+        // vuelve a leer el valor canónico sin eliminar la operación pendiente.
+        await get().refreshBranchInventory().catch(err =>
+          console.warn('[adjustInventory] No se pudo refrescar tras conflicto:', err)
+        );
+      }
+    }).catch(async err => {
+      await enqueueOfflineItem('inventory_adjustment', payload, operationId);
+      console.warn('[adjustInventory] Ajuste pendiente por error de red:', err);
+    });
   },
   setInventoryQuantity: (productId, branchId, quantity, variantLabel, minQuantity) => {
     const current = get().inventory.find(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
@@ -2312,9 +2322,24 @@ export const useStore = create<AppState>()(
       enqueueOfflineItem('bank_card_balance', balancePayload, actionId).then(async () => {
         if (typeof navigator !== 'undefined' && navigator.onLine) {
           const synced = await setBankCardBalanceToSupabase(id, previousBalance, requestedBalance);
-          if (synced) removeFromOfflineQueueByAction('bank_card_balance', actionId);
+          if (synced) {
+            removeFromOfflineQueueByAction('bank_card_balance', actionId);
+          } else {
+            // Otro movimiento pudo cambiar el saldo. Recuperamos el saldo canónico
+            // en vez de dejar la UI afirmando un valor que ya no existe en servidor.
+            const remote = await pullBankDataFromSupabase();
+            if (remote.success) {
+              set({ bankCards: remote.bankCards, bankTransactions: remote.bankTransactions });
+            }
+          }
         }
-      }).catch(err => console.warn('[Bank] balance queue failed:', err));
+      }).catch(async err => {
+        console.warn('[Bank] balance queue failed:', err);
+        const remote = await pullBankDataFromSupabase();
+        if (remote.success) {
+          set({ bankCards: remote.bankCards, bankTransactions: remote.bankTransactions });
+        }
+      });
     }
   },
   deleteBankCard: async (id) => {
