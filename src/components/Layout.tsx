@@ -29,7 +29,7 @@ import {
 import React, { useState, useEffect } from "react";
 import { cn } from "../lib/utils";
 import { useStore } from "../store/useStore";
-import { getOfflineQueueCount, processOfflineQueue } from "../services/offlineSync";
+import { getOfflineQueueCount } from "../services/offlineQueue";
 import { 
   CheckCircle2, 
   AlertTriangle, 
@@ -100,6 +100,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (!isOnline || isSyncingOffline) return;
     setIsSyncingOffline(true);
     try {
+      const { processOfflineQueue } = await import("../services/offlineSync");
       const res = await processOfflineQueue();
       const cloudResult = await syncWithSupabase();
       // The cloud refresh can surface/requeue operations that failed during the
