@@ -36,6 +36,33 @@ function removeFromOfflineQueueByTransactionId(transactionId: string) {
   if (queued) removeFromOfflineQueue(queued.id);
 }
 
+function replaceRemoteRecords<T extends Record<string, any>>(
+  remoteData: T[] | undefined,
+  localData: T[],
+  pendingIds: Set<string>,
+  idKey = 'id'
+): T[] {
+  // An authoritative successful pull must be allowed to clear local records that
+  // no longer exist in Supabase. Only operations still present in the durable
+  // offline outbox survive the replacement.
+  if (!Array.isArray(remoteData)) return localData;
+
+  const byId = new Map<string, T>();
+  for (const item of remoteData) {
+    const id = item?.[idKey];
+    if (id != null) byId.set(String(id), item);
+  }
+
+  for (const item of localData) {
+    const id = item?.[idKey];
+    if (id != null && pendingIds.has(String(id)) && !byId.has(String(id))) {
+      byId.set(String(id), item);
+    }
+  }
+
+  return Array.from(byId.values());
+}
+
 function applyLocalVoidTransaction(transaction: Transaction) {
   useStore.setState((state: any) => {
     const updatedInventory = [...state.inventory];
@@ -2512,20 +2539,44 @@ export const useStore = create<AppState>()(
       const res = await pullBranchOperationalDataFromSupabase(branchId);
       if (!res.success) return false;
       set((state) => {
-        const mergeById = <T extends { id: string }>(remote: T[], local: T[]) => {
-          const map = new Map(local.map(x => [x.id, x]));
-          for (const item of remote) map.set(item.id, item);
-          return Array.from(map.values());
-        };
+        const pendingTxIds = new Set(getOfflineQueue().filter(i => i.type === 'transaction' || i.type === 'void_transaction').map(i => String(i.data?.id || i.actionId)));
+        const pendingSessionIds = new Set(getOfflineQueue().filter(i => i.type === 'cash_session').map(i => String(i.data?.id || i.actionId)));
+        const pendingTransferIds = new Set(getOfflineQueue().filter(i => i.type === 'transfer').map(i => String(i.data?.id || i.data?.operationId || i.actionId)));
+
+        // Replace only the current branch's operational snapshot. Records from
+        // other branches remain in memory, while deleted remote records for this
+        // branch are removed unless an offline operation is still pending.
+        const txMap = new Map<string, Transaction>();
+        for (const item of state.transactions || []) {
+          if (item.branchId !== branchId || pendingTxIds.has(String(item.id))) txMap.set(item.id, item);
+        }
+        for (const item of res.transactions || []) txMap.set(item.id, item);
+
+        const sessionMap = new Map<string, CashRegisterSession>();
+        for (const item of state.cashSessions || []) {
+          if (item.branchId !== branchId || pendingSessionIds.has(String(item.id))) sessionMap.set(item.id, item);
+        }
+        for (const item of res.cashSessions || []) sessionMap.set(item.id, item);
+
+        const transferMap = new Map<string, InventoryTransfer>();
+        const belongsToBranch = (item: any) =>
+          item.branchId === branchId || item.fromBranchId === branchId || item.toBranchId === branchId;
+        for (const item of state.transfers || []) {
+          if (!belongsToBranch(item) || pendingTransferIds.has(String(item.id || item.operationId))) {
+            transferMap.set(item.id || item.operationId, item);
+          }
+        }
+        for (const item of res.transfers || []) transferMap.set(item.id || item.operationId, item);
+
         const invMap = new Map<string, InventoryLevel>();
         for (const item of state.inventory || []) {
           if (item.branchId !== branchId) invMap.set(`${item.productId}:${item.branchId}:${item.variantLabel || ''}`, item);
         }
-        for (const item of res.inventory) invMap.set(`${item.productId}:${item.branchId}:${item.variantLabel || ''}`, item);
+        for (const item of res.inventory || []) invMap.set(`${item.productId}:${item.branchId}:${item.variantLabel || ''}`, item);
         return {
-          transactions: mergeById(res.transactions, state.transactions || []),
-          cashSessions: mergeById(res.cashSessions, state.cashSessions || []),
-          transfers: mergeById(res.transfers, state.transfers || []),
+          transactions: Array.from(txMap.values()),
+          cashSessions: Array.from(sessionMap.values()),
+          transfers: Array.from(transferMap.values()),
           inventory: Array.from(invMap.values())
         };
       });
@@ -2585,9 +2636,34 @@ export const useStore = create<AppState>()(
         customers: mergeById(d.customers, state.customers || []),
         currencies: d.currencies?.length ? d.currencies : state.currencies,
         idnSettlementPrices: mergeById(d.idnSettlementPrices, state.idnSettlementPrices || []),
-        transactions: mergeById(d.transactions, state.transactions || []),
-        cashSessions: mergeById(d.cashSessions, state.cashSessions || []),
-        transfers: mergeById(d.transfers, state.transfers || []),
+        transactions: (() => {
+          const pending = new Set(getOfflineQueue().filter(i => i.type === 'transaction' || i.type === 'void_transaction').map(i => String(i.data?.id || i.actionId)));
+          const map = new Map<string, Transaction>();
+          for (const item of state.transactions || []) {
+            if (item.branchId !== branchId || pending.has(String(item.id))) map.set(item.id, item);
+          }
+          for (const item of d.transactions || []) map.set(item.id, item);
+          return Array.from(map.values());
+        })(),
+        cashSessions: (() => {
+          const pending = new Set(getOfflineQueue().filter(i => i.type === 'cash_session').map(i => String(i.data?.id || i.actionId)));
+          const map = new Map<string, CashRegisterSession>();
+          for (const item of state.cashSessions || []) {
+            if (item.branchId !== branchId || pending.has(String(item.id))) map.set(item.id, item);
+          }
+          for (const item of d.cashSessions || []) map.set(item.id, item);
+          return Array.from(map.values());
+        })(),
+        transfers: (() => {
+          const pending = new Set(getOfflineQueue().filter(i => i.type === 'transfer').map(i => String(i.data?.id || i.data?.operationId || i.actionId)));
+          const map = new Map<string, InventoryTransfer>();
+          const belongsToBranch = (item: any) => item.branchId === branchId || item.fromBranchId === branchId || item.toBranchId === branchId;
+          for (const item of state.transfers || []) {
+            if (!belongsToBranch(item) || pending.has(String(item.id || item.operationId))) map.set(item.id || item.operationId, item);
+          }
+          for (const item of d.transfers || []) map.set(item.id || item.operationId, item);
+          return Array.from(map.values());
+        })(),
         bankCards: mergeById(d.bankCards, state.bankCards || []),
         bankTransactions: mergeById(d.bankTransactions, state.bankTransactions || []),
         lastSyncTime: new Date().toISOString(),
@@ -2686,7 +2762,7 @@ export const useStore = create<AppState>()(
           const offlineQueuedTxIds = new Set(
             getOfflineQueue().filter(i => i.type === 'transaction' || i.type === 'void_transaction').map(i => i.data.id)
           );
-          const mergedTransactionsRaw = mergeUnique(data.transactions, state.transactions || [], { offlineIds: offlineQueuedTxIds });
+          const mergedTransactionsRaw = replaceRemoteRecords(data.transactions, state.transactions || [], offlineQueuedTxIds);
           // Nunca purgar una venta local únicamente porque una lectura remota
           // todavía no la devuelve. Entre commits/realtime/reconexiones puede
           // existir una ventana de consistencia y esa purga era precisamente la
@@ -2699,7 +2775,7 @@ export const useStore = create<AppState>()(
           const offlineQueuedSessionIds = new Set(
             getOfflineQueue().filter(i => i.type === 'cash_session').map(i => i.data.id)
           );
-          const mergedCashSessionsRaw = mergeUnique(data.cashSessions, state.cashSessions || [], { offlineIds: offlineQueuedSessionIds });
+          const mergedCashSessionsRaw = replaceRemoteRecords(data.cashSessions, state.cashSessions || [], offlineQueuedSessionIds);
           const mergedCashSessions = Array.isArray(data.cashSessions) && data.cashSessions.length > 0
             ? mergedCashSessionsRaw.filter(cs => data.cashSessions.some((ss: any) => ss.id === cs.id) || offlineQueuedSessionIds.has(cs.id))
             : mergedCashSessionsRaw;
@@ -2708,13 +2784,13 @@ export const useStore = create<AppState>()(
           const offlineQueuedCustomerIds = new Set(
             getOfflineQueue().filter(i => i.type === 'customer').map(i => i.data.id)
           );
-          const mergedCustomers = mergeUnique(data.customers, state.customers || [], { offlineIds: offlineQueuedCustomerIds });
+          const mergedCustomers = replaceRemoteRecords(data.customers, state.customers || [], offlineQueuedCustomerIds);
 
           // --- 5. Devoluciones ---
           const offlineQueuedReturnIds = new Set(
             getOfflineQueue().filter(i => i.type === 'return' || i.type === 'return_complete').map(i => i.data.id)
           );
-          const mergedReturnsRaw = mergeUnique(data.returns, state.returns || [], { offlineIds: offlineQueuedReturnIds });
+          const mergedReturnsRaw = replaceRemoteRecords(data.returns, state.returns || [], offlineQueuedReturnIds);
           const mergedReturns = Array.isArray(data.returns) && data.returns.length > 0
             ? mergedReturnsRaw.filter(r => data.returns.some((sr: any) => sr.id === r.id) || offlineQueuedReturnIds.has(r.id))
             : mergedReturnsRaw;
@@ -2762,16 +2838,16 @@ export const useStore = create<AppState>()(
             ? mergedUsers.filter(u => data.users.some((su: any) => su.id === u.id) || u.id.startsWith('admin-') || u.id.startsWith('employee-'))
             : mergedUsers;
 
-          const mergedBankCards = mergeUnique(data.bankCards, state.bankCards || []);
-          const mergedBankTransactions = mergeUnique(data.bankTransactions, state.bankTransactions || []);
-          const mergedSuppliers = mergeUnique(data.suppliers, state.suppliers || []);
-          const mergedSupplierOrders = mergeUnique(data.supplierOrders, state.supplierOrders || []);
+          const mergedBankCards = replaceRemoteRecords(data.bankCards, state.bankCards || [], new Set(getOfflineQueue().filter(i => i.type === 'bank_card').map(i => String(i.data?.id || i.actionId))));
+          const mergedBankTransactions = replaceRemoteRecords(data.bankTransactions, state.bankTransactions || [], new Set(getOfflineQueue().filter(i => i.type === 'bank_transaction' || i.type === 'bank_transaction_delete' || i.type === 'bank_internal_transfer_delete').map(i => String(i.data?.id || i.data?.operationId || i.actionId))));
+          const mergedSuppliers = replaceRemoteRecords(data.suppliers, state.suppliers || [], new Set(getOfflineQueue().filter(i => i.type === 'supplier').map(i => String(i.data?.id || i.actionId))));
+          const mergedSupplierOrders = replaceRemoteRecords(data.supplierOrders, state.supplierOrders || [], new Set(getOfflineQueue().filter(i => i.type === 'supplier_order').map(i => String(i.data?.id || i.actionId))));
           const mergedCurrencies = mergeUnique(data.currencies, state.currencies || [], { idKey: 'code' });
-          const mergedTransfers = mergeUnique(data.transfers, state.transfers || []);
-          const mergedWarranties = mergeUnique(data.warranties, state.warranties || []);
-          const mergedQuotes = mergeUnique(data.quotes, state.quotes || []);
-          const mergedTimeShifts = mergeUnique(data.timeShifts, state.timeShifts || []);
-          const mergedSalarySettlements = mergeUnique(data.salarySettlements, state.salarySettlements || []);
+          const mergedTransfers = replaceRemoteRecords(data.transfers, state.transfers || [], new Set(getOfflineQueue().filter(i => i.type === 'transfer').map(i => String(i.data?.id || i.data?.operationId || i.actionId))));
+          const mergedWarranties = replaceRemoteRecords(data.warranties, state.warranties || [], new Set(getOfflineQueue().filter(i => i.type === 'warranty').map(i => String(i.data?.id || i.actionId))));
+          const mergedQuotes = replaceRemoteRecords(data.quotes, state.quotes || [], new Set(getOfflineQueue().filter(i => i.type === 'quote').map(i => String(i.data?.id || i.actionId))));
+          const mergedTimeShifts = replaceRemoteRecords(data.timeShifts, state.timeShifts || [], new Set(getOfflineQueue().filter(i => i.type === 'time_shift').map(i => String(i.data?.id || i.actionId))));
+          const mergedSalarySettlements = replaceRemoteRecords(data.salarySettlements, state.salarySettlements || [], new Set(getOfflineQueue().filter(i => i.type === 'salary_settlement').map(i => String(i.data?.id || i.actionId))));
           const mergedIdnSettlementPrices = mergeUnique(data.idnSettlementPrices, state.idnSettlementPrices || []);
 
           const updatedCurrentUser = state.currentUser
