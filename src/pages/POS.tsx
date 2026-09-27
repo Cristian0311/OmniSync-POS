@@ -625,6 +625,7 @@ export default function POS() {
       setShowCheckoutModal(false);
       setShowMobileCart(false);
       setPosViewMode('standard');
+      setActiveSessionId(null);
       setSessionWorkerName("");
       setSessionPassword("");
       setSelectedAdminIDNUserId("");
