@@ -839,15 +839,15 @@ export async function pushCurrencyToSupabase(currency: Currency) {
   }
 }
 
-export async function pushReturnToSupabase(returnItem: ReturnItem) {
+export async function pushReturnToSupabase(returnItem: ReturnItem): Promise<boolean> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     enqueueOfflineItem('return', returnItem, returnItem.id);
-    return;
+    return false;
   }
   const supabase = getSupabase();
   if (!supabase) {
     enqueueOfflineItem('return', returnItem, returnItem.id);
-    return;
+    return false;
   }
   try {
     const row = {
@@ -876,9 +876,18 @@ export async function pushReturnToSupabase(returnItem: ReturnItem) {
     };
     const result = await safeUpsert(supabase, 'returns', row);
     if (result?.error) throw result.error;
+    const { data: persisted, error: verifyError } = await supabase
+      .from('returns')
+      .select('id,status,transaction_id,product_id,quantity')
+      .eq('id', returnItem.id)
+      .maybeSingle();
+    if (verifyError) throw verifyError;
+    if (!persisted) throw new Error('Supabase no confirmó la devolución.');
+    return true;
   } catch (e) {
     enqueueOfflineItem('return', returnItem, returnItem.id);
     console.warn("Supabase push return failed:", e);
+    return false;
   }
 }
 
