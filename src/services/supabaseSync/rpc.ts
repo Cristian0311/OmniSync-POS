@@ -198,7 +198,24 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
 
     const persistedItems = Array.isArray(persisted.items) ? persisted.items : [];
     const persistedPayments = Array.isArray(persisted.payments) ? persisted.payments : [];
-    const sameItems = JSON.stringify(persistedItems) === JSON.stringify(rpcItems);
+    // La columna transactions.items conserva el objeto completo del carrito,
+    // mientras la RPC recibe una representación compacta. Comparar JSON crudo
+    // provocaba falsos conflictos incluso cuando la venta acababa de insertarse
+    // correctamente. Normalizamos ambas representaciones al mismo fingerprint.
+    const normalizeItems = (items: any[]) => items.map((item: any) => {
+      const prod = item?.product;
+      const productId = typeof prod === 'string' ? prod : prod?.id || item?.product_id;
+      const isKit = typeof prod === 'object' ? prod?.isKit === true : item?.is_kit === true;
+      const components = typeof prod === 'object' ? (prod?.kitComponents || prod?.kitItems || []) : (item?.kit_components || []);
+      return {
+        product_id: productId || null,
+        quantity: Number(item?.quantity) || 0,
+        variant_label: item?.variantLabel || item?.variant_label || null,
+        is_kit: isKit,
+        kit_components: isKit ? components : []
+      };
+    });
+    const sameItems = JSON.stringify(normalizeItems(persistedItems)) === JSON.stringify(normalizeItems(rpcItems));
     const samePayments = JSON.stringify(persistedPayments) === JSON.stringify(tx.payments || []);
     const sameCore =
       persisted.branch_id === tx.branchId &&
