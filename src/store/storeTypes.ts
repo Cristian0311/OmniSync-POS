@@ -131,8 +131,8 @@ export interface AppState {
   salarySettlements: SalarySettlement[];
   addSalarySettlement: (settlement: SalarySettlement) => void;
   updateSalarySettlement: (id: string, settlement: Partial<SalarySettlement>) => void;
-  addCashMovement: (sessionId: string, movement: CashMovement) => void;
-  removeCashMovement: (sessionId: string, movementId: string) => void;
+  addCashMovement: (sessionId: string, movement: CashMovement) => Promise<boolean | void>;
+  removeCashMovement: (sessionId: string, movementId: string) => Promise<boolean | void>;
   transfers: InventoryTransfer[];
   addTransfer: (transfer: InventoryTransfer) => void;
 
