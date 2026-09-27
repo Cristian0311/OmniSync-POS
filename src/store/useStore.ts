@@ -1278,6 +1278,9 @@ export const useStore = create<AppState>()(
     set((state) => ({
       returns: [newReturn, ...state.returns.filter(r => r.id !== newReturn.id)]
     }));
+    // Registrar inmediatamente la intención en la cola durable para evitar una
+    // carrera entre "crear devolución" y "completar devolución".
+    void enqueueOfflineItem('return', newReturn, newReturn.id);
     import('../services/supabaseSync').then(({ pushReturnToSupabase }) => {
       pushReturnToSupabase(newReturn).catch(() => {});
     }).catch(() => {});
