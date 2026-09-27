@@ -576,8 +576,32 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     }
     case 'return': {
       const ret = data as ReturnItem;
-      const { error } = await supabase.from('returns').upsert({ id: ret.id, transaction_id: ret.transactionId || null, product_id: ret.productId, quantity: Number(ret.quantity) || 1, reason: ret.reason || '', date: ret.date, status: ret.status || 'pending', type: ret.type || 'refund', notes: ret.notes || null, variant_label: ret.variantLabel || null });
-      if (error) throw error; return true;
+      const { error } = await supabase.from('returns').upsert({
+        id: ret.id,
+        transaction_id: ret.transactionId || null,
+        product_id: ret.productId,
+        quantity: Number(ret.quantity) || 1,
+        reason: ret.reason || '',
+        date: ret.date,
+        status: ret.status || 'pending',
+        type: ret.type || 'refund',
+        notes: ret.notes || null,
+        variant_label: ret.variantLabel || null,
+        branch_id: ret.branchId || null,
+        replacement_product_id: ret.replacementProductId || null,
+        replacement_quantity: ret.replacementQuantity || null,
+        processed_by: ret.processedBy || null,
+        refund_status: ret.refundStatus || (ret.type === 'refund' ? 'pending' : 'not_required'),
+        refund_amount: ret.refundAmount ?? null,
+        refund_currency_code: ret.refundCurrencyCode || null,
+        refund_method: ret.refundMethod || null,
+        refund_bank_card_id: ret.refundBankCardId || null,
+        refund_transaction_id: ret.refundTransactionId || null,
+        received_at: ret.receivedAt || null,
+        refunded_at: ret.refundedAt || null
+      });
+      if (error) throw error;
+      return true;
     }
     case 'receipt_config': { const { error } = await supabase.from('settings').upsert({ id: 'global', receipt_config: data }); if (error) throw error; return true; }
     case 'store_config': { const { error } = await supabase.from('settings').upsert({ id: 'global', store_config: data }); if (error) throw error; return true; }
