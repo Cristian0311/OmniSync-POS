@@ -206,6 +206,7 @@ export default function POS() {
   const [sessionWorkerName, setSessionWorkerName] = useState("");
   const [sessionPassword, setSessionPassword] = useState("");
   const [isOpeningSession, setIsOpeningSession] = useState(false);
+  const [isClosingSession, setIsClosingSession] = useState(false);
 
   const [joiningSessionPassword, setJoiningSessionPassword] = useState("");
   const [isNewEmployee, setIsNewEmployee] = useState(false);
@@ -779,9 +780,9 @@ export default function POS() {
     }
   };
 
-  const handleClose = (e: React.FormEvent) => {
+  const handleClose = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (currentSession) {
+    if (currentSession && !isClosingSession) {
       const finalBalances: Payment[] = Object.entries(closingBalances)
         .filter(([_, amount]) => (amount as number) > 0)
         .map(([key, amount]) => {
@@ -813,44 +814,75 @@ export default function POS() {
         setFinalBalancesToClose(finalBalances);
         setShowDiscrepancyModal(true);
       } else {
-        processClose(finalBalances);
-        setPosSuccess("Caja cerrada exitosamente.");
-        setTimeout(() => setPosSuccess(""), 3000);
+        const ok = await processClose(finalBalances);
+        if (ok) {
+          setPosSuccess("Caja cerrada y confirmada correctamente.");
+          setTimeout(() => setPosSuccess(""), 3000);
+        }
       }
     }
   };
 
-  const processClose = (balances: Payment[], discrepancyDeduction?: number, sessionMeta?: Partial<CashRegisterSession>) => {
-    if (!currentSession) return;
-    let finalClosingDate = new Date().toISOString();
-    if (sessionClosingDate) {
-      const parts = sessionClosingDate.split('-');
-      if (parts.length === 3) {
-        const d = new Date();
-        d.setFullYear(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
-        finalClosingDate = d.toISOString();
+  const processClose = async (balances: Payment[], discrepancyDeduction?: number, sessionMeta?: Partial<CashRegisterSession>) => {
+    if (!currentSession || isClosingSession) return false;
+
+    setIsClosingSession(true);
+    setPosError("");
+    try {
+      let finalClosingDate = new Date().toISOString();
+      if (sessionClosingDate) {
+        const parts = sessionClosingDate.split('-');
+        if (parts.length === 3) {
+          const d = new Date();
+          d.setFullYear(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+          finalClosingDate = d.toISOString();
+        }
       }
+
+      const sessionToClose: CashRegisterSession = {
+        ...currentSession,
+        status: 'closed' as const,
+        closedAt: finalClosingDate,
+        closingBalances: balances,
+        workerName: sessionWorkerName || currentSession.workerName,
+        closingDate: finalClosingDate,
+        ...(sessionMeta || {})
+      };
+
+      const confirmed = await closeSession(
+        currentSession.id,
+        balances,
+        sessionWorkerName || currentSession.workerName,
+        finalClosingDate,
+        discrepancyDeduction,
+        sessionMeta
+      );
+
+      if (!confirmed) {
+        setPosError("El cierre no fue confirmado por la base de datos. El turno permanece abierto y protegido.");
+        return false;
+      }
+
+      setLastClosedSession(sessionToClose);
+      setClosingBalances({});
+      setSessionWorkerName("");
+      setSessionPassword("");
+      setActiveSessionId(null);
+      setSessionClosingDate(new Date().toISOString().split('T')[0]);
+      setShowCashManagementModal(false);
+      setShowSalarySummary(true);
+      setShowOpenShiftModal(false);
+      return true;
+    } catch (err: any) {
+      console.error("[POS] Error confirmando cierre:", err);
+      setPosError(err?.message || "No se pudo confirmar el cierre del turno.");
+      return false;
+    } finally {
+      setIsClosingSession(false);
     }
-    const sessionToClose: CashRegisterSession = { 
-      ...currentSession, 
-      status: 'closed' as const, 
-      closedAt: finalClosingDate, 
-      closingBalances: balances, 
-      workerName: sessionWorkerName || currentSession.workerName,
-      closingDate: finalClosingDate,
-      ...(sessionMeta || {})
-    };
-    closeSession(currentSession.id, balances, sessionWorkerName || currentSession.workerName, finalClosingDate, discrepancyDeduction, sessionMeta);
-    setLastClosedSession(sessionToClose);
-    setClosingBalances({});
-    setSessionWorkerName("");
-    setSessionClosingDate(new Date().toISOString().split('T')[0]);
-    setShowCashManagementModal(false);
-    setShowSalarySummary(true);
-    setShowOpenShiftModal(false);
   };
 
-  const confirmClose = () => {
+  const confirmClose = async () => {
     if (currentSession) {
       let totalDeduction = 0;
       if (deductFromSalary) {
@@ -923,7 +955,8 @@ export default function POS() {
         notes: `Cierre forzado con descuadre. Deducción salarial: ${totalDeduction > 0 ? `${totalDeduction} CUP` : 'No aplicada'}.`
       };
 
-      processClose(finalBalancesToClose, totalDeduction, sessionMeta);
+      const ok = await processClose(finalBalancesToClose, totalDeduction, sessionMeta);
+      if (!ok) return;
       setShowDiscrepancyModal(false);
       setDeductFromSalary(false);
       setFinalBalancesToClose([]);
@@ -3943,10 +3976,11 @@ export default function POS() {
                     <div className="pt-2">
                       <button 
                         type="submit"
-                        className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 active:scale-95 flex items-center justify-center gap-2"
+                        disabled={isClosingSession}
+                        className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                       >
-                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                        Cerrar Turno y Finalizar
+                        {isClosingSession ? <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin" /> : <ShieldCheck className="w-4 h-4 text-emerald-400" />}
+                        {isClosingSession ? "Confirmando Cierre..." : "Cerrar Turno y Finalizar"}
                       </button>
                     </div>
                   </form>
@@ -4031,9 +4065,10 @@ export default function POS() {
               </button>
               <button 
                 onClick={confirmClose}
-                className="flex-1 py-3 bg-rose-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-200"
+                disabled={isClosingSession}
+                className="flex-1 py-3 bg-rose-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-200 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Forzar Cierre
+                {isClosingSession ? "Confirmando..." : "Forzar Cierre"}
               </button>
             </div>
           </div>
