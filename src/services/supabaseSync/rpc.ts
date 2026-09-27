@@ -85,23 +85,22 @@ export async function callOpenSessionRPCWithId(session: CashRegisterSession): Pr
   const supabase = getSupabase();
   if (!supabase) return { success: false, error: 'Supabase no configurado' };
 
-  // IMPORTANT:
-  // PostgREST in this project is currently serving a stale schema cache for
-  // open_cash_session_v3 (PGRST202), even though the exact PostgreSQL function
-  // exists. Do not call the broken RPC from the POS path: doing so produces a
-  // visible error and adds latency before the stable-ID fallback.
+  // Use a stable-ID table insert for the browser path. The database trigger
+  // assigns the authoritative global turn_number atomically, while the stable
+  // session ID makes retries idempotent if the response is lost.
   //
-  // The cash_sessions table has a unique partial index enforcing one open
-  // session per branch, so this write remains safe/idempotent by session ID.
+  // The cash_sessions table also has a unique partial index enforcing one open
+  // session per branch, so concurrent openings cannot create two active shifts.
   try {
+    const openingAmount = Number(session.openingAmount ?? session.openingBalance ?? 0);
     const row = {
       id: session.id,
       user_id: session.userId || null,
       worker_name: session.workerName || null,
       branch_id: session.branchId,
       opened_at: session.openedAt,
-      opening_balance: session.openingAmount || 0,
-      opening_amount: session.openingAmount || 0,
+      opening_balance: openingAmount,
+      opening_amount: openingAmount,
       status: 'open',
       working_employee_ids: session.workingEmployeeIds || [],
       notes: session.notes || '',
