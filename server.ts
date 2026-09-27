@@ -327,10 +327,32 @@ Responde ESTRICTAMENTE con un objeto JSON:
       const data = req.body;
       const apiKey = process.env.GEMINI_API_KEY;
 
+      // The dashboard must remain useful even when no external AI credential is configured.
+      // In that case we return a deterministic local analysis instead of an error/empty state.
+      const salesToday = Number(data?.salesToday || 0);
+      const txCountToday = Number(data?.txCountToday || 0);
+      const lowStockCount = Number(data?.lowStockCount || 0);
+      const topCategories = Array.isArray(data?.topCategories) ? data.topCategories : [];
+      const currency = data?.baseCurrency || 'CUP';
+
       if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.trim().length < 10) {
+        const avgTicket = txCountToday > 0 ? salesToday / txCountToday : 0;
+        const topCategory = topCategories[0]?.name;
+        const localSummary = [
+          `Ventas del día: ${salesToday.toLocaleString('es-CU')} ${currency} en ${txCountToday} ticket(s), con un promedio de ${avgTicket.toLocaleString('es-CU')} ${currency}.`,
+          lowStockCount > 0
+            ? `Hay ${lowStockCount} producto(s) con stock bajo que requieren revisión.`
+            : 'No se reportan productos con stock bajo en los datos recibidos.',
+          topCategory ? `La categoría con mayor actividad registrada es "${String(topCategory)}".` : 'No hay suficiente desglose por categorías para identificar una categoría líder.'
+        ].join(' ');
         return res.json({
           success: true,
-          summary: "Configura una clave de API válida para activar el análisis por IA."
+          provider: 'local-fallback',
+          summary: localSummary,
+          recommendations: [
+            lowStockCount > 0 ? 'Revisar y reponer los productos con stock bajo.' : 'Mantener el monitoreo diario de inventario.',
+            txCountToday > 0 ? 'Comparar el ticket promedio con los días anteriores.' : 'Registrar ventas durante el periodo para generar una comparación significativa.'
+          ]
         });
       }
 
