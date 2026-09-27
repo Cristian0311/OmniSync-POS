@@ -48,82 +48,73 @@ export function scheduleDebouncedSync(delayMs = 1500): void {
 
 export function initMultiDeviceRealtimeSync(): () => void {
   if (typeof window === 'undefined') return () => {};
-
   const supabase = getSupabase();
-  if (navigator.onLine) {
-    useStore.getState().bootstrapPosFromSupabase().catch(() => {});
-  }
-  if (supabase) {
+
+  const handleInventoryChange = (payload: any) => {
+    window.dispatchEvent(new CustomEvent('remote_data_changed', { detail: payload }));
+    const row = payload?.new || payload?.old;
+    if (!row) return;
+    useStore.setState((state: any) => {
+      const key = `${row.product_id}:${row.branch_id}:${row.variant_label || ''}`;
+      const list = [...(state.inventory || [])];
+      const idx = list.findIndex((i: any) => `${i.productId}:${i.branchId}:${i.variantLabel || ''}` === key);
+      if (payload.eventType === 'DELETE') { if (idx >= 0) list.splice(idx, 1); }
+      else {
+        const next = { id: row.id, productId: row.product_id, branchId: row.branch_id, variantLabel: row.variant_label || undefined, quantity: Number(row.quantity) || 0, minQuantity: Number(row.min_quantity) || 0 };
+        if (idx >= 0) list[idx] = next; else list.push(next);
+      }
+      return { inventory: list };
+    });
+  };
+
+  const handleTransactionChange = (payload: any) => {
+    window.dispatchEvent(new CustomEvent('remote_data_changed', { detail: payload }));
+  };
+
+  const subscribeRealtime = () => {
+    if (!supabase || realtimeChannel) return;
+    const branchId = useStore.getState().currentBranchId;
     try {
-      const branchId = useStore.getState().currentBranchId;
       realtimeChannel = supabase.channel(`pos-sync-${branchId || 'global'}`);
-      const handleInventoryChange = (payload: any) => {
-        window.dispatchEvent(new CustomEvent('remote_data_changed', { detail: payload }));
-        const row = payload?.new || payload?.old;
-        if (!row) return;
-        useStore.setState((state: any) => {
-          const key = `${row.product_id}:${row.branch_id}:${row.variant_label || ''}`;
-          const list = [...(state.inventory || [])];
-          const idx = list.findIndex((i: any) => `${i.productId}:${i.branchId}:${i.variantLabel || ''}` === key);
-          if (payload.eventType === 'DELETE') {
-            if (idx >= 0) list.splice(idx, 1);
-          } else {
-            const next = { id: row.id, productId: row.product_id, branchId: row.branch_id, variantLabel: row.variant_label || undefined, quantity: Number(row.quantity) || 0, minQuantity: Number(row.min_quantity) || 0 };
-            if (idx >= 0) list[idx] = next; else list.push(next);
-          }
-          return { inventory: list };
-        });
-      };
-      const handleTransactionChange = (payload: any) => {
-        // La transacción genera su propio evento de inventario; no descargamos
-        // inventario otra vez por el evento de venta.
-        window.dispatchEvent(new CustomEvent('remote_data_changed', { detail: payload }));
-      };
       realtimeChannel.on('postgres_changes', {
-        event: '*', schema: 'public', table: 'inventory', ...(branchId ? { filter: `branch_id=eq.${branchId}` } : {})
+        event: '*', schema: 'public', table: 'inventory',
+        ...(branchId ? { filter: `branch_id=eq.${branchId}` } : {})
       }, handleInventoryChange);
       realtimeChannel.on('postgres_changes', {
-        event: '*', schema: 'public', table: 'transactions', ...(branchId ? { filter: `branch_id=eq.${branchId}` } : {})
+        event: '*', schema: 'public', table: 'transactions',
+        ...(branchId ? { filter: `branch_id=eq.${branchId}` } : {})
       }, handleTransactionChange);
-      realtimeChannel.subscribe();
+      realtimeChannel.subscribe((status: string) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') console.warn('[RealtimeSync] Canal Realtime:', status);
+      });
     } catch (e) {
+      realtimeChannel = null;
       console.warn('[RealtimeSync] No se pudo inicializar Realtime:', e);
     }
-  }
+  };
 
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === 'visible' && navigator.onLine && getOfflineQueueCount() > 0) {
-      triggerBackgroundSync().catch(() => {});
-    }
-  };
-  const handleWindowFocus = () => {
-    if (navigator.onLine && getOfflineQueueCount() > 0) triggerBackgroundSync().catch(() => {});
-  };
   const handleOffline = () => {
     if (realtimeChannel && supabase) {
       try { supabase.removeChannel(realtimeChannel); } catch {}
       realtimeChannel = null;
     }
   };
+
   const handleOnline = () => {
-    if (supabase && !realtimeChannel) {
-      try {
-        const branchId = useStore.getState().currentBranchId;
-        realtimeChannel = supabase.channel(`pos-sync-${branchId || 'global'}`);
-        realtimeChannel.on('postgres_changes', {
-          event: '*', schema: 'public', table: 'inventory',
-          ...(branchId ? { filter: `branch_id=eq.${branchId}` } : {})
-        }, handleInventoryChange);
-        realtimeChannel.on('postgres_changes', {
-          event: '*', schema: 'public', table: 'transactions',
-          ...(branchId ? { filter: `branch_id=eq.${branchId}` } : {})
-        }, handleTransactionChange);
-        realtimeChannel.subscribe();
-      } catch (e) {
-        console.warn('[RealtimeSync] No se pudo reanudar Realtime:', e);
-      }
-    }
+    subscribeRealtime();
     triggerBackgroundSync(false).catch(() => {});
+  };
+
+  if (navigator.onLine) {
+    useStore.getState().bootstrapPosFromSupabase().catch(() => {});
+    subscribeRealtime();
+  }
+
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible' && navigator.onLine && getOfflineQueueCount() > 0) triggerBackgroundSync().catch(() => {});
+  };
+  const handleWindowFocus = () => {
+    if (navigator.onLine && getOfflineQueueCount() > 0) triggerBackgroundSync().catch(() => {});
   };
 
   document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -132,14 +123,11 @@ export function initMultiDeviceRealtimeSync(): () => void {
   window.addEventListener('offline', handleOffline);
 
   pollIntervalId = setInterval(() => {
-    if (navigator.onLine && getOfflineQueueCount() > 0 && !isSyncInProgress) {
-      triggerBackgroundSync().catch(() => {});
-    }
+    if (navigator.onLine && getOfflineQueueCount() > 0 && !isSyncInProgress) triggerBackgroundSync().catch(() => {});
   }, 30000);
+
   branchRepairIntervalId = setInterval(() => {
-    if (navigator.onLine && !isSyncInProgress && getOfflineQueueCount() === 0) {
-      useStore.getState().refreshBranchInventory().catch(() => {});
-    }
+    if (navigator.onLine && !isSyncInProgress && getOfflineQueueCount() === 0) useStore.getState().refreshBranchInventory().catch(() => {});
   }, 120000);
 
   return () => {
