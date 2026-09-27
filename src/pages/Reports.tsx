@@ -8,19 +8,15 @@ import {
   HelpCircle, Edit3, Save, FileText, CheckCircle, Minus
 } from "lucide-react";
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
-  PieChart, Pie, Cell 
-} from "recharts";
 import { useStore } from "../store/useStore";
 import { Transaction, Product, CashRegisterSession, CashMovement } from "../types";
 
 const AddItemToShiftModal = lazy(() => import("../components/reports/AddItemToShiftModal"));
+const ReportsCharts = lazy(() => import("../components/reports/ReportsCharts"));
 import { cn } from "../lib/utils";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { useReportsAnalytics } from "../hooks/useReportsAnalytics";
-import { 
-  exportFullReportsToExcel, exportSingleSectionToExcel, ExcelExportData
-} from "../utils/excelExport";
+import type { ExcelExportData } from "../utils/excelExport";
 
 export default function Reports() {
   const store = useStore(useShallow((state) => ({
@@ -144,22 +140,6 @@ export default function Reports() {
     </div>
   );
 
-  const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-white dark:bg-slate-900 border border-base p-2 rounded-xl shadow-xl">
-          <p className="text-[10px] font-black text-primary uppercase mb-1">{label}</p>
-          <p className="text-[11px] font-bold text-indigo-600">
-            {formatMoney(payload[0].value)}
-          </p>
-        </div>
-      );
-    }
-    return null;
-  };
-
   const getProductName = (itemProduct: any) => {
     if (!itemProduct) return 'Desconocido';
     if (typeof itemProduct === 'string') {
@@ -240,6 +220,15 @@ export default function Reports() {
   const [sessionClosingNotesInput, setSessionClosingNotesInput] = useState<string>("");
   const [isClosingShiftFromReports, setIsClosingShiftFromReports] = useState(false);
   const [showChartsOnMobile, setShowChartsOnMobile] = useState(false);
+  const [isReportsMobile, setIsReportsMobile] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsReportsMobile(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, []);
 
   // Estados para Añadir Producto Vendido al Informe (Sin tocar stock físico)
   const [addItemToShiftModal, setAddItemToShiftModal] = useState<CashRegisterSession | null>(null);
@@ -1160,7 +1149,8 @@ export default function Reports() {
     };
   };
 
-  const handleExportFullExcel = () => {
+  const handleExportFullExcel = async () => {
+    const { exportFullReportsToExcel } = await import("../utils/excelExport");
     const data = getExportData();
     exportFullReportsToExcel(data);
     setShowExportMenu(false);
@@ -1168,7 +1158,8 @@ export default function Reports() {
     setTimeout(() => setExportSuccess(false), 2500);
   };
 
-  const handleExportSectionExcel = (sec: 'summary' | 'sales' | 'items' | 'sessions' | 'payroll' | 'products' | 'returns' | 'banks' | 'idn' | 'discrepancies' | 'movements' | 'transfers') => {
+  const handleExportSectionExcel = async (sec: 'summary' | 'sales' | 'items' | 'sessions' | 'payroll' | 'products' | 'returns' | 'banks' | 'idn' | 'discrepancies' | 'movements' | 'transfers') => {
+    const { exportSingleSectionToExcel } = await import("../utils/excelExport");
     const data = getExportData();
     exportSingleSectionToExcel(sec, data);
     setShowExportMenu(false);
@@ -1399,113 +1390,24 @@ export default function Reports() {
                 {tab.badge !== undefined && tab.badge > 0 && (
                   <span className={cn(
                     "px-1.5 py-0.2 text-[7px] font-black rounded-full ml-1",
-                    activeTab === tab.id ? "bg-white/30 text-white" : (tab.badgeClass || "bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300")
-                  )}>
-                    {tab.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Visual Analytics Toggle for Mobile */}
-      <div className="md:hidden flex items-center justify-between p-2.5 bg-secondary rounded-2xl border border-base shadow-xs">
-        <span className="text-[11px] font-black text-primary uppercase tracking-tight flex items-center gap-1.5">
-          <BarChart3 className="w-3.5 h-3.5 text-indigo-600" />
-          Gráficos y Tendencias
-        </span>
-        <button
-          onClick={() => setShowChartsOnMobile(!showChartsOnMobile)}
-          className="px-2.5 py-1 text-[9px] font-black uppercase tracking-wider rounded-lg bg-subtle hover:bg-secondary border border-base text-primary transition-all cursor-pointer"
-        >
-          {showChartsOnMobile ? 'Ocultar' : 'Ver Gráficos'}
-        </button>
-      </div>
-
-      {/* Visual Analytics Section */}
-      <div className={cn("grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4", !showChartsOnMobile && "hidden md:grid")}>
-        {/* Sales by Hour Bar Chart */}
-        <div className="lg:col-span-2 bg-secondary rounded-[2rem] p-5 shadow-sm border border-base flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xs font-black text-primary uppercase tracking-wider flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-indigo-600" />
-                Ventas por Horario
-              </h3>
-              <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Distribución del volumen de facturación por hora</p>
-            </div>
-            <div className="px-2 py-1 bg-white dark:bg-slate-800 rounded-lg border border-base text-[8px] font-black uppercase text-indigo-600">
-              Actividad Diaria
-            </div>
+                    activeTab === tab.id ? "bg-white/30 text-white" : (tab.badgeClass || "bg-indigo-100      {/* Visual Analytics */}
+      {(showChartsOnMobile || !isReportsMobile) && (
+        <Suspense fallback={
+          <div className="md:hidden flex items-center justify-between p-2.5 bg-secondary rounded-2xl border border-base shadow-xs">
+            <span className="text-[11px] font-black text-primary uppercase tracking-tight">Cargando gráficos...</span>
           </div>
-          
-          <div className="h-[200px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={hourData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis 
-                  dataKey="hour" 
-                  fontSize={8} 
-                  fontWeight="bold" 
-                  tickLine={false} 
-                  axisLine={false}
-                  interval={2}
-                />
-                <YAxis hide />
-                <Tooltip content={<CustomTooltip />} />
-                <Bar 
-                  dataKey="total" 
-                  fill="#6366f1" 
-                  radius={[4, 4, 0, 0]} 
-                  barSize={20}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Top Categories Pie Chart */}
-        <div className="bg-secondary rounded-[2rem] p-5 shadow-sm border border-base flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xs font-black text-primary uppercase tracking-wider flex items-center gap-2">
-                <PieChartIcon className="w-4 h-4 text-emerald-600" />
-                Top Categorías
-              </h3>
-              <p className="text-[8px] font-bold text-muted uppercase tracking-tight">Distribución por volumen de venta</p>
-            </div>
-          </div>
-
-          <div className="flex-1 flex flex-col">
-            <div className="h-[140px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={categoryData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={40}
-                    outerRadius={60}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {categoryData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip content={<CustomTooltip />} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="mt-2 space-y-1.5">
-              {categoryData.map((item, index) => (
-                <div key={item.name} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
-                    <span className="text-[9px] font-bold text-secondary uppercase truncate max-w-[100px]">{item.name}</span>
+        }>
+          <ReportsCharts
+            hourData={hourData}
+            categoryData={categoryData}
+            showChartsOnMobile={showChartsOnMobile}
+            onToggleMobileCharts={() => setShowChartsOnMobile(v => !v)}
+            formatMoney={formatMoney}
+            isMobile={isReportsMobile}
+          />
+        </Suspense>
+      )}
+}</span>
                   </div>
                   <span className="text-[9px] font-black text-primary">{formatMoney(item.value)}</span>
                 </div>
