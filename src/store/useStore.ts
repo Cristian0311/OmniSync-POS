@@ -7,7 +7,7 @@ import {
   pushTransactionToSupabase, pushCashSessionToSupabase, pushWarrantyToSupabase, pushUserToSupabase, deleteUserFromSupabase, 
   pushIDNSettlementPriceToSupabase, deleteIDNSettlementPriceFromSupabase, SyncResult,
   pushBranchToSupabase, deleteBranchFromSupabase, pushCategoryToSupabase, deleteCategoryFromSupabase, deleteProductFromSupabase,
-  pushCurrencyToSupabase, clearSupabaseData, pushBankCardToSupabase, deleteBankCardFromSupabase, pushBankTransactionToSupabase, pushAllToSupabase,
+  pushCurrencyToSupabase, clearSupabaseData, pushBankCardToSupabase, updateBankCardMetadataToSupabase, deleteBankCardFromSupabase, pushBankTransactionToSupabase, pushAllToSupabase,
   pushSupplierToSupabase, deleteSupplierFromSupabase, pushSupplierOrderToSupabase, pushCustomerToSupabase,
   applyInventoryAdjustmentToSupabase, reconcileInventoryToSupabase,
   pushReceiptConfigToSupabase, pushStoreConfigToSupabase, pushCatalogConfigToSupabase, deleteTransactionFromSupabase, deleteCustomerFromSupabase,
@@ -2007,12 +2007,19 @@ export const useStore = create<AppState>()(
     pushBankCardToSupabase(card).catch(() => {});
   },
   updateBankCard: (id, card) => {
+    let found: import('../types').BankCard | undefined;
     set(state => {
-      const updated = state.bankCards.map(c => c.id === id ? { ...c, ...card } : c);
-      const found = updated.find(c => c.id === id);
-      if (found) pushBankCardToSupabase(found).catch(() => {});
+      const updated = state.bankCards.map(c => {
+        if (c.id !== id) return c;
+        // El saldo es autoritativo del servidor y solo cambia mediante RPC.
+        // Editar nombre/banco/etc. nunca debe reenviar un balance potencialmente antiguo.
+        const next = { ...c, ...card, balance: c.balance };
+        found = next;
+        return next;
+      });
       return { bankCards: updated };
     });
+    if (found) updateBankCardMetadataToSupabase(found).catch(() => {});
   },
   deleteBankCard: async (id) => {
     const card = get().bankCards.find(c => c.id === id);
