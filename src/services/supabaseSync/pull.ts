@@ -206,7 +206,7 @@ export async function pullBranchOperationalDataFromSupabase(branchId: string): P
       fromBranchId:t.from_branch_id,fromBranchName:t.from_branch_name||'Sucursal Origen',
       toBranchId:t.to_branch_id,toBranchName:t.to_branch_name||'Sucursal Destino',
       variantLabel:t.variant_label||'Producto Base',quantity:Number(t.quantity)||0,
-      variants:Array.isArray(t.variants)?t.variants:[],date:t.date,userId:t.user_id,status:t.status||'completed'
+      variants:Array.isArray(t.variants)?t.variants:[],date:t.date,userId:t.user_id,status:t.status||'completed',batchId:t.batch_id||undefined
     }));
     return { success:true, transactions, cashSessions, inventory, transfers };
   } catch (e:any) {
