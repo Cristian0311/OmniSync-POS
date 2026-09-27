@@ -2266,78 +2266,55 @@ export const useStore = create<AppState>()(
     pushBankCardToSupabase(card).catch(() => {});
   },
   updateBankCard: (id, card) => {
-    const previousBalance = Number(get().bankCards.find(c => c.id === id)?.balance ?? 0);
     let found: import('../types').BankCard | undefined;
+    let previousBalance = 0;
+    let requestedBalance: number | undefined;
     set(state => {
       const updated = state.bankCards.map(c => {
         if (c.id !== id) return c;
-        const incomingBalance = card.balance;
+        previousBalance = Number(c.balance) || 0;
+        requestedBalance = card.balance !== undefined && Number.isFinite(Number(card.balance))
+          ? Number(card.balance)
+          : undefined;
         const next = {
           ...c,
           ...card,
-          balance: incomingBalance !== undefined && Number.isFinite(Number(incomingBalance))
-            ? Number(incomingBalance)
-            : c.balance
+          balance: requestedBalance !== undefined ? requestedBalance : c.balance
         };
         found = next;
         return next;
       });
       return { bankCards: updated };
     });
-    if (found) {
-      const metadata = { ...found };
-      const requestedBalance = card.balance;
-      // Metadatos y saldo se sincronizan por rutas independientes. El saldo usa
-      // una operación compare-and-set para no pisar un movimiento bancario concurrente.
-      void updateBankCardMetadataToSupabase(metadata).then(ok => {
-        if (!ok) {
-          enqueueOfflineItem('bank_card', { ...metadata, __metadata_only: true }, 'bank-metadata:' + metadata.id)
-            .catch(err => console.warn('[Bank] metadata queue failed:', err));
-        }
-      }).catch(err => {
-        console.warn('[Bank] metadata update failed:', err);
-        enqueueOfflineItem('bank_card', { ...metadata, __metadata_only: true }, 'bank-metadata:' + metadata.id)
-          .catch(queueErr => console.warn('[Bank] metadata queue failed:', queueErr));
-      });
+    if (!found) return;
 
-      if (
-        requestedBalance !== undefined &&
-        Number.isFinite(Number(requestedBalance)) &&
-        Math.abs(Number(requestedBalance) - previousBalance) > 0.000001
-      ) {
-        const balanceActionId = 'bank-balance:' + id + ':' + crypto.randomUUID();
-        const balancePayload = {
-          cardId: id,
-          expectedBalance: previousBalance,
-          newBalance: Math.max(0, Number(requestedBalance) || 0),
-          userId: get().currentUser?.id || null
-        };
-        void enqueueOfflineItem('bank_card_balance', balancePayload, balanceActionId).then(async () => {
-          if (typeof navigator !== 'undefined' && navigator.onLine) {
-            const ok = await setBankCardBalanceToSupabase(
-              balancePayload.cardId,
-              balancePayload.expectedBalance,
-              balancePayload.newBalance
-            );
-            if (ok) {
-              removeFromOfflineQueueByAction('bank_card_balance', balanceActionId);
-              set(state => ({
-                bankCards: state.bankCards.map(c => c.id === id ? { ...c, balance: balancePayload.newBalance } : c)
-              }));
-            } else {
-              console.warn('[Bank] Saldo no confirmado; permanece en la cola durable para evitar sobrescribir movimientos concurrentes.');
-              try {
-                const remote = await pullBankDataFromSupabase();
-                if (remote.success) {
-                  set({ bankCards: remote.bankCards, bankTransactions: remote.bankTransactions });
-                }
-              } catch (refreshError) {
-                console.warn('[Bank] No se pudo refrescar el saldo remoto tras un conflicto:', refreshError);
-              }
-            }
-          }
-        }).catch(err => console.warn('[Bank] balance queue failed:', err));
+    const metadata = { ...found };
+    delete (metadata as any).balance;
+    updateBankCardMetadataToSupabase(metadata as import('../types').BankCard).then(ok => {
+      if (!ok) {
+        enqueueOfflineItem('bank_card', { ...metadata, __metadata_only: true }, 'bank-metadata:' + metadata.id)
+          .catch(err => console.warn('[Bank] metadata queue failed:', err));
       }
+    }).catch(err => {
+      console.warn('[Bank] metadata update failed:', err);
+      enqueueOfflineItem('bank_card', { ...metadata, __metadata_only: true }, 'bank-metadata:' + metadata.id)
+        .catch(queueErr => console.warn('[Bank] metadata queue failed:', queueErr));
+    });
+
+    if (requestedBalance !== undefined && requestedBalance !== previousBalance) {
+      const actionId = 'bank-balance:' + id + ':' + crypto.randomUUID();
+      const balancePayload = {
+        id,
+        expectedBalance: previousBalance,
+        newBalance: requestedBalance,
+        __balance_only: true
+      };
+      enqueueOfflineItem('bank_card_balance', balancePayload, actionId).then(async () => {
+        if (typeof navigator !== 'undefined' && navigator.onLine) {
+          const synced = await setBankCardBalanceToSupabase(id, previousBalance, requestedBalance);
+          if (synced) removeFromOfflineQueueByAction('bank_card_balance', actionId);
+        }
+      }).catch(err => console.warn('[Bank] balance queue failed:', err));
     }
   },
   deleteBankCard: async (id) => {
