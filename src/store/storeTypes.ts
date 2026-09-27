@@ -91,7 +91,7 @@ export interface AppState {
 
   // Caja
   cashSessions: CashRegisterSession[];
-  openSession: (session: CashRegisterSession) => void;
+  openSession: (session: CashRegisterSession) => Promise<boolean>;
   closeSession: (sessionId: string, closingBalances: import('../types').Payment[], workerName?: string, closingDate?: string, discrepancyDeduction?: number, sessionMeta?: Partial<CashRegisterSession>) => void;
   updateCashSession: (id: string, updates: Partial<CashRegisterSession>) => void;
   cancelSession: (sessionId: string, reason?: string) => Promise<boolean>;
