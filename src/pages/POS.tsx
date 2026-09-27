@@ -468,8 +468,8 @@ export default function POS() {
       lines.push("CENTER|CUADRE REALIZADO CON EXITO");
 
       const { printThermalReceipt } = await import('../lib/escpos');
-      await printThermalReceipt({ lines
-          width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm', preferRawBT: options?.preferRawBT });
+      await printThermalReceipt({ lines,
+        width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm', preferRawBT: options?.preferRawBT });
       setPosSuccess("Enviado a imprimir vale térmico...");
       setTimeout(() => setPosSuccess(""), 3000);
     } catch (printErr) {
@@ -1684,7 +1684,7 @@ export default function POS() {
       if (options?.preferRawBT) {
         await printThermalReceipt({
           lines,
-          openDrawer: receiptConfig.openDrawer ?? true
+          openDrawer: receiptConfig.openDrawer ?? true,
           width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           preferRawBT: true,
           onSuccess: () => {
@@ -1699,7 +1699,7 @@ export default function POS() {
         // Direct attempt via printThermalReceipt (will use Bluetooth/Serial/RawBT)
         const printed = await printThermalReceipt({
           lines,
-          openDrawer: receiptConfig.openDrawer ?? true
+          openDrawer: receiptConfig.openDrawer ?? true,
           width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           onSuccess: (method) => {
             setPosSuccess(`Ticket enviado (${method === 'bluetooth' ? 'Bluetooth' : method === 'rawbt' ? 'RawBT' : 'USB'})`);
@@ -1719,7 +1719,7 @@ export default function POS() {
       } else {
         await printThermalReceipt({
           lines,
-          openDrawer: receiptConfig.openDrawer ?? true
+          openDrawer: receiptConfig.openDrawer ?? true,
           width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           onSuccess: (method) => {
             setPosSuccess(`Ticket impreso (${method === 'bluetooth' ? 'Bluetooth' : 'USB'})`);
@@ -1748,7 +1748,7 @@ export default function POS() {
       if (options?.preferRawBT) {
         await printThermalReceipt({
           lines,
-          openDrawer: false
+          openDrawer: false,
           width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           preferRawBT: true,
           onSuccess: () => {
@@ -1762,7 +1762,7 @@ export default function POS() {
       if (!isConnected) {
         const printed = await printThermalReceipt({
           lines,
-          openDrawer: false
+          openDrawer: false,
           width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           onSuccess: (method) => {
             setPosSuccess(`Comprobante impreso (${method === 'bluetooth' ? 'Bluetooth' : method === 'rawbt' ? 'RawBT' : 'USB'})`);
@@ -1780,7 +1780,7 @@ export default function POS() {
       } else {
         await printThermalReceipt({
           lines,
-          openDrawer: false
+          openDrawer: false,
           width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
           onSuccess: (method) => {
             setPosSuccess(`Comprobante impreso (${method === 'bluetooth' ? 'Bluetooth' : 'USB'})`);
