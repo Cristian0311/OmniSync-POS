@@ -34,6 +34,8 @@ export interface AppState {
   branches: Branch[];
   currentBranchId: string;
   setCurrentBranch: (id: string) => void;
+  activeSessionId: string | null;
+  setActiveSessionId: (id: string | null) => void;
   addBranch: (branch: Branch) => void;
   updateBranch: (id: string, branch: Partial<Branch>) => void;
   deleteBranch: (id: string) => void;
