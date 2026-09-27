@@ -92,17 +92,46 @@ export async function callOpenSessionRPCWithId(session: CashRegisterSession): Pr
     });
 
     let { data, error } = await invoke();
-    // PGRST202 means PostgREST did not resolve the function in its schema
-    // cache. This can happen for a short window immediately after reconnect or
-    // after a DDL change. Retry once instead of immediately manufacturing a
-    // second local cash session.
+    // PGRST202 is a PostgREST schema-cache failure, not proof that the cash
+    // session operation itself is invalid. Do not let this infrastructure
+    // problem block the POS. Retry once, then use the stable-ID table path.
     if (error?.code === 'PGRST202') {
-      await new Promise(resolve => setTimeout(resolve, 1200));
+      await new Promise(resolve => setTimeout(resolve, 800));
       ({ data, error } = await invoke());
     }
-    if (error) throw error;
-    assertRpcSuccess(data, 'open_cash_session_v3');
-    return { success: true, data };
+    if (!error) {
+      assertRpcSuccess(data, 'open_cash_session_v3');
+      return { success: true, data };
+    }
+
+    if (error.code === 'PGRST202') {
+      const row = {
+        id: session.id,
+        user_id: session.userId || null,
+        worker_name: session.workerName || null,
+        branch_id: session.branchId,
+        opened_at: session.openedAt,
+        opening_balance: session.openingAmount || 0,
+        opening_amount: session.openingAmount || 0,
+        status: 'open',
+        working_employee_ids: session.workingEmployeeIds || [],
+        notes: session.notes || '',
+      };
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('cash_sessions')
+        .upsert(row, { onConflict: 'id' })
+        .select()
+        .single();
+      if (!fallbackError && fallbackData) {
+        console.warn('[CashSession] v3 unavailable in PostgREST cache; used stable-ID table fallback');
+        return { success: true, data: fallbackData };
+      }
+      if (fallbackError) {
+        console.warn('[CashSession] stable-ID table fallback failed:', fallbackError);
+      }
+    }
+
+    throw error;
   } catch (e: any) {
     console.error('[RPC] open_cash_session_v3 failed:', e);
     return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
