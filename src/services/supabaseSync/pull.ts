@@ -648,8 +648,10 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
     return {
       data: fetchedData,
       result: {
-        success: true,
-        message: `Sincronización exitosa: ${counts.products} productos, ${counts.inventory} registros de stock y ${counts.categories} categorías descargados de Supabase.`,
+        success: errors.length === 0,
+        message: errors.length === 0
+          ? `Sincronización exitosa: ${counts.products} productos, ${counts.inventory} registros de stock y ${counts.categories} categorías descargados de Supabase.`
+          : `Sincronización parcial: ${errors.length} bloque(s) no pudieron actualizarse; los datos no confirmados se conservaron localmente.`,
         counts,
         errors: errors.length > 0 ? errors : undefined
       }
