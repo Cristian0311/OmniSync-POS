@@ -18,7 +18,8 @@ export default function Returns() {
     quantity: 1,
     reason: "defecto_fabrica",
     type: "warranty_exchange",
-    notes: ""
+    notes: "",
+    refundStatus: "not_required"
   });
 
   const getProduct = (id: string) => products.find(p => p.id === id);
@@ -34,11 +35,13 @@ export default function Returns() {
     e.preventDefault();
     if (!formData.transactionId || !formData.productId) return;
     
+    const refundStatus = formData.type === 'refund' ? 'pending' : 'not_required';
     createReturn({
       ...formData,
       id: generateId('RET'),
       date: new Date().toISOString(),
-      status: 'pending'
+      status: 'pending',
+      refundStatus
     } as ReturnItem);
     setShowAddModal(false);
     setFormData({ transactionId: "", productId: "", quantity: 1, reason: "defecto_fabrica", type: "warranty_exchange", notes: "" });
@@ -117,6 +120,18 @@ export default function Returns() {
         )}
       </div>
 
+      {activeTab === 'returns' && (
+        <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3 text-left">
+          <div className="flex items-start gap-2.5">
+            <ShieldCheck className="w-4 h-4 text-indigo-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-wider text-indigo-900">Control de devoluciones</p>
+              <p className="text-[8px] font-bold text-indigo-800 mt-0.5 leading-relaxed">Primero se autoriza y recibe físicamente el artículo. El reembolso monetario se registra aparte con monto y medio de pago explícitos. Confirmar recepción no mueve dinero automáticamente.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden flex-1">
         <div className="overflow-x-auto h-full">
           {activeTab === 'returns' ? (
@@ -127,7 +142,8 @@ export default function Returns() {
                   <th className="px-6 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Transacción</th>
                   <th className="px-6 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Producto</th>
                   <th className="px-6 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipo / Razón</th>
-                  <th className="px-6 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado</th>
+                  <th className="px-6 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado físico</th>
+          <th className="px-6 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Reembolso</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -180,20 +196,20 @@ export default function Returns() {
                         )}>
                           {ret.status === 'pending' && <AlertTriangle className="w-2.5 h-2.5"/>}
                           {ret.status === 'completed' && <CheckCircle className="w-2.5 h-2.5"/>}
-                          {ret.status === 'pending' ? 'Pendiente' : 'Devuelto'}
+                          {ret.status === 'pending' ? 'Pendiente recepción' : 'Recibido'}
                         </div>
                         <div className="flex flex-col gap-1">
                           {ret.status === 'pending' && (
                             <div className="flex flex-col gap-1 w-full">
                               <button 
                                 onClick={() => {
-                                  if(confirm(`¿Finalizar y aplicar ${ret.type === 'refund' ? 'Reembolso' : 'Cambio'}?`)) {
+                                  if(confirm('¿Confirmar recepción física de este retorno?')) {
                                     processReturn(ret.id, 'complete');
                                   }
                                 }}
                                 className="text-[9px] font-black bg-indigo-600 text-white px-2 py-1.5 rounded-lg uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-sm w-full text-center"
                               >
-                                Finalizar Devolución
+                                Confirmar recepción
                               </button>
                               <button 
                                 onClick={() => processReturn(ret.id, 'reject')}
@@ -205,13 +221,37 @@ export default function Returns() {
                           )}
                           {ret.status === 'pending' && (
                             <button 
-                              onClick={() => updateReturn(ret.id, { type: ret.type === 'refund' ? 'warranty_exchange' : 'refund' })}
+                              onClick={() => updateReturn(ret.id, { type: ret.type === 'refund' ? 'warranty_exchange' : 'refund', refundStatus: ret.type === 'refund' ? 'not_required' : 'pending' })}
                               className="text-[9px] font-black bg-white border border-slate-200 text-slate-500 px-2 py-1.5 rounded-lg uppercase tracking-widest hover:bg-slate-50 transition-all"
                             >
                               {ret.type === 'refund' ? 'Cambiar a Garantía' : 'Cambiar a Reembolso'}
                             </button>
                           )}
                         </div>
+                      </td>
+                      <td className="px-6 py-3 align-top">
+                        {ret.type === 'refund' ? (
+                          <div className="space-y-1.5">
+                            <span className={cn(
+                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[8px] font-black uppercase",
+                              ret.refundStatus === 'paid' ? "bg-emerald-50 text-emerald-700" :
+                              ret.refundStatus === 'approved' ? "bg-blue-50 text-blue-700" :
+                              "bg-amber-50 text-amber-700"
+                            )}>
+                              {ret.refundStatus === 'paid' ? 'Pagado' : ret.refundStatus === 'approved' ? 'Aprobado' : 'Pendiente'}
+                            </span>
+                            {ret.refundAmount ? (
+                              <div className="text-[9px] font-black text-slate-700">{ret.refundAmount.toLocaleString()} {ret.refundCurrencyCode || 'CUP'}</div>
+                            ) : (
+                              <div className="text-[8px] font-bold text-slate-400 uppercase">Monto pendiente de definir</div>
+                            )}
+                            <div className="text-[8px] font-bold text-slate-400 uppercase">
+                              {ret.refundMethod ? `Medio: ${ret.refundMethod === 'store_credit' ? 'Crédito cliente' : ret.refundMethod === 'cash' ? 'Efectivo' : 'Transferencia'}` : 'Sin medio de pago definido'}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-[8px] font-black uppercase text-slate-400">No aplica</span>
+                        )}
                       </td>
                     </tr>
                   );
