@@ -34,6 +34,43 @@ export async function pullBranchInventoryFromSupabase(branchId?: string): Promis
 }
 
 
+export async function pullBranchOperationalDataFromSupabase(branchId: string): Promise<{ success: boolean; transactions: Transaction[]; cashSessions: CashRegisterSession[]; inventory: InventoryLevel[]; message?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, transactions: [], cashSessions: [], inventory: [], message: 'Supabase no configurado' };
+  try {
+    const [txRes, sessionsRes, invRes] = await Promise.all([
+      supabase.from('transactions').select('*').eq('branch_id', branchId).order('created_at', { ascending: false }).limit(1000),
+      supabase.from('cash_sessions').select('*').eq('branch_id', branchId).order('opened_at', { ascending: false }).limit(20),
+      supabase.from('inventory').select('*').eq('branch_id', branchId)
+    ]);
+    const firstError = [txRes, sessionsRes, invRes].find(r => r.error)?.error;
+    if (firstError) throw firstError;
+    const transactions: Transaction[] = (txRes.data || []).map((t:any) => ({
+      id:t.id,date:t.date,total:Number(t.total)||0,tax:Number(t.tax)||0,discount:Number(t.discount)||0,
+      branchId:t.branch_id,customerId:t.customer_id,userId:t.user_id,status:t.status||'completed',
+      notes:t.notes||'',paymentMethod:t.payment_method||'cash',sessionId:t.session_id,
+      changeGiven:Number(t.change_given)||0,items:Array.isArray(t.items)?t.items:[],
+      payments:Array.isArray(t.payments)?t.payments:[],changePayments:Array.isArray(t.change_payments)?t.change_payments:[],
+      sellerEmployeeIds:Array.isArray(t.seller_employee_ids)?t.seller_employee_ids:[],
+      deletedAt:t.deleted_at||undefined,deletedBy:t.deleted_by||undefined,deleteReason:t.delete_reason||undefined
+    }));
+    const cashSessions: CashRegisterSession[] = (sessionsRes.data || []).map((s:any) => ({
+      id:s.id,userId:s.user_id,workerName:s.worker_name,branchId:s.branch_id,openedAt:s.opened_at,
+      closedAt:s.closed_at,openingBalance:Number(s.opening_balance??s.opening_amount)||0,
+      openingAmount:Number(s.opening_amount??s.opening_balance)||0,closingBalances:Array.isArray(s.closing_balances)?s.closing_balances:[],
+      status:s.status||'open',notes:s.notes||'',closingDate:s.closing_date||undefined,
+      workingEmployeeIds:Array.isArray(s.working_employee_ids)?s.working_employee_ids:[],movements:Array.isArray(s.movements)?s.movements:[]
+    }));
+    const inventory: InventoryLevel[] = (invRes.data || []).map((i:any) => ({
+      id:i.id,productId:i.product_id,branchId:i.branch_id,variantLabel:i.variant_label||undefined,
+      quantity:Number(i.quantity)||0,minQuantity:Number(i.min_quantity)||0
+    }));
+    return { success:true, transactions, cashSessions, inventory };
+  } catch (e:any) {
+    return { success:false, transactions:[], cashSessions:[], inventory:[], message:e?.message||'No se pudieron actualizar los datos operativos' };
+  }
+}
+
 export async function pullPosBootstrapFromSupabase(branchId?: string): Promise<{ success: boolean; data: any; message?: string }> {
   const supabase = getSupabase();
   if (!supabase) return { success: false, data: null, message: 'Supabase no configurado' };
