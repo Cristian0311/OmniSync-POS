@@ -67,6 +67,9 @@ export default function Settings() {
 
   const [config, setConfig] = useState(storeConfig);
   const [ticketConfig, setTicketConfig] = useState(receiptConfig);
+  useEffect(() => {
+    setTicketConfig(receiptConfig);
+  }, [receiptConfig]);
   const employees = users.filter(u => u.role === 'employee');
   const [employeeSalaries, setEmployeeSalaries] = useState<{ [id: string]: number }>({});
   
