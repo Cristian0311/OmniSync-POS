@@ -828,14 +828,21 @@ export const useStore = create<AppState>()(
     }
 
     set({ inventory: newInventory });
+    let needsRefresh = false;
     for (const op of operations) {
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        enqueueOfflineItem('inventory_reconcile', op, op.operationId);
+        await enqueueOfflineItem('inventory_reconcile', op, op.operationId);
         continue;
       }
       const res = await reconcileInventoryToSupabase(op);
-      if (!res.success || res.conflict) enqueueOfflineItem('inventory_reconcile', op, op.operationId);
+      if (!res.success || res.conflict) {
+        await enqueueOfflineItem('inventory_reconcile', op, op.operationId);
+        needsRefresh = true;
+      }
     }
+    if (needsRefresh) await get().refreshBranchInventory().catch(err =>
+      console.warn('[reconcileProductStock] No se pudo refrescar tras conflicto:', err)
+    );
     return { success: true };
   },
 
