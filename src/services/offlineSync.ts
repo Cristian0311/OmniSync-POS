@@ -159,15 +159,12 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     case 'bank_card': {
       const d=data;
       if (d.__balance_only) {
-        const expected = Number(d.expectedBalance) || 0;
-        const next = Math.max(0, Number(d.newBalance) || 0);
-        const { data: updated, error } = await supabase.from('bank_cards')
-          .update({ balance: next })
-          .eq('id', d.id)
-          .eq('balance', expected)
-          .select('id,balance');
-        if (error) throw error;
-        if (!updated?.length) throw new Error('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
+        const synced = await setBankCardBalanceToSupabase(
+          d.id,
+          Number(d.expectedBalance) || 0,
+          Math.max(0, Number(d.newBalance) || 0)
+        );
+        if (!synced) throw new Error('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
         return true;
       }
       if (d.__metadata_only) {
@@ -205,6 +202,16 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         is_active:d.isActive!==false
       });
       if(error) throw error;
+      return true;
+    }
+    case 'bank_card_balance': {
+      const d = data;
+      const synced = await setBankCardBalanceToSupabase(
+        d.id,
+        Number(d.expectedBalance) || 0,
+        Math.max(0, Number(d.newBalance) || 0)
+      );
+      if (!synced) throw new Error('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
       return true;
     }
     case 'bank_transaction': {
@@ -451,6 +458,7 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
       case 'audit_complete': add(dep('inventory_audit', data.id)); break;
       case 'salary_settlement': add(cashOp(data.sessionId, 'close')); break;
       case 'bank_transaction': add(dep('bank_card', data.cardId)); add(dep('transaction', data.transactionId)); break;
+      case 'bank_card_balance': add(dep('bank_card', data.id)); break;
       case 'idn_settlement_price': add(dep('product', data.productId)); add(dep('user', data.userId)); break;
       case 'time_shift': add(dep('user', data.userId)); break;
       case 'quote': add(dep('branch', data.branchId)); add(dep('user', data.userId)); add(dep('customer', data.customerId)); break;
