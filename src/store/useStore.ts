@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { Branch, Category, Product, InventoryLevel, CartItem, Transaction, ReturnItem, Currency, Customer, CashRegisterSession, User, PendingOrder, SalarySettlement, InventoryTransfer, Warranty, CashMovement, Supplier, SupplierOrder, InventoryAudit, FiscalConfig, DemandForecast, BankCard, BankTransaction, IDNSettlementPrice } from '../types';
 import { generateId, generateReadableId } from '../lib/utils';
 import { 
-  pullAllFromSupabase, pullPosBootstrapFromSupabase, pullBranchInventoryFromSupabase, pushProductToSupabase, 
+  pullAllFromSupabase, pullPosBootstrapFromSupabase, pullBranchInventoryFromSupabase, pullBranchOperationalDataFromSupabase, pushProductToSupabase, 
   pushTransactionToSupabase, pushCashSessionToSupabase, pushWarrantyToSupabase, pushUserToSupabase, deleteUserFromSupabase, 
   pushIDNSettlementPriceToSupabase, deleteIDNSettlementPriceFromSupabase, SyncResult,
   pushBranchToSupabase, deleteBranchFromSupabase, pushCategoryToSupabase, deleteCategoryFromSupabase, deleteProductFromSupabase,
@@ -2091,6 +2091,35 @@ export const useStore = create<AppState>()(
       totalMovements,
       message: `Reconciliación completada: Base de datos sincronizada con ${totalSales} ventas y ${totalMovements} movimientos bancarios verificados.${removedDuplicates > 0 ? ` Se eliminaron ${removedDuplicates} duplicados.` : ''}`
     };
+  },
+
+  refreshBranchOperationalData: async () => {
+    const branchId = get().currentBranchId;
+    if (!branchId || (typeof navigator !== 'undefined' && !navigator.onLine)) return false;
+    try {
+      const res = await pullBranchOperationalDataFromSupabase(branchId);
+      if (!res.success) return false;
+      set((state) => {
+        const mergeById = <T extends { id: string }>(remote: T[], local: T[]) => {
+          const map = new Map(local.map(x => [x.id, x]));
+          for (const item of remote) map.set(item.id, item);
+          return Array.from(map.values());
+        };
+        const invMap = new Map<string, InventoryLevel>();
+        for (const item of state.inventory || []) {
+          if (item.branchId !== branchId) invMap.set(`${item.productId}:${item.branchId}:${item.variantLabel || ''}`, item);
+        }
+        for (const item of res.inventory) invMap.set(`${item.productId}:${item.branchId}:${item.variantLabel || ''}`, item);
+        return {
+          transactions: mergeById(res.transactions, state.transactions || []),
+          cashSessions: mergeById(res.cashSessions, state.cashSessions || []),
+          inventory: Array.from(invMap.values())
+        };
+      });
+      return true;
+    } catch {
+      return false;
+    }
   },
 
   refreshBranchInventory: async () => {
