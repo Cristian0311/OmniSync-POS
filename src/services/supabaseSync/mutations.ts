@@ -281,48 +281,74 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
   }
 
   try {
-    // Empaquetar datos extendidos en notes para conservar movimientos sin depender
-    // de columnas adicionales en cash_sessions.
-    let extendedNotes = session.notes || '';
-    const meta = {
-      closing_balances: session.closingBalances || [],
-      closing_date: session.closingDate || null,
-      movements: session.movements || []
-    };
-    if (extendedNotes.includes('__META__:')) {
-      extendedNotes = extendedNotes.split('__META__:')[0].trim();
-    }
-    extendedNotes = (extendedNotes ? extendedNotes + ' ' : '') + '__META__:' + JSON.stringify(meta);
-
-    const row = {
-      id: session.id,
-      user_id: session.userId || null,
-      worker_name: session.workerName || null,
-      branch_id: session.branchId,
-      opened_at: session.openedAt,
-      closed_at: session.closedAt || null,
-      opening_balance: session.openingAmount,
-      status: session.status,
-      notes: extendedNotes,
-      working_employee_ids: session.workingEmployeeIds || [],
-      deleted_at: session.deletedAt || null,
-      deleted_by: session.deletedBy || null,
-      delete_reason: session.deleteReason || null
-    };
-
-    // Nunca permitimos que un snapshot local antiguo reabra o reescriba un
-    // turno que otro terminal ya cerró/canceló.
+    // Los snapshots de caja pueden provenir de varias tablets. Primero leemos
+    // el registro canónico y mezclamos los movimientos/empleados por ID para que
+    // una actualización en Tablet A no borre lo que agregó Tablet B.
     const { data: remoteSession, error: remoteReadError } = await supabase
       .from('cash_sessions')
-      .select('id,status,closed_at,deleted_at,branch_id,user_id,working_employee_ids')
+      .select('id,status,opened_at,closed_at,opening_balance,notes,deleted_at,deleted_by,delete_reason,branch_id,user_id,working_employee_ids')
       .eq('id', session.id)
       .maybeSingle();
     if (remoteReadError) throw remoteReadError;
 
+    const extractMeta = (notes: string | null | undefined) => {
+      if (!notes || !notes.includes('__META__:')) return { baseNotes: notes || '', movements: [] as any[] };
+      const [base, rawMeta] = notes.split('__META__:');
+      try {
+        const parsed = JSON.parse(rawMeta);
+        return { baseNotes: base.trim(), movements: Array.isArray(parsed?.movements) ? parsed.movements : [] };
+      } catch {
+        return { baseNotes: base.trim(), movements: [] as any[] };
+      }
+    };
+
+    const localMeta = extractMeta(session.notes);
+    const remoteMeta = extractMeta(remoteSession?.notes);
+    const movementMap = new Map<string, any>();
+    for (const m of remoteMeta.movements) if (m?.id) movementMap.set(String(m.id), m);
+    for (const m of localMeta.movements) if (m?.id) movementMap.set(String(m.id), m);
+    const mergedMovements = Array.from(movementMap.values())
+      .sort((a, b) => String(a?.date || '').localeCompare(String(b?.date || '')) || String(a?.id || '').localeCompare(String(b?.id || '')));
+
+    const mergedEmployees = Array.from(new Set([
+      ...(Array.isArray(remoteSession?.working_employee_ids) ? remoteSession.working_employee_ids : []),
+      ...(session.workingEmployeeIds || [])
+    ].filter(Boolean).map(String)));
+
+    const effectiveStatus = remoteSession?.status || session.status;
     if (remoteSession && remoteSession.status !== 'open' && session.status === 'open') {
       console.warn('[CashSession] Snapshot local rechazado: el turno remoto ya está cerrado/cancelado.');
       return false;
     }
+
+    let extendedNotes = localMeta.baseNotes || remoteMeta.baseNotes || '';
+    const meta = {
+      closing_balances: session.closingBalances?.length ? session.closingBalances : (() => {
+        try {
+          const remoteRaw = remoteSession?.notes?.includes('__META__:') ? JSON.parse(remoteSession.notes.split('__META__:')[1]) : null;
+          return Array.isArray(remoteRaw?.closing_balances) ? remoteRaw.closing_balances : [];
+        } catch { return []; }
+      })(),
+      closing_date: session.closingDate || remoteSession?.closed_at || null,
+      movements: mergedMovements
+    };
+    extendedNotes = (extendedNotes ? extendedNotes + ' ' : '') + '__META__:' + JSON.stringify(meta);
+
+    const row = {
+      id: session.id,
+      user_id: remoteSession?.user_id || session.userId || null,
+      worker_name: session.workerName || remoteSession?.worker_name || null,
+      branch_id: session.branchId,
+      opened_at: remoteSession?.opened_at || session.openedAt,
+      closed_at: effectiveStatus === 'open' ? null : (remoteSession?.closed_at || session.closedAt || null),
+      opening_balance: remoteSession?.opening_balance ?? session.openingAmount,
+      status: effectiveStatus,
+      notes: extendedNotes,
+      working_employee_ids: mergedEmployees,
+      deleted_at: remoteSession?.deleted_at || session.deletedAt || null,
+      deleted_by: remoteSession?.deleted_by || session.deletedBy || null,
+      delete_reason: remoteSession?.delete_reason || session.deleteReason || null
+    };
 
     const res = await safeUpsert(supabase, 'cash_sessions', row);
     if (res?.error) {
