@@ -114,7 +114,8 @@ export async function pullTransferHistoryFromSupabase(): Promise<{ success: bool
         variants: Array.isArray(t.variants) ? t.variants : [],
         date: t.date,
         userId: t.user_id,
-        status: t.status || 'completed'
+        status: t.status || 'completed',
+        batchId: t.batch_id || undefined
       }))
     };
   } catch (e: any) {
