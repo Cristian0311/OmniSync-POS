@@ -197,7 +197,7 @@ export const useStore = create<AppState>()(
     // A full reset must never leave durable business operations behind.
     // Otherwise the cloud is emptied and the offline queue can repopulate it
     // later, resurrecting old sales or cash sessions.
-    const pendingQueue = getOfflineQueue().filter(item => item.type !== 'conflict');
+    const pendingQueue = getOfflineQueue().filter(item => item.status !== 'conflict');
     if (pendingQueue.length > 0) {
       get().addNotification(
         `No se puede borrar todo mientras hay ${pendingQueue.length} operación(es) offline pendientes. Sincronízalas primero.`,
