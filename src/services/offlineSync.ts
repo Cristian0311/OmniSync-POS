@@ -164,7 +164,7 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
           Number(d.expectedBalance) || 0,
           Math.max(0, Number(d.newBalance) || 0)
         );
-        if (!synced) throw new Error('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
+        if (!synced) throw new PermanentSyncError('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
         return true;
       }
       if (d.__metadata_only) {
@@ -211,7 +211,7 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         Number(d.expectedBalance) || 0,
         Math.max(0, Number(d.newBalance) || 0)
       );
-      if (!synced) throw new Error('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
+      if (!synced) throw new PermanentSyncError('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
       return true;
     }
     case 'bank_transaction': {
