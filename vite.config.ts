@@ -43,6 +43,11 @@ export default defineConfig(() => {
         },
         workbox: {
           maximumFileSizeToCacheInBytes: 5000000,
+          // Remove caches from previous generated service workers so an old
+          // application shell cannot survive a Render deployment.
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
           // Supabase is the source of truth. Never let Workbox cache REST
           // responses or make a reconnect replay a stale API response.
           runtimeCaching: [
