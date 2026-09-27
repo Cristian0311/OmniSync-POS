@@ -264,19 +264,22 @@ export async function pushTransactionToSupabase(tx: Transaction) {
   }
 }
 
-export async function pushCashSessionToSupabase(session: CashRegisterSession) {
+export async function pushCashSessionToSupabase(session: CashRegisterSession): Promise<boolean> {
+  const queue = () => enqueueOfflineItem('cash_session', session, session.id);
+
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    enqueueOfflineItem('cash_session', session, session.id);
-    return;
+    await queue();
+    return false;
   }
   const supabase = getSupabase();
   if (!supabase) {
-    enqueueOfflineItem('cash_session', session, session.id);
-    return;
+    await queue();
+    return false;
   }
 
   try {
-    // Empaquetar datos extendidos en el campo notes para no provocar errores de columnas inexistentes
+    // Empaquetar datos extendidos en notes para conservar movimientos sin depender
+    // de columnas adicionales en cash_sessions.
     let extendedNotes = session.notes || '';
     const meta = {
       closing_balances: session.closingBalances || [],
@@ -306,11 +309,14 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession) {
 
     const res = await safeUpsert(supabase, 'cash_sessions', row);
     if (res?.error) {
-      enqueueOfflineItem('cash_session', session, session.id);
+      await queue();
+      return false;
     }
+    return true;
   } catch (e) {
     console.warn("Supabase push cash session failed, guardando en cola offline:", e);
-    enqueueOfflineItem('cash_session', session, session.id);
+    await queue();
+    return false;
   }
 }
 
