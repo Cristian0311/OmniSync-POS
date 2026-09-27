@@ -2904,15 +2904,35 @@ export const useStore = create<AppState>()(
             const key = `${inv.productId}_${inv.branchId}_${inv.variantLabel || ''}`;
             invMap.set(key, inv);
           });
-          // Las operaciones offline pendientes son deltas/reconciliaciones y no deben
-          // sobrescribir aquí el snapshot remoto. El motor de cola las aplica primero.
-          // Purge Inventario: Si recibimos de Supabase, quitar los que no estén en Supabase y no estén en cola offline
-          let mergedInventory = Array.from(invMap.values()).filter(inv => !inv.branchId || validBranchIds.has(inv.branchId));
+
+          // Si una operación de inventario sigue en la cola, su valor local es el
+          // estado que todavía no está confirmado por Supabase. Conservamos esa fila
+          // durante el merge para evitar que un snapshot remoto anterior la revierta.
+          const pendingInventoryKeys = new Set(
+            getOfflineQueue()
+              .filter(i => ['inventory_adjustment','inventory_reconcile','inventory'].includes(i.type))
+              .map(i => `${i.data?.productId}_${i.data?.branchId}_${i.data?.variantLabel || ''}`)
+          );
+          const localByKey = new Map<string, InventoryLevel>();
+          (state.inventory || []).forEach(inv => {
+            const key = `${inv.productId}_${inv.branchId}_${inv.variantLabel || ''}`;
+            if (pendingInventoryKeys.has(key)) localByKey.set(key, inv);
+          });
+
+          for (const [key, localInv] of localByKey) invMap.set(key, localInv);
+
+          let mergedInventory = Array.from(invMap.values()).filter(inv =>
+            !inv.branchId || validBranchIds.has(inv.branchId)
+          );
           if (data.inventory && data.inventory.length > 0) {
-            const supabaseInvKeys = new Set(data.inventory.map((si: any) => `${si.product_id || si.productId}_${si.branch_id || si.branchId}_${si.variant_label || si.variantLabel || ''}`));
+            const supabaseInvKeys = new Set(
+              data.inventory.map((si: any) =>
+                `${si.product_id || si.productId}_${si.branch_id || si.branchId}_${si.variant_label || si.variantLabel || ''}`
+              )
+            );
             mergedInventory = mergedInventory.filter(inv => {
               const key = `${inv.productId}_${inv.branchId}_${inv.variantLabel || ''}`;
-              return supabaseInvKeys.has(key);
+              return supabaseInvKeys.has(key) || pendingInventoryKeys.has(key);
             });
           }
 
