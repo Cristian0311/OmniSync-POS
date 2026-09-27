@@ -4,10 +4,9 @@ import {
   TrendingUp, DollarSign, Calendar, Calculator, Package, User, Users, Smartphone, Eye,
   X, ArrowDownRight, ArrowUpRight, ArrowLeftRight, ArrowRight, History, Download, Printer, CheckCircle2, 
   Clock, AlertCircle, AlertTriangle, FileSpreadsheet, ChevronDown, Check, Plus, Search,
-  PieChart as PieChartIcon, BarChart3, Brain, ListChecks, ShieldAlert, Loader2, Trash2,
+  BarChart3, Brain, ListChecks, ShieldAlert, Loader2, Trash2,
   HelpCircle, Edit3, Save, FileText, CheckCircle, Minus
 } from "lucide-react";
-import { 
 import { useStore } from "../store/useStore";
 import { Transaction, Product, CashRegisterSession, CashMovement } from "../types";
 
