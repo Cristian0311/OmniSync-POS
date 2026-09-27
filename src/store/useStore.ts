@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { Branch, Category, Product, InventoryLevel, CartItem, Transaction, ReturnItem, Currency, Customer, CashRegisterSession, User, PendingOrder, SalarySettlement, InventoryTransfer, Warranty, CashMovement, Supplier, SupplierOrder, InventoryAudit, FiscalConfig, DemandForecast, BankCard, BankTransaction, IDNSettlementPrice } from '../types';
 import { generateId, generateReadableId } from '../lib/utils';
 import { 
-  pullAllFromSupabase, pullPosBootstrapFromSupabase, pullBranchInventoryFromSupabase, pullBranchOperationalDataFromSupabase, pushProductToSupabase, 
+  pullAllFromSupabase, pullPosBootstrapFromSupabase, pullBranchInventoryFromSupabase, pullBranchOperationalDataFromSupabase, pullGlobalCatalogDataFromSupabase, pushProductToSupabase, 
   pushTransactionToSupabase, pushCashSessionToSupabase, pushWarrantyToSupabase, pushUserToSupabase, deleteUserFromSupabase, 
   pushIDNSettlementPriceToSupabase, deleteIDNSettlementPriceFromSupabase, SyncResult,
   pushBranchToSupabase, deleteBranchFromSupabase, pushCategoryToSupabase, deleteCategoryFromSupabase, deleteProductFromSupabase,
@@ -2108,6 +2108,38 @@ export const useStore = create<AppState>()(
       totalMovements,
       message: `Reconciliación completada: Base de datos sincronizada con ${totalSales} ventas y ${totalMovements} movimientos bancarios verificados.${removedDuplicates > 0 ? ` Se eliminaron ${removedDuplicates} duplicados.` : ''}`
     };
+  },
+
+  refreshGlobalCatalogData: async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
+    try {
+      const res = await pullGlobalCatalogDataFromSupabase();
+      if (!res.success || !res.data) return false;
+      const d = res.data;
+      set((state) => {
+        const mergeById = <T extends { id: string }>(remote: T[], local: T[]) => {
+          const map = new Map(local.map(x => [x.id, x]));
+          for (const item of remote) map.set(item.id, item);
+          return Array.from(map.values());
+        };
+        const validProductIds = new Set((d.products || []).map((p: any) => p.id));
+        const validCategoryIds = new Set((d.categories || []).map((x: any) => x.id));
+        return {
+          branches: mergeById(d.branches || [], state.branches || []),
+          categories: mergeById(d.categories || [], state.categories || []).filter(x => validCategoryIds.has(x.id)),
+          products: mergeById(d.products || [], state.products || []).filter(x => validProductIds.has(x.id)),
+          users: mergeById(d.users || [], state.users || []),
+          currencies: d.currencies?.length ? d.currencies : state.currencies,
+          idnSettlementPrices: mergeById(d.idnSettlementPrices || [], state.idnSettlementPrices || []),
+          receiptConfig: d.settings?.receipt_config ? { ...state.receiptConfig, ...d.settings.receipt_config } : state.receiptConfig,
+          storeConfig: d.settings?.store_config ? { ...state.storeConfig, ...d.settings.store_config } : state.storeConfig,
+          catalogConfig: d.settings?.catalog_config ? { ...state.catalogConfig, ...d.settings.catalog_config } : state.catalogConfig
+        };
+      });
+      return true;
+    } catch {
+      return false;
+    }
   },
 
   refreshBranchOperationalData: async () => {
