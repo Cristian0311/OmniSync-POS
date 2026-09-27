@@ -207,15 +207,15 @@ export async function pushInventoryToSupabase(level: InventoryLevel) {
   }
 }
 
-export async function pushTransactionToSupabase(tx: Transaction) {
+export async function pushTransactionToSupabase(tx: Transaction): Promise<boolean> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    enqueueOfflineItem('transaction', tx, tx.id);
-    return;
+    await enqueueOfflineItem('transaction', tx, tx.id);
+    return false;
   }
   const supabase = getSupabase();
   if (!supabase) {
-    enqueueOfflineItem('transaction', tx, tx.id);
-    return;
+    await enqueueOfflineItem('transaction', tx, tx.id);
+    return false;
   }
 
   try {
@@ -255,12 +255,24 @@ export async function pushTransactionToSupabase(tx: Transaction) {
     };
 
     const res = await safeUpsert(supabase, 'transactions', row);
-    if (res?.error) {
-      enqueueOfflineItem('transaction', tx, tx.id);
+    if (res?.error) throw res.error;
+
+    // Verificación física del registro. Para liquidaciones IDN esto evita el
+    // antiguo "fire-and-forget": el cierre no avanza hasta saber que la fila existe.
+    const { data: persisted, error: verifyError } = await supabase
+      .from('transactions')
+      .select('id,status,total,session_id')
+      .eq('id', tx.id)
+      .maybeSingle();
+    if (verifyError) throw verifyError;
+    if (!persisted || persisted.id !== tx.id) {
+      throw new Error('Supabase no confirmó la venta/liquidación en transactions.');
     }
+    return true;
   } catch (e) {
     console.warn("Supabase push transaction failed, guardando en cola offline:", e);
-    enqueueOfflineItem('transaction', tx, tx.id);
+    await enqueueOfflineItem('transaction', tx, tx.id);
+    return false;
   }
 }
 
