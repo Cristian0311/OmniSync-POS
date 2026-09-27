@@ -158,6 +158,18 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     }
     case 'bank_card': {
       const d=data;
+      if (d.__balance_only) {
+        const expected = Number(d.expectedBalance) || 0;
+        const next = Math.max(0, Number(d.newBalance) || 0);
+        const { data: updated, error } = await supabase.from('bank_cards')
+          .update({ balance: next })
+          .eq('id', d.id)
+          .eq('balance', expected)
+          .select('id,balance');
+        if (error) throw error;
+        if (!updated?.length) throw new Error('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
+        return true;
+      }
       if (d.__metadata_only) {
         const { data: updated, error } = await supabase.from('bank_cards').update({
           name:d.name||d.bankName||'Tarjeta Bancaria',
