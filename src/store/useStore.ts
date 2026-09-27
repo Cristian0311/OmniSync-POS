@@ -1701,8 +1701,11 @@ export const useStore = create<AppState>()(
     void enqueueOfflineItem('cash_session', updatedSession, actionId).then(async () => {
       if (!navigator.onLine) return;
       const synced = await pushCashSessionToSupabase(updatedSession);
-      removeFromOfflineQueueByAction('cash_session', actionId);
-      if (!synced) console.warn('[joinOpenSession] El alta del colaborador quedó encolada para replay.');
+      if (synced) {
+        removeFromOfflineQueueByAction('cash_session', actionId);
+      } else {
+        console.warn('[joinOpenSession] La unión no fue confirmada; permanece durable para replay.');
+      }
     }).catch(err => console.warn('[joinOpenSession] No se pudo persistir la intención de unión:', err));
   },
   getCurrentSession: (branchId, userId) => {
