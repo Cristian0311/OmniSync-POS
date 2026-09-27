@@ -327,7 +327,8 @@ export function enqueueOfflineItem(type: OfflineActionType, data: any, actionId?
   memoryQueue = currentQueue;
   emitQueueEvent();
   const persistence = persistQueueItem(currentQueue[existingIdx >= 0 ? existingIdx : currentQueue.length - 1]);
-  addSyncLog({ level: 'info', source: 'offline_queue', title: `Elemento encolado (${type})`, details: `Operación ${finalActionId} guardada offline. Pendientes: ${currentQueue.length}`, entityType: type, actionId: finalActionId });
+  addSyncLog({ level: 'info', source: 'offline_queue', title: `Elemento encolado (${type})`, details: `Operación ${finalActionId} añadida a la cola durable. Pendientes: ${currentQueue.length}`, entityType: type, actionId: finalActionId });
+  return persistence;
 }
 
 export function removeFromOfflineQueue(id: string): void {
