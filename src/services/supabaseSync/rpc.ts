@@ -234,7 +234,14 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
       };
     });
     const sameItems = JSON.stringify(normalizeItems(persistedItems)) === JSON.stringify(normalizeItems(rpcItems));
-    const samePayments = JSON.stringify(persistedPayments) === JSON.stringify(tx.payments || []);
+    const normalizePayments = (payments: any[]) => payments.map((p:any) => ({
+      method: p?.method || 'cash',
+      amount: Number(p?.amount) || 0,
+      currencyCode: p?.currencyCode || p?.currency_code || null,
+      exchangeRate: Number(p?.exchangeRate ?? p?.exchange_rate ?? 0) || 0,
+      bankCardId: p?.bankCardId || p?.bank_card_id || null
+    }));
+    const samePayments = JSON.stringify(normalizePayments(persistedPayments)) === JSON.stringify(normalizePayments(tx.payments || []));
     const sameCore =
       persisted.branch_id === tx.branchId &&
       persisted.user_id === tx.userId &&
