@@ -2657,21 +2657,23 @@ export default function POS() {
                           </select>
                         ) : (
                           <select
-                            value={sessionWorkerName || currentUser?.name || ''}
+                            value={sessionWorkerName}
                             onChange={e => {
-                              // Un trabajador solo puede seleccionar su propia cuenta.
                               const value = e.target.value;
-                              if (!currentUser || value === currentUser.name) {
-                                setSessionWorkerName(value);
-                                setSessionPassword("");
-                              }
+                              setSessionWorkerName(value);
+                              setSessionPassword("");
                             }}
-                            className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-[11px] font-black text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[11px] font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
                             required
                           >
-                            <option value={currentUser?.name || ''}>
-                              {currentUser?.name || 'Trabajador'}
-                            </option>
+                            <option value="">-- Buscar mi nombre --</option>
+                            {(users || [])
+                              .filter(u => u.isActive !== false)
+                              .map(u => (
+                                <option key={u.id} value={u.name || ''}>
+                                  {u.name || 'Trabajador'}
+                                </option>
+                              ))}
                           </select>
                         )}
                       </div>
