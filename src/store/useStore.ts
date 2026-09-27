@@ -266,7 +266,7 @@ export const useStore = create<AppState>()(
     if (selected.has('settings')) {
       patch.currencies = INITIAL_CURRENCIES;
       patch.fiscalConfigs = INITIAL_FISCAL_CONFIGS;
-      patch.storeConfig = { storeName: 'Mi Tienda POS', address: 'Calle Principal 123', phone: '+53 51234567', receiptNotes: '¡Gracias por su compra!', darkMode: false, manualOfflineSync: true };
+      patch.storeConfig = { storeName: 'Mi Tienda POS', address: 'Calle Principal 123', phone: '+53 51234567', receiptNotes: '¡Gracias por su compra!', darkMode: false, manualOfflineSync: false };
       patch.catalogConfig = { pageSize: 20, showImages: true, compactMode: false };
     }
 
@@ -467,7 +467,7 @@ export const useStore = create<AppState>()(
     return list.find(c => c.isBase) || list.find(c => c.code === 'CUP') || INITIAL_CURRENCIES[0];
   },
   
-  storeConfig: { storeName: 'Mi Tienda POS', address: 'Calle Principal 123', phone: '+53 51234567', receiptNotes: '¡Gracias por su compra!', darkMode: false, manualOfflineSync: true },
+  storeConfig: { storeName: 'Mi Tienda POS', address: 'Calle Principal 123', phone: '+53 51234567', receiptNotes: '¡Gracias por su compra!', darkMode: false, manualOfflineSync: false },
   
   updateStoreConfig: (config) => {
     set({ storeConfig: config });
