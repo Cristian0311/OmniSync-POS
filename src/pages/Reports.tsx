@@ -417,9 +417,9 @@ export default function Reports() {
     return Array.from(sessionMap.values());
   }, [cashSessions, transactions]);
 
-  // El número de turno es el orden operativo, no el orden de cierre.
-  // Conservamos números reales del formato Turno-N y asignamos los IDs UUID
-  // históricos restantes a los números libres según su fecha de apertura.
+  // El número de turno es persistido por Supabase y es la autoridad global.
+  // Los registros históricos sin número reciben un número temporal determinista
+  // después de los números persistidos, para no reordenar turnos ya numerados.
   const sessionTurnMap = useMemo(() => {
     const map = new Map<string, string>();
     const ordered = [...reconciledSessions].sort(
@@ -430,16 +430,14 @@ export default function Reports() {
     const usedNumbers = new Set<number>();
 
     for (const session of ordered) {
-      const match = String(session.id || '').match(/^Turno-(\d+)$/i);
-      if (!match) continue;
-      const number = Number(match[1]);
+      const number = Number(session.turnNumber);
       if (Number.isFinite(number) && number > 0) {
         map.set(session.id, `Turno-${number}`);
         usedNumbers.add(number);
       }
     }
 
-    let nextNumber = 1;
+    let nextNumber = Math.max(0, ...Array.from(usedNumbers)) + 1;
     for (const session of ordered) {
       if (map.has(session.id)) continue;
       while (usedNumbers.has(nextNumber)) nextNumber += 1;
