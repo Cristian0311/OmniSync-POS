@@ -675,7 +675,19 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
           status: r.status || 'pending',
           type: r.type || 'refund',
           notes: r.notes,
-          variantLabel: r.variant_label
+          variantLabel: r.variant_label,
+          branchId: r.branch_id || undefined,
+          replacementProductId: r.replacement_product_id || undefined,
+          replacementQuantity: r.replacement_quantity ?? undefined,
+          processedBy: r.processed_by || undefined,
+          refundStatus: r.refund_status || (r.type === 'refund' ? 'pending' : 'not_required'),
+          refundAmount: r.refund_amount == null ? undefined : Number(r.refund_amount),
+          refundCurrencyCode: r.refund_currency_code || undefined,
+          refundMethod: r.refund_method || undefined,
+          refundBankCardId: r.refund_bank_card_id || undefined,
+          refundTransactionId: r.refund_transaction_id || undefined,
+          receivedAt: r.received_at || undefined,
+          refundedAt: r.refunded_at || undefined
         }));
       }
     } catch (e) { /* ignore */ }
