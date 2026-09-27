@@ -75,7 +75,19 @@ export function initMultiDeviceRealtimeSync(): () => void {
   window.addEventListener('focus', handleWindowFocus);
   window.addEventListener('online', handleOnline);
   window.addEventListener('offline', handleOffline);
-  pollIntervalId = setInterval(() => { if (navigator.onLine && !isSyncInProgress) triggerBackgroundSync(false).catch(() => {}); }, 30000);
+  // The safety poll must not download the whole POS snapshot every 30s.
+  // That caused repeated bursts of REST requests on multi-device sessions and
+  // contributed to PostgREST timeout pressure. Realtime/reconnect/visibility
+  // events perform the authoritative bootstrap; the periodic poll only drains
+  // pending operations or refreshes branch inventory when the queue is empty.
+  pollIntervalId = setInterval(() => {
+    if (!navigator.onLine || isSyncInProgress) return;
+    if (getOfflineQueueCount() > 0) {
+      triggerBackgroundSync(false).catch(() => {});
+    } else {
+      useStore.getState().refreshBranchInventory().catch(() => {});
+    }
+  }, 30000);
   branchRepairIntervalId = setInterval(() => { if (navigator.onLine && !isSyncInProgress) reconcileRemoteState().catch(() => {}); }, 120000);
   return () => {
     document.removeEventListener('visibilitychange', handleVisibilityChange);
