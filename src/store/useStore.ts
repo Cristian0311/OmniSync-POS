@@ -1529,27 +1529,21 @@ export const useStore = create<AppState>()(
     return true;
   },
   joinOpenSession: (sessionId, userId, workerName) => {
-    set((state) => {
-      const session = (state.cashSessions || []).find(s => s.id === sessionId);
-      if (!session) return state;
-
-      const employeeIds = [...(session.workingEmployeeIds || [])];
-      if (userId && !employeeIds.includes(userId)) {
-        employeeIds.push(userId);
-      }
-
-      const updatedSession: CashRegisterSession = {
-        ...session,
-        workingEmployeeIds: employeeIds,
-        workerName: workerName || session.workerName
-      };
-
-      // Push updated session to Supabase
-
-      return {
-        cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s)
-      };
-    });
+    const session = get().cashSessions.find(s => s.id === sessionId);
+    if (!session || session.status !== 'open') return;
+    const employeeIds = [...(session.workingEmployeeIds || [])];
+    if (userId && !employeeIds.includes(userId)) employeeIds.push(userId);
+    const updatedSession: CashRegisterSession = {
+      ...session,
+      workingEmployeeIds: employeeIds,
+      workerName: workerName || session.workerName
+    };
+    set((state) => ({
+      cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s)
+    }));
+    // Joining a shared shift is a real state change and must survive reloads.
+    void enqueueOfflineItem('cash_session', updatedSession, `cash-join:${sessionId}:${userId}`);
+    if (navigator.onLine) pushCashSessionToSupabase(updatedSession).catch(() => {});
   },
   getCurrentSession: (branchId, userId) => {
     const sessions = get().cashSessions || [];
