@@ -465,6 +465,32 @@ export async function callCloseSessionRPC(
 
 
 
+export async function callProcessBankTransactionRPC(params: {
+  id: string; cardId: string; type: string; amount: number; date?: string;
+  reference?: string; description?: string; transactionId?: string;
+}): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: 'Supabase no configurado' };
+  try {
+    const { data, error } = await supabase.rpc('process_bank_transaction_v2', {
+      p_id: params.id,
+      p_card_id: params.cardId,
+      p_type: params.type,
+      p_amount: Number(params.amount) || 0,
+      p_date: params.date || new Date().toISOString(),
+      p_reference: params.reference || null,
+      p_description: params.description || '',
+      p_transaction_id: params.transactionId || null
+    });
+    if (error) throw error;
+    assertRpcSuccess(data, 'process_bank_transaction_v2');
+    return { success: true, data };
+  } catch (e: any) {
+    console.error('[RPC] process_bank_transaction_v2 failed:', e);
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
+  }
+}
+
 export async function callBankInternalTransferRPC(params: {
   operationId: string;
   fromCardId: string;
