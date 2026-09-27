@@ -635,7 +635,9 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
           variants: Array.isArray(t.variants) ? t.variants : [],
           date: t.date,
           userId: t.user_id,
-          status: t.status || 'completed'
+          status: t.status || 'completed',
+          batchId: t.batch_id || undefined,
+          operationId: t.operation_id || t.id
         }));
       }
     } catch (e) { /* ignore */ }
