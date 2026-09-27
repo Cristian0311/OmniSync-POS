@@ -164,6 +164,7 @@ export default function POS() {
   const [openingAmount, setOpeningAmount] = useState("");
   const [sessionWorkerName, setSessionWorkerName] = useState("");
   const [sessionPassword, setSessionPassword] = useState("");
+  const [isOpeningSession, setIsOpeningSession] = useState(false);
 
   const [joiningSessionPassword, setJoiningSessionPassword] = useState("");
   const [isNewEmployee, setIsNewEmployee] = useState(false);
@@ -1787,86 +1788,131 @@ export default function POS() {
 
   const [sessionClosingDate, setSessionClosingDate] = useState(new Date().toISOString().split('T')[0]);
 
-  const handleOpenSession = (e: React.FormEvent) => {
+  const handleOpenSession = async (e: React.FormEvent) => {
     e.preventDefault();
-    const rawVal = parseFloat(openingAmount);
-    const val = isNaN(rawVal) || rawVal < 0 ? 0 : rawVal;
-    
-    if (!sessionBranchId) {
-      setPosError("Debes seleccionar una sucursal");
-      setTimeout(() => setPosError(""), 3000);
-      return;
+    if (isOpeningSession) return;
+
+    setPosError("");
+    setPosSuccess("");
+    setIsOpeningSession(true);
+
+    try {
+      const rawVal = parseFloat(openingAmount);
+      const val = isNaN(rawVal) || rawVal < 0 ? 0 : rawVal;
+
+      if (!sessionBranchId) {
+        setPosError("Debes seleccionar una sucursal");
+        return;
+      }
+
+      const { users } = useStore.getState();
+      const trimmedWorkerName = sessionWorkerName.trim();
+
+      // Flujo obligatorio: seleccionar/buscar el empleado y después validar
+      // su contraseña. Un trabajador normal solo puede seleccionar su propia
+      // identidad; el administrador puede seleccionar cualquier empleado.
+      if (!trimmedWorkerName) {
+        setPosError("Debes buscar y seleccionar tu nombre antes de continuar.");
+        return;
+      }
+
+      const workerToAssign = detectedWorker ||
+        users.find(u => (u.name || '').trim().toLowerCase() === trimmedWorkerName.toLowerCase()) ||
+        null;
+
+      if (!workerToAssign || workerToAssign.isActive === false) {
+        setPosError("No se encontró un empleado activo con ese nombre. Actualiza el directorio y vuelve a seleccionar.");
+        return;
+      }
+
+      if (currentUser?.role !== 'admin' && workerToAssign.id !== currentUser?.id) {
+        setPosError("Un trabajador solo puede abrir su propio turno. Selecciona tu nombre.");
+        return;
+      }
+
+      const permittedBranchIds = new Set(allowedBranches.map(b => b.id));
+      if (currentUser?.role !== 'admin' && (!sessionBranchId || !permittedBranchIds.has(sessionBranchId))) {
+        setPosError("No tienes una sucursal autorizada para abrir el turno.");
+        return;
+      }
+
+      // Si ya existe un turno abierto para ese trabajador/sucursal, reutilizarlo
+      // en lugar de intentar crear un segundo turno y dejar la pantalla bloqueada.
+      const existingSession = useStore.getState().getCurrentSession(sessionBranchId, workerToAssign.id);
+      if (existingSession) {
+        setCurrentBranch(sessionBranchId);
+        setSessionWorkerName(existingSession.workerName || workerToAssign.name || "");
+        setSessionPassword("");
+        setShowOpenShiftModal(false);
+        setPosSuccess("Ya existe un turno abierto. Continuando con ese turno.");
+        setTimeout(() => setPosSuccess(""), 3000);
+        return;
+      }
+
+      const requiredPassword = (workerToAssign.password || '').trim();
+      const enteredPassword = (sessionPassword || '').trim();
+
+      if (!requiredPassword) {
+        setPosError(`El empleado ${workerToAssign.name || 'empleado'} no tiene contraseña asignada. El administrador debe asignarle una en Configuración -> Usuarios.`);
+        return;
+      }
+
+      if (enteredPassword !== requiredPassword) {
+        setPosError(`Contraseña incorrecta para ${workerToAssign.name || 'empleado'}. Acceso denegado.`);
+        return;
+      }
+
+      const workerName = workerToAssign.name || trimmedWorkerName || currentUser?.name || 'Vendedor';
+      const workerId = workerToAssign.id || currentUser?.id || 'emp-1';
+
+      const sessionToOpen: CashRegisterSession = {
+        id: crypto.randomUUID(),
+        branchId: sessionBranchId,
+        openedAt: new Date().toISOString(),
+        openingBalance: val,
+        openingAmount: val,
+        status: "open",
+        userId: workerId,
+        workerName,
+        workingEmployeeIds: [...new Set([workerId, currentUser?.id].filter(Boolean) as string[])]
+      };
+
+      setCurrentBranch(sessionBranchId);
+      const opened = await openSession(sessionToOpen);
+
+      if (!opened) {
+        // openSession ya muestra el motivo del rechazo cuando Supabase lo
+        // devuelve; aquí solo evitamos un falso "turno abierto".
+        setPosError("No se pudo abrir el turno. La sucursal puede tener otro turno abierto o la operación fue rechazada.");
+        return;
+      }
+
+      // Confirmar que el turno realmente está visible para este terminal.
+      // Si el servidor lo aceptó pero el caché quedó desfasado, recuperar el
+      // snapshot operativo antes de mostrar el POS.
+      let verifiedSession = useStore.getState().getCurrentSession(sessionBranchId, currentUser?.id || workerId);
+      if (!verifiedSession && navigator.onLine) {
+        await useStore.getState().refreshBranchOperationalData();
+        verifiedSession = useStore.getState().getCurrentSession(sessionBranchId, currentUser?.id || workerId);
+      }
+
+      if (!verifiedSession) {
+        setPosError("El turno fue procesado, pero esta terminal no pudo confirmar el estado del turno. No se registrará una falsa apertura.");
+        return;
+      }
+
+      setOpeningAmount("0");
+      setSessionWorkerName(verifiedSession.workerName || workerName);
+      setSessionPassword("");
+      setShowOpenShiftModal(false);
+      setPosSuccess(`Turno abierto correctamente por ${verifiedSession.workerName || workerName}`);
+      setTimeout(() => setPosSuccess(""), 3000);
+    } catch (err: any) {
+      console.error("[POS] Error inesperado al abrir turno:", err);
+      setPosError(err?.message || "No se pudo abrir el turno. Verifica la conexión y vuelve a intentarlo.");
+    } finally {
+      setIsOpeningSession(false);
     }
-
-    const { users } = useStore.getState();
-    const trimmedWorkerName = sessionWorkerName.trim();
-
-    // Flujo obligatorio: seleccionar/buscar el empleado y después validar
-    // su contraseña. Un trabajador normal solo puede seleccionar su propia
-    // identidad; el administrador puede seleccionar cualquier empleado.
-    if (!trimmedWorkerName) {
-      setPosError("Debes buscar y seleccionar tu nombre antes de continuar.");
-      setTimeout(() => setPosError(""), 3000);
-      return;
-    }
-
-    const workerToAssign = detectedWorker ||
-      users.find(u => (u.name || '').trim().toLowerCase() === trimmedWorkerName.toLowerCase()) ||
-      null;
-
-    if (!workerToAssign) {
-      setPosError("No se encontró el empleado seleccionado. Elige un nombre válido del selector.");
-      setTimeout(() => setPosError(""), 3000);
-      return;
-    }
-
-    if (currentUser?.role !== 'admin' && workerToAssign.id !== currentUser?.id) {
-      setPosError("Un trabajador solo puede abrir su propio turno. Selecciona tu nombre.");
-      setTimeout(() => setPosError(""), 3000);
-      return;
-    }
-
-    const permittedBranchIds = new Set(allowedBranches.map(b => b.id));
-    if (currentUser?.role !== 'admin' && (!sessionBranchId || !permittedBranchIds.has(sessionBranchId))) {
-      setPosError("No tienes una sucursal autorizada para abrir el turno.");
-      return;
-    }
-
-    // Verificar contraseña obligatoria del trabajador
-    const requiredPassword = (workerToAssign.password || '').trim();
-    const enteredPassword = (sessionPassword || '').trim();
-
-    if (!requiredPassword) {
-      setPosError(`El empleado ${workerToAssign?.name || 'empleado'} no tiene contraseña asignada. El administrador debe asignarle una en Configuración -> Usuarios.`);
-      setTimeout(() => setPosError(""), 4000);
-      return;
-    }
-
-    if (enteredPassword !== requiredPassword) {
-      setPosError(`Contraseña incorrecta para ${workerToAssign?.name || 'empleado'}. Acceso denegado.`);
-      setTimeout(() => setPosError(""), 4000);
-      return;
-    }
-
-    const workerName = workerToAssign?.name || trimmedWorkerName || currentUser?.name || 'Vendedor';
-    const workerId = workerToAssign?.id || currentUser?.id || 'emp-1';
-
-    setCurrentBranch(sessionBranchId);
-    openSession({
-      id: crypto.randomUUID(),
-      branchId: sessionBranchId,
-      openedAt: new Date().toISOString(),
-      openingBalance: val,
-      status: "open",
-      userId: workerId,
-      workerName: workerName,
-      workingEmployeeIds: [workerId, currentUser?.id].filter(Boolean) as string[]
-    });
-    setOpeningAmount("0");
-    setSessionWorkerName("");
-    setSessionPassword("");
-    setPosSuccess(`Turno abierto correctamente por ${workerName}`);
-    setTimeout(() => setPosSuccess(""), 3000);
   };
 
   const handleJoinExistingSession = (e: React.FormEvent) => {
@@ -2771,9 +2817,10 @@ export default function POS() {
                         <div className="space-y-2.5 pt-2">
                           <button 
                             type="submit"
-                            className="w-full py-4 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95"
+                            disabled={isOpeningSession}
+                            className="w-full py-4 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
                           >
-                            Abrir Caja y Comenzar
+                            {isOpeningSession ? "Abriendo Caja..." : "Abrir Caja y Comenzar"}
                           </button>
 
                           {lastClosedSession && (
