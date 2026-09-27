@@ -19,8 +19,13 @@ export function getSupabaseCredentials() {
   // even though the bundled project credentials are valid. Keep custom
   // credentials for a different URL, but never let a stale key override the
   // current production key for the canonical project.
+  // Production builds must prefer the deployed environment over stale
+  // browser settings. Older tablets can retain a wrong project URL in
+  // localStorage; letting it override VITE_SUPABASE_URL silently sends Realtime
+  // and REST to another/nonexistent project and makes the local POS appear empty.
+  // If no environment URL exists (local/custom deployment), keep the saved URL.
   const canonicalUrl = envUrl || DEFAULT_SUPABASE_URL;
-  const url = storedUrl || canonicalUrl;
+  const url = envUrl ? canonicalUrl : (storedUrl || canonicalUrl);
   const canonicalProject = url === DEFAULT_SUPABASE_URL;
   const knownCanonicalKeys = new Set([DEFAULT_SUPABASE_ANON_KEY, LEGACY_SUPABASE_ANON_KEY]);
   const anonKey = envKey || (canonicalProject && storedKey && knownCanonicalKeys.has(storedKey) ? storedKey : '') ||
