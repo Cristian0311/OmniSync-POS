@@ -673,19 +673,21 @@ export const useStore = create<AppState>()(
     const operationId = batchId || transactionId || crypto.randomUUID();
     const userId = (get().currentUser?.id && get().users.some(u => u.id === get().currentUser?.id)) ? get().currentUser!.id : 'system';
     const serverPayload = { operationId, productId, fromBranchId, toBranchId, variants: activeVariants, userId };
+    const actionId = 'transfer:' + operationId;
 
-    // Online: DB performs one atomic move and owns the inventory mutation.
+    await enqueueOfflineItem('transfer', serverPayload, actionId);
+
     if (navigator.onLine) {
-      const res = await callTransferInventoryRPC(serverPayload);
-      if (!res.success) {
-        if (!res.errorCode) enqueueOfflineItem('transfer', serverPayload, `transfer:${operationId}`);
-        return { success: !res.errorCode, error: res.error };
+      try {
+        const res = await callTransferInventoryRPC(serverPayload);
+        if (!res.success) throw new Error(res.error || 'No se pudo realizar la transferencia');
+        removeFromOfflineQueueByAction('transfer', actionId);
+      } catch (err: any) {
+        console.warn('[transferInventoryBatch] Transferencia no confirmada; queda durable para reintento:', err);
+        return { success: false, error: err?.message || 'No se pudo confirmar la transferencia' };
       }
-    } else {
-      enqueueOfflineItem('transfer', serverPayload, `transfer:${operationId}`);
     }
 
-    // Mirror the confirmed/offline operation locally exactly once.
     const newInventory = [...get().inventory];
     let totalQuantity = 0;
     for (const v of activeVariants) {
@@ -706,7 +708,7 @@ export const useStore = create<AppState>()(
       fromBranchId, fromBranchName: fromBranch?.name || 'Sucursal Origen',
       toBranchId, toBranchName: toBranch?.name || 'Sucursal Destino',
       quantity: totalQuantity, variants: activeVariants, date: new Date().toISOString(),
-      userId, status: 'completed', variantLabel: activeVariants.length === 1 ? (activeVariants[0].variantLabel || 'Producto Base') : activeVariants.map(v => `${v.variantLabel || 'Base'}: ${v.quantity}`).join(', '),
+      userId, status: 'completed', variantLabel: activeVariants.length === 1 ? (activeVariants[0].variantLabel || 'Producto Base') : activeVariants.map(v => v.variantLabel || 'Base').join(', '),
       transactionId, batchId
     };
     get().addTransfer(transferRecord);
@@ -1793,13 +1795,21 @@ export const useStore = create<AppState>()(
   updateSupplierOrder: async (id, o) => {
     const previous = get().supplierOrders.find(x => x.id === id);
     const requestedReceived = o.status === 'received' && previous?.status !== 'received';
-    if (requestedReceived && navigator.onLine) {
-      const userId = get().currentUser?.id || 'system';
-      const res = await callReceiveSupplierOrderRPC(id, userId);
-      if (!res.success) return;
-    } else if (requestedReceived && !navigator.onLine) {
-      // Offline receive remains local; the final cloud application is idempotent.
-      enqueueOfflineItem('supplier_receive', { id, userId: get().currentUser?.id || 'system' }, `supplier:${id}`);
+    const userId = get().currentUser?.id || 'system';
+    const actionId = 'supplier:' + id;
+
+    if (requestedReceived) {
+      await enqueueOfflineItem('supplier_receive', { id, userId }, actionId);
+      if (navigator.onLine) {
+        try {
+          const res = await callReceiveSupplierOrderRPC(id, userId);
+          if (!res.success) throw new Error(res.error || 'No se pudo recibir la orden');
+          removeFromOfflineQueueByAction('supplier_receive', actionId);
+        } catch (err) {
+          console.warn('[updateSupplierOrder] Recepción no confirmada; queda durable para reintento:', err);
+          return;
+        }
+      }
     }
 
     set(state => {
@@ -1807,8 +1817,6 @@ export const useStore = create<AppState>()(
       const updated = state.supplierOrders.map(x => x.id === id ? { ...x, ...o } : x);
       const order = updated.find(x => x.id === id);
       if (order && current?.status !== 'received' && order.status === 'received' && !navigator.onLine) {
-        // El RPC de recepción es la única autoridad para modificar stock. En offline
-        // actualizamos solo el espejo local para evitar una segunda operación de inventario.
         const nextInventory = [...state.inventory];
         for (const item of order.items || []) {
           const qty = Number(item.quantity) || 0;
@@ -1832,18 +1840,23 @@ export const useStore = create<AppState>()(
     const audit = get().inventoryAudits.find(a => a.id === id);
     if (!audit || audit.status === 'completed') return;
     const userId = get().currentUser?.id || audit.userId || 'system';
+    const actionId = 'audit:' + id;
+    await enqueueOfflineItem('audit_complete', { id, branchId: audit.branchId, userId, items, notes }, actionId);
+
     if (navigator.onLine) {
-      const res = await callCompleteInventoryAuditRPC(id, audit.branchId, userId, items, notes);
-      if (!res.success) return;
-    } else {
-      enqueueOfflineItem('audit_complete', { id, branchId: audit.branchId, userId, items, notes }, `audit:${id}`);
+      try {
+        const res = await callCompleteInventoryAuditRPC(id, audit.branchId, userId, items, notes);
+        if (!res.success) throw new Error(res.error || 'No se pudo completar la auditoría');
+        removeFromOfflineQueueByAction('audit_complete', actionId);
+      } catch (err) {
+        console.warn('[completeInventoryAudit] Auditoría no confirmada; queda durable para reintento:', err);
+        return;
+      }
     }
 
     set(state => {
       const currentAudit = state.inventoryAudits.find(a => a.id === id);
       if (!currentAudit || currentAudit.status === 'completed') return state;
-      // Local mirror uses actual - expected. The server remains authoritative and
-      // will reconcile this state on the next sync.
       const normalizedItems = items.map((item: any) => ({ ...item, difference: (Number(item.counted ?? item.actual) || 0) - (Number(item.expected) || 0) }));
       const updatedAudits = state.inventoryAudits.map(a => a.id === id ? { ...a, status: 'completed' as const, items: normalizedItems, notes, date: new Date().toISOString() } : a);
       let inventory = [...state.inventory];
