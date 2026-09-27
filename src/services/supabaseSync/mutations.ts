@@ -543,6 +543,7 @@ export async function clearHistoryFromSupabase() {
     'cash_sessions',
     'cash_movements',
     'bank_transactions',
+    'inventory_transfers',
     'inventory_audits',
     'salary_settlements',
     'returns',
@@ -980,6 +981,7 @@ export async function updateBankCardMetadataToSupabase(card: BankCard): Promise<
     account_number: card.accountNumber || card.lastFourDigits || card.lastFour || '',
     phone: card.phone || '',
     last_four_digits: card.lastFourDigits || card.lastFour || (card.accountNumber ? String(card.accountNumber).slice(-4) : '0000'),
+    balance: Number(card.balance) || 0,
     currency: card.currency || 'CUP',
     color: card.color || 'from-indigo-600 to-purple-800',
     is_active: card.isActive !== false
