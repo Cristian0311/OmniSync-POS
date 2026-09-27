@@ -101,10 +101,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     setIsSyncingOffline(true);
     try {
       const res = await processOfflineQueue();
-      setPendingOfflineCount(res.remaining);
       const cloudResult = await syncWithSupabase();
-      if (res.remaining > 0 || cloudResult?.success === false) {
-        addNotification(`Sincronización incompleta: quedan ${res.remaining} operaciones pendientes.`, 'warning', [
+      // The cloud refresh can surface/requeue operations that failed during the
+      // pull/push cycle. Always read the durable queue again before declaring
+      // synchronization complete; the first result is only a snapshot.
+      const finalPendingCount = getOfflineQueueCount();
+      setPendingOfflineCount(finalPendingCount);
+      if (finalPendingCount > 0 || cloudResult?.success === false) {
+        addNotification(`Sincronización incompleta: quedan ${finalPendingCount} operaciones pendientes.`, 'warning', [
           ...(res.errors || []).map(e => `${e.type} · ${e.actionId}: ${e.message}`),
           ...(cloudResult?.errors || []).map((e: string) => `Nube: ${e}`),
           cloudResult?.success === false && cloudResult?.message ? `Sincronización nube: ${cloudResult.message}` : ''
