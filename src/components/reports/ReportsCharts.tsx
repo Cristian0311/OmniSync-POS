@@ -1,9 +1,8 @@
-import React from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell
 } from "recharts";
-import { BarChart3, PieChart as PieChartIcon } from "lucide-react";
+import { PieChart as PieChartIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 type HourRow = { hour: string | number; total: number };
