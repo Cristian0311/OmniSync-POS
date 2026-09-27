@@ -9,7 +9,6 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-d
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import { useStore } from "./store/useStore";
-import { initOfflineSyncWatcher } from "./services/offlineSync";
 import { initMultiDeviceRealtimeSync } from "./services/realtimeSync";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
@@ -50,10 +49,24 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return;
-    // El login activa los motores; la pantalla de acceso no necesita sincronizar.
-    const cleanupOfflineWatcher = initOfflineSyncWatcher();
+
+    // El login activa los motores. El replay offline es un módulo pesado y se
+    // carga solo después de autenticar, mientras que la cola durable ligera ya
+    // está disponible para el store desde el arranque.
+    let active = true;
+    let cleanupOfflineWatcher = () => {};
+
+    import("./services/offlineSync")
+      .then(({ initOfflineSyncWatcher }) => {
+        if (active) cleanupOfflineWatcher = initOfflineSyncWatcher();
+      })
+      .catch((error) => {
+        console.error("[App] No se pudo cargar el motor de sincronización offline:", error);
+      });
+
     const cleanupRealtimeSync = initMultiDeviceRealtimeSync();
     return () => {
+      active = false;
       cleanupOfflineWatcher();
       cleanupRealtimeSync();
     };
