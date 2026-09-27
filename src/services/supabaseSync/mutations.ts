@@ -1021,6 +1021,26 @@ export async function pushBankCardToSupabase(card: BankCard) {
   }
 }
 
+export async function setBankCardBalanceToSupabase(cardId: string, expectedBalance: number, newBalance: number): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase || (typeof navigator !== 'undefined' && !navigator.onLine)) return false;
+  const expected = Number(expectedBalance) || 0;
+  const next = Math.max(0, Number(newBalance) || 0);
+  try {
+    const { data, error } = await supabase
+      .from('bank_cards')
+      .update({ balance: next })
+      .eq('id', cardId)
+      .eq('balance', expected)
+      .select('id,balance');
+    if (error) throw error;
+    return Boolean(data?.length && Number(data[0]?.balance) === next);
+  } catch (e) {
+    console.warn('[Bank] atomic balance update failed:', e);
+    return false;
+  }
+}
+
 export async function updateBankCardMetadataToSupabase(card: BankCard): Promise<boolean> {
   const supabase = getSupabase();
   if (!supabase || (typeof navigator !== 'undefined' && !navigator.onLine)) return false;
@@ -1033,7 +1053,6 @@ export async function updateBankCardMetadataToSupabase(card: BankCard): Promise<
     account_number: card.accountNumber || card.lastFourDigits || card.lastFour || '',
     phone: card.phone || '',
     last_four_digits: card.lastFourDigits || card.lastFour || (card.accountNumber ? String(card.accountNumber).slice(-4) : '0000'),
-    balance: Number(card.balance) || 0,
     currency: card.currency || 'CUP',
     color: card.color || 'from-indigo-600 to-purple-800',
     is_active: card.isActive !== false
