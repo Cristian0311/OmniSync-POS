@@ -14,7 +14,7 @@ import {
   deleteBankTransactionFromSupabase, clearSelectedDataFromSupabase, callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC, callCompleteInventoryAuditRPC, callCloseSessionRPC, callCancelSessionRPC
 } from '../services/supabaseSync';
 import { getSupabaseCredentials } from '../lib/supabase';
-import { getOfflineQueue, enqueueOfflineItem } from '../services/offlineSync';
+import { getOfflineQueue, enqueueOfflineItem, removeFromOfflineQueue } from '../services/offlineSync';
 import { normalizeSemanticText, areSemanticallyEqual } from '../utils/textUtils';
 import { localStateStorage, clearLocalStateStorage } from '../services/localStateStorage';
 import type { AppState } from './storeTypes';
@@ -26,6 +26,11 @@ import {
 } from './storeInitialData';
 
 // --- Definición del Store ---
+function removeFromOfflineQueueByTransactionId(transactionId: string) {
+  const queued = getOfflineQueue().find(item => item.type === 'transaction' && item.actionId === transactionId);
+  if (queued) removeFromOfflineQueue(queued.id);
+}
+
 function applyLocalVoidTransaction(transaction: Transaction) {
   useStore.setState((state: any) => {
     const updatedInventory = [...state.inventory];
@@ -991,6 +996,10 @@ export const useStore = create<AppState>()(
     // atomic RPC commits do we mirror the result locally. This prevents the old
     // double-decrement (local optimistic update + RPC update).
     if (navigator.onLine) {
+      // Primero hacemos durable la operación. Esto elimina la ventana peligrosa
+      // entre "el cajero confirmó" y "la RPC terminó": si la pestaña muere o la
+      // red cae durante el request, el ticket ya existe en IndexedDB para replay.
+      enqueueOfflineItem('transaction', transaction, transaction.id);
       try {
         const res = await callProcessTransactionRPC(transaction);
         if (!res.success) {
@@ -1000,17 +1009,18 @@ export const useStore = create<AppState>()(
           const code = String(res.errorCode || '');
           const permanentCodes = new Set(['P0001', '23503', '23505', '22P02', '22003', '22007', 'IDEMPOTENCY_CONFLICT']);
           if (permanentCodes.has(code)) {
+            removeFromOfflineQueueByTransactionId(transaction.id);
             console.error('[processTransaction] Operación rechazada por servidor:', res.error);
             return false;
           }
           throw new Error(res.error || 'No se pudo confirmar la venta');
         }
         applyLocalCompletedSale(transaction);
+        removeFromOfflineQueueByTransactionId(transaction.id);
         return true;
       } catch (err) {
         console.warn('[processTransaction] No hubo confirmación definitiva del servidor; venta preservada localmente y encolada para replay idempotente:', err);
         applyLocalCompletedSale(transaction);
-        enqueueOfflineItem('transaction', transaction, transaction.id);
         return true;
       }
     }
