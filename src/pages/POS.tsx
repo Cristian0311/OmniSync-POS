@@ -1912,14 +1912,23 @@ export default function POS() {
         return;
       }
 
-      if (currentUser?.role !== 'admin' && workerToAssign.id !== currentUser?.id) {
-        setPosError("Un trabajador solo puede abrir su propio turno. Selecciona tu nombre.");
-        return;
-      }
+      // La cuenta que inició sesión solo identifica al usuario del sistema.
+      // La identidad que opera el POS se determina por el trabajador seleccionado
+      // y se autentica con la contraseña de ESE trabajador.
+      // La sucursal queda limitada a las sucursales asignadas al trabajador seleccionado.
+      const workerBranchIds = new Set(
+        workerToAssign.assignedBranchId
+          ? [workerToAssign.assignedBranchId]
+          : workerToAssign.branchId
+            ? [workerToAssign.branchId]
+            : (workerToAssign.allowedBranches || [])
+      );
+      const permittedBranchIds = currentUser?.role === 'admin'
+        ? new Set((branches || []).map(b => b.id))
+        : workerBranchIds;
 
-      const permittedBranchIds = new Set(allowedBranches.map(b => b.id));
-      if (currentUser?.role !== 'admin' && (!sessionBranchId || !permittedBranchIds.has(sessionBranchId))) {
-        setPosError("No tienes una sucursal autorizada para abrir el turno.");
+      if (!sessionBranchId || !permittedBranchIds.has(sessionBranchId)) {
+        setPosError("El trabajador seleccionado no tiene autorizada esta sucursal.");
         return;
       }
 
@@ -1961,7 +1970,8 @@ export default function POS() {
         status: "open",
         userId: workerId,
         workerName,
-        workingEmployeeIds: [...new Set([workerId, currentUser?.id].filter(Boolean) as string[])]
+        // La identidad operativa es exclusivamente el trabajador autenticado.
+        workingEmployeeIds: [workerId]
       };
 
       setCurrentBranch(sessionBranchId);
