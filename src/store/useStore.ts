@@ -67,6 +67,16 @@ function applyLocalVoidTransaction(transaction: Transaction) {
 function applyLocalCompletedSale(transaction: Transaction) {
   const generatedWarranties: any[] = [];
   useStore.setState((state: any) => {
+    // Local mirror is idempotent too. A retry after a server-confirmed sale
+    // must not consume inventory or create duplicate warranties twice.
+    const existing = (state.transactions || []).find((t: any) => t.id === transaction.id && !t.deletedAt);
+    if (existing) {
+      return {
+        transactions: (state.transactions || []).map((t: any) => t.id === transaction.id ? { ...t, ...transaction } : t),
+        cart: [],
+        currentCustomerId: undefined
+      };
+    }
     const newWarranties = generatedWarranties;
     const updatedInventory = [...state.inventory];
     const finalItems = (transaction.items || []).map((item: any) => {
