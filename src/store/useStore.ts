@@ -1590,7 +1590,8 @@ export const useStore = create<AppState>()(
     }, 0);
     const nextNum = Math.max(txs.length, maxNum) + 1;
     const prefix = isDeduction ? 'SUB' : 'INF';
-    const txId = `${prefix}-${nextNum.toString().padStart(3, '0')}`;
+    // These informational records can also originate from multiple terminals.
+    const txId = `${prefix}-${nextNum.toString().padStart(3, '0')}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase()}`;
 
     const rawTotalAmount = itemData.quantity * itemData.price;
     const totalAmount = isDeduction ? -Math.abs(rawTotalAmount) : Math.abs(rawTotalAmount);
