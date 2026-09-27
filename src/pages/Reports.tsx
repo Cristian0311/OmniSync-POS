@@ -5616,7 +5616,7 @@ export default function Reports() {
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">
-                    Añadir Producto al Informe
+                    Regularizar venta del turno
                   </h3>
                   <p className="text-[10px] font-bold text-muted uppercase">
                     {sessionTurnMap.get(addItemToShiftModal.id) || addItemToShiftModal.id} • {branches.find(b => b.id === addItemToShiftModal.branchId)?.name || 'Sucursal'}
