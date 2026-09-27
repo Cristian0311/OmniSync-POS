@@ -2076,16 +2076,16 @@ export const useStore = create<AppState>()(
     const uniqueTxs: import('../types').BankTransaction[] = [];
     let removedDuplicates = 0;
 
-    // Filter duplicates preserving the most recent unique record
+    // Local de-duplication only. Never delete cloud data from a potentially
+    // partial local snapshot; cloud reconciliation must be explicit and verified.
     for (const bt of state.bankTransactions || []) {
-      const isDuplicate = seenIds.has(bt.id) || 
-                          (bt.transactionId && seenTxIds.has(bt.transactionId)) ||
-                          (bt.reference && seenRefs.has(`${bt.cardId}::${bt.reference}`));
+      const isDuplicate =
+        seenIds.has(bt.id) ||
+        (bt.transactionId && seenTxIds.has(bt.transactionId)) ||
+        (bt.reference && seenRefs.has(`${bt.cardId}::${bt.reference}`));
 
       if (isDuplicate) {
         removedDuplicates++;
-        // Si detectamos duplicado, intentar eliminar de Supabase para limpiar la nube también
-        deleteBankTransactionFromSupabase(bt.id).catch(() => {});
         continue;
       }
 
@@ -2095,9 +2095,7 @@ export const useStore = create<AppState>()(
       uniqueTxs.push(bt);
     }
 
-    if (removedDuplicates > 0) {
-      set({ bankTransactions: uniqueTxs });
-    }
+    if (removedDuplicates > 0) set({ bankTransactions: uniqueTxs });
 
     const totalSales = state.transactions.length;
     const totalMovements = uniqueTxs.length;
@@ -2106,7 +2104,7 @@ export const useStore = create<AppState>()(
       removedDuplicates,
       totalSales,
       totalMovements,
-      message: `Reconciliación completada: Base de datos sincronizada con ${totalSales} ventas y ${totalMovements} movimientos bancarios verificados.${removedDuplicates > 0 ? ` Se eliminaron ${removedDuplicates} duplicados.` : ''}`
+      message: `Reconciliación local completada: ${totalSales} ventas y ${totalMovements} movimientos bancarios verificados. Los duplicados locales no se eliminaron físicamente de la nube.`
     };
   },
 
@@ -2122,12 +2120,14 @@ export const useStore = create<AppState>()(
           for (const item of remote) map.set(item.id, item);
           return Array.from(map.values());
         };
+        const pendingProductIds = new Set(getOfflineQueue().filter(i => i.type === 'product').map(i => i.data?.id).filter(Boolean));
+        const pendingCategoryIds = new Set(getOfflineQueue().filter(i => i.type === 'category').map(i => i.data?.id).filter(Boolean));
         const validProductIds = new Set((d.products || []).map((p: any) => p.id));
         const validCategoryIds = new Set((d.categories || []).map((x: any) => x.id));
         return {
           branches: mergeById(d.branches || [], state.branches || []),
-          categories: mergeById(d.categories || [], state.categories || []).filter(x => validCategoryIds.has(x.id)),
-          products: mergeById(d.products || [], state.products || []).filter(x => validProductIds.has(x.id)),
+          categories: mergeById(d.categories || [], state.categories || []).filter(x => validCategoryIds.has(x.id) || pendingCategoryIds.has(x.id)),
+          products: mergeById(d.products || [], state.products || []).filter(x => validProductIds.has(x.id) || pendingProductIds.has(x.id)),
           users: mergeById(d.users || [], state.users || []),
           currencies: d.currencies?.length ? d.currencies : state.currencies,
           idnSettlementPrices: mergeById(d.idnSettlementPrices || [], state.idnSettlementPrices || []),
@@ -2375,16 +2375,18 @@ export const useStore = create<AppState>()(
           }
 
           // --- 7. Otros (Deduplicación simple por ID o clave única) ---
+          const pendingProductIds = new Set(getOfflineQueue().filter(i => i.type === 'product').map(i => i.data?.id).filter(Boolean));
+          const pendingCategoryIds = new Set(getOfflineQueue().filter(i => i.type === 'category').map(i => i.data?.id).filter(Boolean));
           const mergedProducts = mergeUnique(data.products, state.products || []);
-          // Purge Productos
+          // A successful remote snapshot may omit a newly-created offline product.
+          // Keep it until its durable product operation is confirmed remotely.
           const finalProducts = (Array.isArray(data.products) && data.products.length > 0)
-            ? mergedProducts.filter(p => data.products.some((sp: any) => sp.id === p.id))
+            ? mergedProducts.filter(p => data.products.some((sp: any) => sp.id === p.id) || pendingProductIds.has(p.id))
             : mergedProducts;
 
           const mergedCategories = mergeUnique(data.categories, state.categories || []);
-          // Purge Categorías
           const finalCategories = (Array.isArray(data.categories) && data.categories.length > 0)
-            ? mergedCategories.filter(c => data.categories.some((sc: any) => sc.id === c.id))
+            ? mergedCategories.filter(c => data.categories.some((sc: any) => sc.id === c.id) || pendingCategoryIds.has(c.id))
             : mergedCategories;
 
           const mergedUsers = mergeUnique(data.users, state.users || []);
@@ -2473,25 +2475,27 @@ export const useStore = create<AppState>()(
       const backupList = JSON.parse(backupRaw);
       if (!Array.isArray(backupList) || backupList.length === 0) return;
 
+      const queuedTransactionIds = new Set(
+        getOfflineQueue().filter(item => item.type === 'transaction').map(item => item.actionId)
+      );
+      // The legacy backup is not authoritative. Only a transaction that is
+      // still represented in the durable outbox may be restored automatically.
+      // This prevents a historical backup from resurrecting a sale intentionally
+      // removed from the cloud.
       const currentTxs = get().transactions || [];
-      const missingTxs = backupList.filter((bt: any) => !currentTxs.some((ct: any) => ct.id === bt.id));
+      const recoverable = backupList.filter((bt: any) =>
+        bt?.id &&
+        queuedTransactionIds.has(bt.id) &&
+        !currentTxs.some((ct: any) => ct.id === bt.id)
+      );
 
-      if (missingTxs.length > 0) {
-        console.info(`[Backup Safety] Detectadas ${missingTxs.length} ventas faltantes en el estado local. Recuperándolas...`);
-        set((state) => ({
-          transactions: [...missingTxs, ...(state.transactions || [])]
-        }));
-        
-        // Nunca insertar directamente una venta recuperada: debe pasar por la RPC
-        // idempotente para que inventario/caja se mantengan coherentes.
-        missingTxs.forEach(tx => {
-          enqueueOfflineItem('transaction', tx, tx.id);
-        });
-
-        get().addNotification(`¡Garantía de Seguridad! Se recuperaron ${missingTxs.length} tickets de venta de forma automática.`, 'success');
+      if (recoverable.length > 0) {
+        console.info(`[Backup Safety] Recuperando ${recoverable.length} venta(s) que aún tienen operación durable pendiente.`);
+        set((state) => ({ transactions: [...recoverable, ...(state.transactions || [])] }));
+        get().addNotification(`Se recuperaron ${recoverable.length} venta(s) pendientes del respaldo local.`, 'info');
       }
     } catch (e) {
-      console.error("[Backup Safety] Error restoring from safety backup:", e);
+      console.error("[Backup Safety] Error leyendo respaldo local:", e);
     }
   },
 
