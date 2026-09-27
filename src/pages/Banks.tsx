@@ -5,6 +5,8 @@ import { generateId, cn } from '../lib/utils';
 import { CreditCard, Plus, ArrowUpRight, ArrowDownRight, Activity, Trash2, ShieldCheck, RefreshCw, List, X, CheckCircle2 } from 'lucide-react';
 import { BankCard, BankTransaction } from '../types';
 import { InfoTooltip } from '../components/InfoTooltip';
+import { enqueueOfflineItem, getOfflineQueue, removeFromOfflineQueue } from '../services/offlineSync';
+import { callBankInternalTransferRPC } from '../services/supabaseSync';
 
 export default function Banks() {
   const { 
@@ -76,17 +78,16 @@ export default function Banks() {
     setFormData({ name: "", bank: "BPA", accountNumber: "", phone: "", lastFour: "", balance: 0, currency: getBaseCurrency().code, isActive: true });
   };
 
-  const handleTransfer = (e: React.FormEvent) => {
+  const handleTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     const fromCard = bankCards.find(c => c.id === transferData.fromCardId);
-    
+
     if (!fromCard || transferData.amount <= 0) return;
 
     const date = new Date().toISOString();
     const ref = generateId('TRF');
 
     if (transferData.isExternal) {
-      // Transfer to external card
       addBankTransaction({
         id: generateId('BTX'),
         cardId: fromCard.id,
@@ -98,22 +99,13 @@ export default function Banks() {
       });
       addNotification(`Transferencia externa de ${transferData.amount} registrada.`, 'success');
     } else {
-      // Transfer between internal cards
       const toCard = bankCards.find(c => c.id === transferData.toCardId);
       if (!toCard) return;
+      if (fromCard.balance < transferData.amount) {
+        addNotification('Saldo insuficiente en la cuenta de origen.', 'error');
+        return;
+      }
 
-      // Withdrawal from source
-      addBankTransaction({
-        id: generateId('BTX'),
-        cardId: fromCard.id,
-        type: 'withdrawal',
-        amount: transferData.amount,
-        date,
-        reference: ref,
-        description: `Transferencia a ${toCard.bank} (****${toCard.lastFour}): ${transferData.reason}`
-      });
-
-      // Deposit to target
       let targetAmount = transferData.amount;
       if (fromCard.currency !== toCard.currency) {
         const currencies = useStore.getState().currencies;
@@ -122,16 +114,87 @@ export default function Banks() {
         targetAmount = (transferData.amount * fromRate) / toRate;
       }
 
-      addBankTransaction({
-        id: generateId('BTX'),
-        cardId: toCard.id,
-        type: 'deposit',
-        amount: targetAmount,
+      const payload = {
+        operationId: ref,
+        fromCardId: fromCard.id,
+        toCardId: toCard.id,
+        amount: transferData.amount,
+        targetAmount,
         date,
-        reference: ref,
-        description: `Transferencia desde ${fromCard.bank} (****${fromCard.lastFour}): ${transferData.reason}`
-      });
-      addNotification(`Transferencia interna de ${transferData.amount} completada.`, 'success');
+        reason: transferData.reason
+      };
+      const actionId = 'bank-transfer:' + ref;
+
+      // Persist the intent before attempting the server call. If the response
+      // is lost, the exact same operation is safely replayed on reconnect.
+      await enqueueOfflineItem('bank_internal_transfer', payload, actionId);
+
+      if (navigator.onLine) {
+        try {
+          const result = await callBankInternalTransferRPC(payload);
+          if (!result.success) throw new Error(result.error || 'No se pudo completar la transferencia bancaria');
+
+          const queued = getOfflineQueue().find(item => item.type === 'bank_internal_transfer' && item.actionId === actionId);
+          if (queued) await removeFromOfflineQueue(queued.id);
+
+          const fromBalance = Number(result.data?.from_balance);
+          const toBalance = Number(result.data?.to_balance);
+          const outTx: BankTransaction = {
+            id: ref + ':OUT',
+            cardId: fromCard.id,
+            type: 'withdrawal',
+            amount: transferData.amount,
+            date,
+            reference: ref,
+            description: `Transferencia a ${toCard.bank} (****${toCard.lastFour}): ${transferData.reason}`
+          };
+          const inTx: BankTransaction = {
+            id: ref + ':IN',
+            cardId: toCard.id,
+            type: 'deposit',
+            amount: targetAmount,
+            date,
+            reference: ref,
+            description: `Transferencia desde ${fromCard.bank} (****${fromCard.lastFour}): ${transferData.reason}`
+          };
+
+          useStore.setState(state => ({
+            bankTransactions: [inTx, outTx, ...(state.bankTransactions || []).filter(t => t.reference !== ref)],
+            bankCards: (state.bankCards || []).map(card => {
+              if (card.id === fromCard.id && Number.isFinite(fromBalance)) return { ...card, balance: fromBalance };
+              if (card.id === toCard.id && Number.isFinite(toBalance)) return { ...card, balance: toBalance };
+              return card;
+            })
+          }));
+          addNotification(`Transferencia interna de ${transferData.amount} completada.`, 'success');
+        } catch (err: any) {
+          addNotification(err?.message || 'La transferencia quedó pendiente de sincronización.', 'warning');
+          return;
+        }
+      } else {
+        // Offline fallback keeps both ledger entries durable. They are replayed
+        // independently, while the internal RPC is used whenever connectivity
+        // returns for online-originated transfers.
+        addBankTransaction({
+          id: ref + ':OUT',
+          cardId: fromCard.id,
+          type: 'withdrawal',
+          amount: transferData.amount,
+          date,
+          reference: ref,
+          description: `Transferencia a ${toCard.bank} (****${toCard.lastFour}): ${transferData.reason}`
+        });
+        addBankTransaction({
+          id: ref + ':IN',
+          cardId: toCard.id,
+          type: 'deposit',
+          amount: targetAmount,
+          date,
+          reference: ref,
+          description: `Transferencia desde ${fromCard.bank} (****${fromCard.lastFour}): ${transferData.reason}`
+        });
+        addNotification('Transferencia guardada offline; se sincronizará al reconectar.', 'info');
+      }
     }
 
     setShowTransferModal(false);
