@@ -149,6 +149,18 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
   if (!supabase) return { success: false, error: "Supabase no configurado" };
 
   try {
+    const rpcItems = (tx.items || []).map(item => {
+      if (!item) return null;
+      const prod = item.product;
+      return {
+        product_id: typeof prod === 'string' ? prod : prod?.id,
+        quantity: item.quantity || 0,
+        variant_label: item.variantLabel || null,
+        is_kit: (prod && typeof prod === 'object' && 'isKit' in prod) ? (prod as any).isKit === true : false,
+        kit_components: (prod && typeof prod === 'object' && 'kitComponents' in prod) ? (prod as any).kitComponents || [] : []
+      };
+    }).filter(Boolean);
+
     const { data, error } = await supabase.rpc('process_pos_transaction_v2', {
       p_id: tx.id,
       p_branch_id: tx.branchId,
@@ -157,17 +169,7 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
       p_total: tx.total,
       p_tax: tx.tax || 0,
       p_discount: tx.discount || 0,
-      p_items: (tx.items || []).map(item => {
-        if (!item) return null;
-        const prod = item.product;
-        return {
-          product_id: typeof prod === 'string' ? prod : prod?.id,
-          quantity: item.quantity || 0,
-          variant_label: item.variantLabel || null,
-          is_kit: (prod && typeof prod === 'object' && 'isKit' in prod) ? (prod as any).isKit === true : false,
-          kit_components: (prod && typeof prod === 'object' && 'kitComponents' in prod) ? (prod as any).kitComponents || [] : []
-        };
-      }).filter(Boolean),
+      p_items: rpcItems,
       p_payments: tx.payments || [],
       p_payment_method: tx.paymentMethod || 'cash',
       p_session_id: tx.sessionId,
@@ -177,7 +179,43 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
 
     if (error) throw error;
     assertRpcSuccess(data, 'process_pos_transaction_v2');
-    return { success: true, data };
+
+    // Idempotency is only valid when the existing row is the SAME operation.
+    // Two terminals must never be allowed to reuse a locally generated ticket
+    // and accidentally turn a second sale into a false success.
+    const { data: persisted, error: verifyError } = await supabase
+      .from('transactions')
+      .select('id,branch_id,user_id,total,tax,discount,session_id,payment_method,items,payments')
+      .eq('id', tx.id)
+      .maybeSingle();
+
+    if (verifyError) throw verifyError;
+    if (!persisted) {
+      const e: any = new Error('Supabase no confirmó la venta en la tabla transactions.');
+      e.code = 'TRANSACTION_NOT_PERSISTED';
+      throw e;
+    }
+
+    const persistedItems = Array.isArray(persisted.items) ? persisted.items : [];
+    const persistedPayments = Array.isArray(persisted.payments) ? persisted.payments : [];
+    const sameItems = JSON.stringify(persistedItems) === JSON.stringify(rpcItems);
+    const samePayments = JSON.stringify(persistedPayments) === JSON.stringify(tx.payments || []);
+    const sameCore =
+      persisted.branch_id === tx.branchId &&
+      persisted.user_id === tx.userId &&
+      Number(persisted.total) === Number(tx.total) &&
+      Number(persisted.tax || 0) === Number(tx.tax || 0) &&
+      Number(persisted.discount || 0) === Number(tx.discount || 0) &&
+      (persisted.session_id || null) === (tx.sessionId || null) &&
+      (persisted.payment_method || 'cash') === (tx.paymentMethod || 'cash');
+
+    if (!sameCore || !sameItems || !samePayments) {
+      const e: any = new Error('Conflicto de idempotencia: el ID del ticket ya pertenece a otra venta.');
+      e.code = 'IDEMPOTENCY_CONFLICT';
+      throw e;
+    }
+
+    return { success: true, data: { ...(data || {}), persisted, already_existed: Boolean(data?.already_existed) } };
   } catch (e: any) {
     console.error("[RPC] process_pos_transaction_v2 failed:", e);
     return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
