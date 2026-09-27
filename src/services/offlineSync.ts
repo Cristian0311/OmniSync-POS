@@ -373,7 +373,6 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   // hacerlo podría mover una corrección de inventario posterior a una venta
   // anterior. Solo adelantamos una operación cuando otra operación ENCOLADA
   // es una dependencia explícita de ella.
-  const queued = new Map<string, OfflineQueueItem>();
   const allQueued = new Map<string, OfflineQueueItem>();
   const blockedExistingIds = new Set(
     allQueueAtStart.filter(q => q.status === 'conflict').map(q => q.id)
@@ -381,9 +380,6 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   const cashBySessionId = new Map<string, OfflineQueueItem[]>();
   for (const q of allQueueAtStart) {
     allQueued.set(q.type + ':' + q.actionId, q);
-  }
-  for (const q of queueAtStart) {
-    queued.set(q.type + ':' + q.actionId, q);
     if (q.type === 'cash_session' && q.data?.id) {
       const list = cashBySessionId.get(String(q.data.id)) || [];
       list.push(q);
