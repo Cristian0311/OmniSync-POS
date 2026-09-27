@@ -3061,7 +3061,7 @@ export default function POS() {
                               value={openingAmount}
                               onFocus={(e) => e.target.select()}
                               onChange={e => setOpeningAmount(e.target.value)}
-                              className="w-full pl-14 pr-4 py-3" bg-slate-50 border border-slate-100 rounded-xl text-lg font-black text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                              className="w-full pl-14 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-lg font-black text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                               placeholder="0.00"
                             />
                           </div>
