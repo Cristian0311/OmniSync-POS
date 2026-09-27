@@ -64,6 +64,17 @@ export function initMultiDeviceRealtimeSync(): () => void {
   const supabase = getSupabase();
   const handleRemoteChange = (payload: any) => {
     window.dispatchEvent(new CustomEvent('remote_data_changed', { detail: payload }));
+    const table = payload?.table;
+    const branchScoped = BRANCH_SCOPED_TABLES.has(table);
+    if (branchScoped) {
+      if (debounceTimeout) clearTimeout(debounceTimeout);
+      debounceTimeout = setTimeout(() => {
+        if (navigator.onLine && !isSyncInProgress) {
+          useStore.getState().refreshBranchOperationalData().catch(() => {});
+        }
+      }, 500);
+      return;
+    }
     scheduleDebouncedSync();
   };
   const subscribeRealtime = () => {
