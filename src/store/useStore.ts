@@ -822,9 +822,15 @@ export const useStore = create<AppState>()(
       enqueueOfflineItem('inventory_reconcile', payload, operationId);
       return;
     }
-    reconcileInventoryToSupabase({ ...payload, newQuantity }).then(res => {
-      if (!res.success || res.conflict) enqueueOfflineItem('inventory_reconcile', payload, operationId);
-    }).catch(() => enqueueOfflineItem('inventory_reconcile', payload, operationId));
+    reconcileInventoryToSupabase({ ...payload, newQuantity }).then(async res => {
+      if (!res.success || res.conflict) {
+        await enqueueOfflineItem('inventory_reconcile', payload, operationId);
+        await get().refreshBranchInventory();
+      }
+    }).catch(async () => {
+      await enqueueOfflineItem('inventory_reconcile', payload, operationId);
+      await get().refreshBranchInventory();
+    });
   },
 
   transferProductsBulk: async (fromBranchId, toBranchId, items) => {
