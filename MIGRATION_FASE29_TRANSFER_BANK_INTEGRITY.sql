@@ -8,6 +8,136 @@ ALTER TABLE public.inventory_transfers
 CREATE INDEX IF NOT EXISTS idx_inventory_transfers_batch_id
   ON public.inventory_transfers(batch_id);
 
+DROP FUNCTION IF EXISTS public.process_inventory_transfer_v2(text,text,text,text,jsonb,text);
+
+CREATE OR REPLACE FUNCTION public.process_inventory_transfer_v2(
+  p_operation_id text,
+  p_batch_id text,
+  p_product_id text,
+  p_from_branch_id text,
+  p_to_branch_id text,
+  p_variants jsonb,
+  p_user_id text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path TO 'public','pg_temp'
+AS $function$
+DECLARE
+  v RECORD;
+  src public.inventory%ROWTYPE;
+  first_branch text;
+  second_branch text;
+BEGIN
+  IF NULLIF(btrim(p_operation_id),'') IS NULL THEN
+    RAISE EXCEPTION 'ID de operación requerido' USING ERRCODE='P0001';
+  END IF;
+  IF NULLIF(btrim(p_product_id),'') IS NULL THEN
+    RAISE EXCEPTION 'Producto requerido' USING ERRCODE='P0001';
+  END IF;
+  IF p_from_branch_id=p_to_branch_id THEN
+    RAISE EXCEPTION 'Origen y destino no pueden coincidir' USING ERRCODE='P0001';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public.inventory_transfers WHERE operation_id=p_operation_id) THEN
+    RETURN jsonb_build_object('success',true,'operation_id',p_operation_id,
+      'batch_id',p_batch_id,'already_existed',true);
+  END IF;
+
+  IF p_from_branch_id<p_to_branch_id THEN
+    first_branch:=p_from_branch_id; second_branch:=p_to_branch_id;
+  ELSE
+    first_branch:=p_to_branch_id; second_branch:=p_from_branch_id;
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtext('transfer:'||p_product_id||':'||first_branch));
+  PERFORM pg_advisory_xact_lock(hashtext('transfer:'||p_product_id||':'||second_branch));
+
+  FOR v IN
+    SELECT COALESCE(x.variant_label,'') AS variant_label,SUM(x.quantity)::integer AS quantity
+    FROM jsonb_to_recordset(p_variants) AS x(variant_label text,quantity integer)
+    GROUP BY COALESCE(x.variant_label,'')
+  LOOP
+    IF v.quantity<=0 THEN
+      RAISE EXCEPTION 'Cantidad inválida en transferencia' USING ERRCODE='P0001';
+    END IF;
+    SELECT * INTO src FROM public.inventory
+    WHERE product_id=p_product_id AND branch_id=p_from_branch_id
+      AND COALESCE(variant_label,'')=v.variant_label
+    FOR UPDATE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'No existe stock origen para variante %',v.variant_label USING ERRCODE='P0001';
+    END IF;
+    IF src.quantity<v.quantity THEN
+      RAISE EXCEPTION 'Stock insuficiente en origen: disponible %, requerido %',src.quantity,v.quantity USING ERRCODE='P0001';
+    END IF;
+  END LOOP;
+
+  FOR v IN
+    SELECT COALESCE(x.variant_label,'') AS variant_label,SUM(x.quantity)::integer AS quantity
+    FROM jsonb_to_recordset(p_variants) AS x(variant_label text,quantity integer)
+    GROUP BY COALESCE(x.variant_label,'')
+  LOOP
+    UPDATE public.inventory SET quantity=quantity-v.quantity
+    WHERE product_id=p_product_id AND branch_id=p_from_branch_id
+      AND COALESCE(variant_label,'')=v.variant_label;
+
+    INSERT INTO public.inventory_movements(
+      product_id,branch_id,variant_label,quantity_delta,movement_type,reference_id,user_id,metadata
+    ) VALUES (
+      p_product_id,p_from_branch_id,v.variant_label,-v.quantity,'TRANSFER_OUT',
+      p_operation_id,NULLIF(p_user_id,'system'),jsonb_build_object('batch_id',p_batch_id)
+    );
+
+    UPDATE public.inventory SET quantity=quantity+v.quantity
+    WHERE product_id=p_product_id AND branch_id=p_to_branch_id
+      AND COALESCE(variant_label,'')=v.variant_label;
+
+    IF NOT FOUND THEN
+      INSERT INTO public.inventory(product_id,branch_id,variant_label,quantity,min_quantity,id)
+      VALUES(p_product_id,p_to_branch_id,v.variant_label,v.quantity,5,gen_random_uuid()::text);
+    END IF;
+
+    INSERT INTO public.inventory_movements(
+      product_id,branch_id,variant_label,quantity_delta,movement_type,reference_id,user_id,metadata
+    ) VALUES (
+      p_product_id,p_to_branch_id,v.variant_label,v.quantity,'TRANSFER_IN',
+      p_operation_id,NULLIF(p_user_id,'system'),jsonb_build_object('batch_id',p_batch_id)
+    );
+  END LOOP;
+
+  INSERT INTO public.inventory_transfers(
+    id,operation_id,batch_id,product_id,product_name,
+    from_branch_id,from_branch_name,to_branch_id,to_branch_name,
+    variant_label,quantity,variants,date,user_id,status
+  )
+  SELECT
+    p_operation_id,p_operation_id,NULLIF(btrim(p_batch_id),''),
+    p_product_id,p.name,p_from_branch_id,bf.name,p_to_branch_id,bt.name,
+    COALESCE((
+      SELECT string_agg(
+        CASE WHEN COALESCE(x.variant_label,'')='' THEN 'Producto Base' ELSE x.variant_label END
+        || ': ' || x.quantity, ', '
+        ORDER BY CASE WHEN COALESCE(x.variant_label,'')='' THEN 0 ELSE 1 END,x.variant_label
+      )
+      FROM (
+        SELECT COALESCE(y.variant_label,'') variant_label,SUM(y.quantity)::integer quantity
+        FROM jsonb_to_recordset(p_variants) y(variant_label text,quantity integer)
+        GROUP BY COALESCE(y.variant_label,'')
+      ) x
+    ),'Producto Base'),
+    (SELECT COALESCE(SUM(quantity),0)
+     FROM jsonb_to_recordset(p_variants) AS x(variant_label text,quantity integer)),
+    p_variants,NOW(),NULLIF(p_user_id,'system'),'completed'
+  FROM public.products p
+  JOIN public.branches bf ON bf.id=p_from_branch_id
+  JOIN public.branches bt ON bt.id=p_to_branch_id
+  WHERE p.id=p_product_id;
+
+  RETURN jsonb_build_object('success',true,'operation_id',p_operation_id,'batch_id',p_batch_id);
+END
+$function$;
+
 CREATE OR REPLACE FUNCTION public.process_bank_internal_transfer_v2(
   p_operation_id text,
   p_from_card_id text,
