@@ -88,6 +88,10 @@ export default function Banks() {
     const ref = generateId('TRF');
 
     if (transferData.isExternal) {
+      if (fromCard.balance < transferData.amount) {
+        addNotification('Saldo insuficiente en la cuenta de origen.', 'error');
+        return;
+      }
       addBankTransaction({
         id: generateId('BTX'),
         cardId: fromCard.id,
