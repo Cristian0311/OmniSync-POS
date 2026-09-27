@@ -547,11 +547,26 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   // anterior. Solo adelantamos una operación cuando otra operación ENCOLADA
   // es una dependencia explícita de ella.
   const queued = new Map<string, OfflineQueueItem>();
+  const cashBySessionId = new Map<string, OfflineQueueItem[]>();
   for (const q of queueAtStart) {
     queued.set(`${q.type}:${q.actionId}`, q);
-    if (q.type === 'cash_session') queued.set(`cash_session_id:${q.data?.id}`, q);
+    if (q.type === 'cash_session' && q.data?.id) {
+      const list = cashBySessionId.get(String(q.data.id)) || [];
+      list.push(q);
+      cashBySessionId.set(String(q.data.id), list);
+    }
   }
   const dep = (type: OfflineActionType, id?: string | null) => id ? queued.get(`${type}:${id}`) : undefined;
+  const cashOp = (sessionId: string | undefined, operation: 'open' | 'close' | 'cancel' | 'join' | 'snapshot') => {
+    if (!sessionId) return undefined;
+    const list = cashBySessionId.get(String(sessionId)) || [];
+    return list.find(q => q.data?.__operation === operation ||
+      (operation === 'open' && String(q.actionId).startsWith('cash-open:')) ||
+      (operation === 'close' && String(q.actionId).startsWith('cash-close:')) ||
+      (operation === 'cancel' && String(q.actionId).startsWith('cash-cancel:')) ||
+      (operation === 'join' && String(q.actionId).startsWith('cash-join:'))
+    );
+  };
   const dependencies = (item: OfflineQueueItem): OfflineQueueItem[] => {
     const d: OfflineQueueItem[] = [];
     const data = item.data || {};
@@ -560,13 +575,18 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
       case 'cash_session':
         if (data.__operation === 'open' || String(item.actionId).startsWith('cash-open:')) {
           add(dep('branch', data.branchId)); add(dep('user', data.userId));
-        } else if (data.__operation === 'close' || data.__operation === 'cancel') {
-          add(queued.get(`cash_session_id:${data.id}`));
+        } else if (data.__operation === 'close' || data.__operation === 'cancel' ||
+                   String(item.actionId).startsWith('cash-close:') ||
+                   String(item.actionId).startsWith('cash-cancel:') ||
+                   String(item.actionId).startsWith('cash-join:')) {
+          add(cashOp(data.id, 'open'));
+        } else {
+          add(cashOp(data.id, 'open'));
         }
         break;
       case 'transaction':
         add(dep('branch', data.branchId)); add(dep('user', data.userId)); add(dep('customer', data.customerId));
-        add(queued.get(`cash_session_id:${data.sessionId}`));
+        add(cashOp(data.sessionId, 'open'));
         for (const it of data.items || []) add(dep('product', typeof it?.product === 'string' ? it.product : it?.product?.id));
         break;
       case 'void_transaction': add(dep('transaction', data.id)); break;
@@ -580,7 +600,7 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
       case 'supplier_receive': add(dep('supplier_order', data.id)); break;
       case 'inventory_audit': add(dep('branch', data.branchId)); add(dep('user', data.userId)); break;
       case 'audit_complete': add(dep('inventory_audit', data.id)); break;
-      case 'salary_settlement': add(queued.get(`cash_session_id:${data.sessionId}`)); break;
+      case 'salary_settlement': add(cashOp(data.sessionId, 'close')); break;
       case 'bank_transaction': add(dep('bank_card', data.cardId)); add(dep('transaction', data.transactionId)); break;
       case 'idn_settlement_price': add(dep('product', data.productId)); add(dep('user', data.userId)); break;
       case 'time_shift': add(dep('user', data.userId)); break;
