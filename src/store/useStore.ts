@@ -2272,11 +2272,13 @@ export const useStore = create<AppState>()(
             getOfflineQueue().filter(i => i.type === 'transaction' || i.type === 'void_transaction').map(i => i.data.id)
           );
           const mergedTransactionsRaw = mergeUnique(data.transactions, state.transactions || [], { offlineIds: offlineQueuedTxIds });
-          // Do not purge local operational history from an empty remote snapshot.
-          // Empty/partial reads can occur during reconnects or visibility changes.
-          const mergedTransactions = Array.isArray(data.transactions) && data.transactions.length > 0
-            ? mergedTransactionsRaw.filter(t => data.transactions.some((st: any) => st.id === t.id) || offlineQueuedTxIds.has(t.id))
-            : mergedTransactionsRaw;
+          // Nunca purgar una venta local únicamente porque una lectura remota
+          // todavía no la devuelve. Entre commits/realtime/reconexiones puede
+          // existir una ventana de consistencia y esa purga era precisamente la
+          // causa de que un ticket apareciera en Reportes y luego desapareciera.
+          // Supabase sigue siendo la autoridad: cuando llega el mismo ID remoto,
+          // mergeUnique lo reemplaza con la versión del servidor.
+          const mergedTransactions = mergedTransactionsRaw;
 
           // --- 3. Sesiones ---
           const offlineQueuedSessionIds = new Set(
