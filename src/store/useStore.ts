@@ -1277,8 +1277,13 @@ export const useStore = create<AppState>()(
           }));
           return;
         }
+        if (res.errorCode) {
+          console.warn("[openSession] Apertura rechazada por Supabase:", res.error);
+          get().addNotification(res.error || 'No se pudo abrir el turno.', 'error');
+          return;
+        }
       } catch (err) {
-        console.warn("[openSession] RPC callOpenSessionRPC failed/errored, falling back to local queue:", err);
+        console.warn("[openSession] Fallo de transporte al abrir; se conservará como operación offline:", err);
       }
     }
 
@@ -1299,7 +1304,7 @@ export const useStore = create<AppState>()(
     }));
     // Offline-first: never fire-and-forget a master write. The session must
     // survive a reload and be retried through the operation queue.
-    enqueueOfflineItem('cash_session', sessionWithSequentialId, `cash-open:${sessionWithSequentialId.id}`);
+    await enqueueOfflineItem('cash_session', sessionWithSequentialId, `cash-open:${sessionWithSequentialId.id}`);
   },
   closeSession: async (sessionId, closingBalances, workerName, closingDate, discrepancyDeduction, sessionMeta) => {
     const finalClosingDate = closingDate || new Date().toISOString();
