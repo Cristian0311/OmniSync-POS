@@ -556,3 +556,151 @@ END
 $function$;
 
 NOTIFY pgrst,'reload schema';
+
+
+-- FASE 29C: sale void reverses bank income atomically
+CREATE OR REPLACE FUNCTION public.process_bank_transaction_v2(
+  p_id text,p_card_id text,p_type text,p_amount numeric,p_date timestamptz,
+  p_reference text,p_description text,p_transaction_id text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path TO 'public','pg_temp'
+AS $function$
+DECLARE
+  v_card public.bank_cards%ROWTYPE;
+  v_existing public.bank_transactions%ROWTYPE;
+  v_sale public.transactions%ROWTYPE;
+  v_new_balance numeric;
+  v_user_id text;
+BEGIN
+  IF NULLIF(btrim(p_id),'') IS NULL THEN RAISE EXCEPTION 'ID de movimiento requerido' USING ERRCODE='P0001'; END IF;
+  IF p_card_id IS NULL THEN RAISE EXCEPTION 'Cuenta bancaria requerida' USING ERRCODE='P0001'; END IF;
+  IF COALESCE(p_amount,0)<=0 THEN RAISE EXCEPTION 'El importe debe ser mayor que 0' USING ERRCODE='P0001'; END IF;
+  IF p_type NOT IN ('deposit','withdrawal','payment_received','supplier_payment') THEN
+    RAISE EXCEPTION 'Tipo de movimiento bancario no soportado: %',p_type USING ERRCODE='P0001';
+  END IF;
+
+  SELECT * INTO v_existing FROM public.bank_transactions WHERE id=p_id FOR UPDATE;
+  IF FOUND THEN
+    RETURN jsonb_build_object('success',true,'already_existed',true,'transaction_id',v_existing.id,'card_id',v_existing.card_id,
+      'balance',(SELECT balance FROM public.bank_cards WHERE id=v_existing.card_id));
+  END IF;
+
+  IF p_transaction_id IS NOT NULL THEN
+    SELECT * INTO v_sale FROM public.transactions WHERE id=p_transaction_id;
+    IF FOUND AND (v_sale.deleted_at IS NOT NULL OR v_sale.status='refunded') THEN
+      RAISE EXCEPTION 'No se puede crear un movimiento bancario para la venta anulada %',p_transaction_id USING ERRCODE='P0001';
+    END IF;
+  END IF;
+
+  SELECT * INTO v_card FROM public.bank_cards WHERE id=p_card_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'La cuenta bancaria no existe' USING ERRCODE='P0001'; END IF;
+
+  IF p_reference IS NOT NULL AND btrim(p_reference)<>'' THEN
+    SELECT * INTO v_existing FROM public.bank_transactions
+    WHERE card_id=p_card_id AND reference=p_reference
+    ORDER BY created_at DESC LIMIT 1 FOR UPDATE;
+    IF FOUND THEN
+      RETURN jsonb_build_object('success',true,'already_existed',true,'transaction_id',v_existing.id,'card_id',v_existing.card_id,'balance',v_card.balance);
+    END IF;
+  END IF;
+
+  IF p_type IN ('withdrawal','supplier_payment') THEN
+    IF v_card.balance < p_amount THEN
+      RAISE EXCEPTION 'Saldo insuficiente en la cuenta: disponible %, requerido %',v_card.balance,p_amount USING ERRCODE='P0001';
+    END IF;
+    v_new_balance := v_card.balance-p_amount;
+  ELSE
+    v_new_balance := v_card.balance+p_amount;
+  END IF;
+
+  UPDATE public.bank_cards SET balance=v_new_balance WHERE id=p_card_id;
+  INSERT INTO public.bank_transactions(id,card_id,type,amount,date,reference,description,transaction_id)
+  VALUES(p_id,p_card_id,p_type,p_amount,COALESCE(p_date,NOW()),NULLIF(btrim(p_reference),''),
+    COALESCE(p_description,''),NULLIF(btrim(p_transaction_id),''));
+
+  v_user_id := NULLIF(current_setting('request.jwt.claim.sub', true),'');
+  INSERT INTO public.audit_log(user_id,action,entity_type,entity_id,meta)
+  VALUES(v_user_id,'BANK_TRANSACTION_CREATE','bank_transaction',p_id,
+    jsonb_build_object('card_id',p_card_id,'type',p_type,'amount',p_amount,'reference',NULLIF(btrim(p_reference),''),
+      'transaction_id',NULLIF(btrim(p_transaction_id),''),'balance_after',v_new_balance));
+
+  RETURN jsonb_build_object('success',true,'transaction_id',p_id,'card_id',p_card_id,'balance',v_new_balance);
+END
+$function$;
+
+CREATE OR REPLACE FUNCTION public.void_pos_transaction_v2(p_id text, p_user_id text, p_reason text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path TO 'public','pg_temp'
+AS $function$
+DECLARE
+  t RECORD; i RECORD; c RECORD; b RECORD; bt RECORD;
+  qty integer; v_variant text; v_reversed_bank numeric;
+BEGIN
+  SELECT * INTO t FROM public.transactions WHERE id=p_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Venta % no encontrada',p_id; END IF;
+  IF t.deleted_at IS NOT NULL THEN RETURN jsonb_build_object('success',true,'id',p_id,'already_voided',true); END IF;
+
+  FOR i IN SELECT * FROM jsonb_to_recordset(t.items) AS x(product_id text,quantity integer,variant_label text,is_kit boolean,kit_components jsonb) LOOP
+    IF COALESCE(i.quantity,0)<=0 THEN RAISE EXCEPTION 'Cantidad inválida en venta %',p_id; END IF;
+    IF COALESCE(i.is_kit,false) AND jsonb_array_length(COALESCE(i.kit_components,'[]'::jsonb))>0 THEN
+      FOR c IN SELECT * FROM jsonb_to_recordset(i.kit_components) AS x(product_id text,quantity integer) LOOP
+        qty:=c.quantity*i.quantity;
+        PERFORM pg_advisory_xact_lock(hashtext('inventory:'||c.product_id||':'||t.branch_id||':'));
+        UPDATE public.inventory SET quantity=quantity+qty WHERE product_id=c.product_id AND branch_id=t.branch_id AND COALESCE(variant_label,'')='';
+        IF NOT FOUND THEN INSERT INTO public.inventory(id,product_id,branch_id,variant_label,quantity,min_quantity) VALUES(gen_random_uuid()::text,c.product_id,t.branch_id,'',qty,5); END IF;
+        INSERT INTO public.inventory_movements(product_id,branch_id,variant_label,quantity_delta,movement_type,reference_id,user_id,metadata)
+        VALUES(c.product_id,t.branch_id,'',qty,'KIT_RETURN',p_id,p_user_id,jsonb_build_object('kit_product_id',i.product_id));
+      END LOOP;
+    ELSE
+      v_variant:=COALESCE(i.variant_label,'');
+      PERFORM pg_advisory_xact_lock(hashtext('inventory:'||i.product_id||':'||t.branch_id||':'||v_variant));
+      UPDATE public.inventory SET quantity=quantity+i.quantity WHERE product_id=i.product_id AND branch_id=t.branch_id AND COALESCE(variant_label,'')=v_variant;
+      IF NOT FOUND THEN INSERT INTO public.inventory(id,product_id,branch_id,variant_label,quantity,min_quantity) VALUES(gen_random_uuid()::text,i.product_id,t.branch_id,v_variant,i.quantity,5); END IF;
+      INSERT INTO public.inventory_movements(product_id,branch_id,variant_label,quantity_delta,movement_type,reference_id,user_id)
+      VALUES(i.product_id,t.branch_id,v_variant,i.quantity,'VOID_RETURN',p_id,p_user_id);
+    END IF;
+  END LOOP;
+
+  -- Reverse every sale-linked transfer income before marking the sale refunded.
+  FOR b IN
+    SELECT bc.*
+    FROM public.bank_cards bc
+    WHERE bc.id IN (
+      SELECT DISTINCT bt.card_id
+      FROM public.bank_transactions bt
+      WHERE bt.transaction_id=p_id AND bt.type='payment_received'
+    )
+    ORDER BY bc.id
+    FOR UPDATE
+  LOOP
+    v_reversed_bank := 0;
+    FOR bt IN
+      SELECT * FROM public.bank_transactions
+      WHERE card_id=b.id AND transaction_id=p_id AND type='payment_received'
+      ORDER BY id
+      FOR UPDATE
+    LOOP
+      IF b.balance < bt.amount + v_reversed_bank THEN
+        RAISE EXCEPTION 'No se puede anular la venta %: saldo insuficiente en % para revertir %',p_id,b.id,bt.amount USING ERRCODE='P0001';
+      END IF;
+      v_reversed_bank := v_reversed_bank + bt.amount;
+    END LOOP;
+    IF v_reversed_bank > 0 THEN
+      UPDATE public.bank_cards SET balance=b.balance-v_reversed_bank WHERE id=b.id;
+      DELETE FROM public.bank_transactions WHERE card_id=b.id AND transaction_id=p_id AND type='payment_received';
+    END IF;
+  END LOOP;
+
+  UPDATE public.transactions SET deleted_at=NOW(),deleted_by=p_user_id,delete_reason=p_reason,status='refunded' WHERE id=p_id;
+  INSERT INTO public.audit_log(user_id,action,entity_type,entity_id,meta)
+  VALUES(p_user_id,'VOID_TRANSACTION','transaction',p_id,
+    jsonb_build_object('reason',p_reason,'reversed_bank_income',true));
+
+  RETURN jsonb_build_object('success',true,'id',p_id,'bank_reversed',true);
+END
+$function$;
+
+NOTIFY pgrst,'reload schema';
