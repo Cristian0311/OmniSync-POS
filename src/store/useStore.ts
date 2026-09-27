@@ -1096,55 +1096,61 @@ export const useStore = create<AppState>()(
 
     const userId = state.currentUser?.id || 'system';
     const cancelledAt = new Date().toISOString();
-
-    // Restore stock of all transactions in the session locally
-    const sessionTxs = (state.transactions || []).filter(t => t.sessionId === sessionId && !t.deletedAt);
-    sessionTxs.forEach(tx => applyLocalVoidTransaction(tx));
-
-    set(current => {
-      return {
-        cashSessions: (current.cashSessions || []).map(s => s.id === sessionId ? {
-          ...s,
-          status: 'cancelled',
-          closedAt: cancelledAt,
-          closingDate: cancelledAt,
-          deletedAt: undefined,
-          deletedBy: undefined,
-          deleteReason: reason
-        } : s),
-        transactions: (current.transactions || []).map(t =>
-          t.sessionId === sessionId && !t.deletedAt
-            ? { ...t, deletedAt: cancelledAt, deletedBy: userId, deleteReason: reason, status: 'refunded' as const }
-            : t
-        ),
-        cart: []
-      };
-    });
-
-    if (navigator.onLine) {
-      try {
-        const res = await callCancelSessionRPC(sessionId, userId, reason);
-        if (!res.success) throw new Error(res.error || 'No se pudo cancelar el turno');
-        return true;
-      } catch (err) {
-        console.warn('[cancelSession] No se pudo confirmar en Supabase; se encola:', err);
-      }
-    }
-
-    enqueueOfflineItem('cash_session', { 
-      id: sessionId, 
+    const queueData = {
+      id: sessionId,
       branchId: session.branchId,
       userId,
       status: 'cancelled',
       closedAt: cancelledAt,
       closingDate: cancelledAt,
       deleteReason: reason,
-      __operation: 'cancel' 
-    }, `cash-cancel:${sessionId}`);
+      __operation: 'cancel'
+    };
+
+    // Persist the cancellation intent before any local mutation.
+    await enqueueOfflineItem('cash_session', queueData, 'cash-cancel:' + sessionId);
+
+    if (navigator.onLine) {
+      try {
+        const res = await callCancelSessionRPC(sessionId, userId, reason);
+        if (!res.success) throw new Error(res.error || 'No se pudo cancelar el turno');
+
+        const sessionTxs = (get().transactions || []).filter(t => t.sessionId === sessionId && !t.deletedAt);
+        sessionTxs.forEach(tx => applyLocalVoidTransaction(tx));
+        set(current => ({
+          cashSessions: (current.cashSessions || []).map(s => s.id === sessionId ? {
+            ...s, status: 'cancelled', closedAt: cancelledAt, closingDate: cancelledAt, deleteReason: reason
+          } : s),
+          transactions: (current.transactions || []).map(t =>
+            t.sessionId === sessionId && !t.deletedAt
+              ? { ...t, deletedAt: cancelledAt, deletedBy: userId, deleteReason: reason, status: 'refunded' as const }
+              : t
+          ),
+          cart: []
+        }));
+        removeFromOfflineQueueByAction('cash_session', 'cash-cancel:' + sessionId);
+        return true;
+      } catch (err) {
+        console.warn('[cancelSession] Cancelación no confirmada; queda durable para reintento:', err);
+        return false;
+      }
+    }
+
+    const sessionTxs = (state.transactions || []).filter(t => t.sessionId === sessionId && !t.deletedAt);
+    sessionTxs.forEach(tx => applyLocalVoidTransaction(tx));
+    set(current => ({
+      cashSessions: (current.cashSessions || []).map(s => s.id === sessionId ? {
+        ...s, status: 'cancelled', closedAt: cancelledAt, closingDate: cancelledAt, deleteReason: reason
+      } : s),
+      transactions: (current.transactions || []).map(t =>
+        t.sessionId === sessionId && !t.deletedAt
+          ? { ...t, deletedAt: cancelledAt, deletedBy: userId, deleteReason: reason, status: 'refunded' as const }
+          : t
+      ),
+      cart: []
+    }));
     return true;
   },
-
-
 
   createReturn: (returnItem) => {
     const newReturn = { ...returnItem, id: returnItem.id || generateReadableId('DEV', get().returns.length) };
