@@ -13,123 +13,70 @@ let realtimeChannel: any = null;
 let pollIntervalId: any = null;
 let branchRepairIntervalId: any = null;
 let isSyncInProgress = false;
+let debounceTimeout: any = null;
+const BRANCH_SCOPED_TABLES = new Set(['inventory','transactions','cash_sessions','inventory_transfers','supplier_orders','inventory_audits','time_shifts','bank_transactions']);
+const REMOTE_SYNC_TABLES = ['settings','cash_movements','currencies','branches','categories','products','users','inventory','customers','cash_sessions','transactions','idn_settlement_prices','inventory_transfers','warranties','returns','quotes','time_shifts','bank_cards','bank_transactions','suppliers','supplier_orders','inventory_audits','salary_settlements','inventory_movements','inventory_audit_items'];
+
+async function reconcileRemoteState(): Promise<void> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+  if (getOfflineQueueCount() > 0) { await triggerBackgroundSync(false); return; }
+  await useStore.getState().bootstrapPosFromSupabase();
+}
 
 export async function triggerBackgroundSync(force = false): Promise<void> {
   if (isSyncInProgress) return;
   if (typeof navigator !== 'undefined' && !navigator.onLine) return;
   isSyncInProgress = true;
   try {
-    // Reconnection path: upload local operations first. Do NOT immediately pull
-    // the whole database afterward; doing so was the main source of heavy UI
-    // stalls and local/remote merge races.
     const manualOfflineSync = useStore.getState().storeConfig?.manualOfflineSync === true;
     if (getOfflineQueueCount() > 0 && (!manualOfflineSync || force)) await processOfflineQueue();
-    if (!force) {
-      await useStore.getState().refreshBranchInventory();
-    }
-    if (force && getOfflineQueueCount() === 0) {
-      // Explicit/manual recovery may still request the existing full pull.
-      await useStore.getState().syncWithSupabase();
-    }
-  } catch (err) {
-    console.warn('[RealtimeSync] Error en sincronización de fondo:', err);
-  } finally {
-    isSyncInProgress = false;
-  }
+    if (getOfflineQueueCount() === 0) await useStore.getState().bootstrapPosFromSupabase();
+    else if (!force) await useStore.getState().refreshBranchInventory();
+  } catch (err) { console.warn('[RealtimeSync] Error en sincronización de fondo:', err); }
+  finally { isSyncInProgress = false; }
 }
 
-let debounceTimeout: any = null;
-export function scheduleDebouncedSync(delayMs = 1500): void {
+export function scheduleDebouncedSync(delayMs = 1200): void {
   if (debounceTimeout) clearTimeout(debounceTimeout);
   debounceTimeout = setTimeout(() => {
-    if (navigator.onLine) useStore.getState().refreshBranchInventory().catch(() => {});
+    if (navigator.onLine && !isSyncInProgress) reconcileRemoteState().catch(() => {});
   }, delayMs);
 }
 
 export function initMultiDeviceRealtimeSync(): () => void {
   if (typeof window === 'undefined') return () => {};
   const supabase = getSupabase();
-
-  const handleInventoryChange = (payload: any) => {
+  const handleRemoteChange = (payload: any) => {
     window.dispatchEvent(new CustomEvent('remote_data_changed', { detail: payload }));
-    const row = payload?.new || payload?.old;
-    if (!row) return;
-    useStore.setState((state: any) => {
-      const key = `${row.product_id}:${row.branch_id}:${row.variant_label || ''}`;
-      const list = [...(state.inventory || [])];
-      const idx = list.findIndex((i: any) => `${i.productId}:${i.branchId}:${i.variantLabel || ''}` === key);
-      if (payload.eventType === 'DELETE') { if (idx >= 0) list.splice(idx, 1); }
-      else {
-        const next = { id: row.id, productId: row.product_id, branchId: row.branch_id, variantLabel: row.variant_label || undefined, quantity: Number(row.quantity) || 0, minQuantity: Number(row.min_quantity) || 0 };
-        if (idx >= 0) list[idx] = next; else list.push(next);
-      }
-      return { inventory: list };
-    });
+    scheduleDebouncedSync();
   };
-
-  const handleTransactionChange = (payload: any) => {
-    window.dispatchEvent(new CustomEvent('remote_data_changed', { detail: payload }));
-  };
-
   const subscribeRealtime = () => {
     if (!supabase || realtimeChannel) return;
     const branchId = useStore.getState().currentBranchId;
     try {
-      realtimeChannel = supabase.channel(`pos-sync-${branchId || 'global'}`);
-      realtimeChannel.on('postgres_changes', {
-        event: '*', schema: 'public', table: 'inventory',
-        ...(branchId ? { filter: `branch_id=eq.${branchId}` } : {})
-      }, handleInventoryChange);
-      realtimeChannel.on('postgres_changes', {
-        event: '*', schema: 'public', table: 'transactions',
-        ...(branchId ? { filter: `branch_id=eq.${branchId}` } : {})
-      }, handleTransactionChange);
+      realtimeChannel = supabase.channel('pos-sync-' + (branchId || 'global'));
+      for (const table of REMOTE_SYNC_TABLES) {
+        const config: any = { event: '*', schema: 'public', table };
+        if (branchId && BRANCH_SCOPED_TABLES.has(table)) config.filter = 'branch_id=eq.' + branchId;
+        realtimeChannel.on('postgres_changes', config, handleRemoteChange);
+      }
       realtimeChannel.subscribe((status: string) => {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') console.warn('[RealtimeSync] Canal Realtime:', status);
+        if (status === 'SUBSCRIBED') { console.info('[RealtimeSync] Canal multi-dispositivo conectado.'); scheduleDebouncedSync(300); }
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') console.warn('[RealtimeSync] Canal Realtime:', status);
       });
-    } catch (e) {
-      realtimeChannel = null;
-      console.warn('[RealtimeSync] No se pudo inicializar Realtime:', e);
-    }
+    } catch (e) { realtimeChannel = null; console.warn('[RealtimeSync] No se pudo inicializar Realtime:', e); }
   };
-
-  const handleOffline = () => {
-    if (realtimeChannel && supabase) {
-      try { supabase.removeChannel(realtimeChannel); } catch {}
-      realtimeChannel = null;
-    }
-  };
-
-  const handleOnline = () => {
-    subscribeRealtime();
-    triggerBackgroundSync(false).catch(() => {});
-  };
-
-  if (navigator.onLine) {
-    useStore.getState().bootstrapPosFromSupabase().catch(() => {});
-    subscribeRealtime();
-  }
-
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === 'visible' && navigator.onLine && getOfflineQueueCount() > 0) triggerBackgroundSync().catch(() => {});
-  };
-  const handleWindowFocus = () => {
-    if (navigator.onLine && getOfflineQueueCount() > 0) triggerBackgroundSync().catch(() => {});
-  };
-
+  const handleOffline = () => { if (realtimeChannel && supabase) { try { supabase.removeChannel(realtimeChannel); } catch {} realtimeChannel = null; } };
+  const handleOnline = () => { subscribeRealtime(); triggerBackgroundSync(false).catch(() => {}); };
+  if (navigator.onLine) { subscribeRealtime(); triggerBackgroundSync(false).catch(() => {}); }
+  const handleVisibilityChange = () => { if (document.visibilityState === 'visible' && navigator.onLine) triggerBackgroundSync(false).catch(() => {}); };
+  const handleWindowFocus = () => { if (navigator.onLine) triggerBackgroundSync(false).catch(() => {}); };
   document.addEventListener('visibilitychange', handleVisibilityChange);
   window.addEventListener('focus', handleWindowFocus);
   window.addEventListener('online', handleOnline);
   window.addEventListener('offline', handleOffline);
-
-  pollIntervalId = setInterval(() => {
-    if (navigator.onLine && getOfflineQueueCount() > 0 && !isSyncInProgress) triggerBackgroundSync().catch(() => {});
-  }, 30000);
-
-  branchRepairIntervalId = setInterval(() => {
-    if (navigator.onLine && !isSyncInProgress && getOfflineQueueCount() === 0) useStore.getState().refreshBranchInventory().catch(() => {});
-  }, 120000);
-
+  pollIntervalId = setInterval(() => { if (navigator.onLine && !isSyncInProgress) triggerBackgroundSync(false).catch(() => {}); }, 30000);
+  branchRepairIntervalId = setInterval(() => { if (navigator.onLine && !isSyncInProgress) reconcileRemoteState().catch(() => {}); }, 120000);
   return () => {
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.removeEventListener('focus', handleWindowFocus);
@@ -138,9 +85,6 @@ export function initMultiDeviceRealtimeSync(): () => void {
     if (pollIntervalId) clearInterval(pollIntervalId);
     if (branchRepairIntervalId) clearInterval(branchRepairIntervalId);
     if (debounceTimeout) clearTimeout(debounceTimeout);
-    if (realtimeChannel && supabase) {
-      try { supabase.removeChannel(realtimeChannel); } catch {}
-      realtimeChannel = null;
-    }
+    if (realtimeChannel && supabase) { try { supabase.removeChannel(realtimeChannel); } catch {} realtimeChannel = null; }
   };
 }
