@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import {
   Plus, Trash2, CreditCard, DollarSign, Copy, Check
 } from "lucide-react";
-import type { Currency, Payment } from "../../types";
+import type { Currency } from "../../types";
 import { cn } from "../../lib/utils";
 
 export interface CheckoutPaymentLine {
@@ -38,7 +38,7 @@ export interface CheckoutModalProps {
   onClose: () => void;
   onAddPaymentLine: () => void;
   onRemovePaymentLine: (id: string) => void;
-  onUpdatePaymentLine: (id: string, field: string, value: any) => void;
+  onUpdatePaymentLine: (id: string, field: keyof CheckoutPaymentLine, value: any) => void;
   onSetActivePaymentLine: (id: string) => void;
   onAutoFillRemaining: (id: string) => void;
   onSplitUsdPayment: (id: string) => void;
@@ -68,6 +68,11 @@ export default function CheckoutModal({
   onCopyFeedback,
 }: CheckoutModalProps) {
   const [copiedTransferInfo, setCopiedTransferInfo] = useState(false);
+  const formatMoney = (amount: number, symbol: string) => {
+    const isCup = symbol === "CUP" || symbol === "MN" || symbol === "CUC" || symbol === "₱";
+    const decimals = isCup ? 0 : 2;
+    return `${symbol} ${amount.toLocaleString("es-CU", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+  };
 
         <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[80] flex items-center justify-center p-2 sm:p-4 overflow-hidden animate-in fade-in duration-200">
           <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md sm:max-w-lg overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[94vh] sm:max-h-[90vh] border border-slate-200 dark:border-slate-800">
@@ -276,8 +281,8 @@ export default function CheckoutModal({
 
                           const handleCopyText = (text: string, label: string) => {
                             navigator.clipboard?.writeText(text);
-                            onCopyFeedback(`${label} copiado`);
-                            onCopyFeedback?.("");
+                            onCopyFeedback?.(`${label} copiado`);
+                            setTimeout(() => onCopyFeedback?.(""), 2000);
                           };
 
                           const handleCopyAllTransferData = () => {
