@@ -1695,13 +1695,12 @@ export default function POS() {
     const sellerUser = (users || []).find(u => u.id === activeSellerId) || currentUser;
     const effectiveBranchId = currentSession.branchId || sellerUser?.assignedBranchId || currentBranchId || (branches[0]?.id || 'b1');
 
-    let nextTicketNum = Math.max(txCount, maxTicketNum) + 1;
-    let txId = `TIKECT ID-MARE${nextTicketNum.toString().padStart(2, '0')}`;
-    if (currentTransactions.some(t => t.id === txId)) {
-      const bObj = branches.find(b => b.id === effectiveBranchId);
-      const bCode = bObj?.name?.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase() || 'TG';
-      txId = `TIKECT ID-MARE${nextTicketNum.toString().padStart(2, '0')}-${bCode}`;
-    }
+    // El número visible conserva legibilidad, pero el ID físico del ticket debe
+    // ser globalmente único entre dispositivos. Nunca usamos solo el contador local:
+    // dos terminales pueden tener el mismo estado y generar el mismo ticket.
+    const nextTicketNum = Math.max(txCount, maxTicketNum) + 1;
+    const ticketSerial = crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase();
+    const txId = `TIKECT ID-MARE${nextTicketNum.toString().padStart(2, '0')}-${ticketSerial}`;
 
     const tx: import('../types').Transaction = {
       id: txId,
