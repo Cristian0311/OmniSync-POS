@@ -504,26 +504,39 @@ export default function POS() {
     }
 
     setIsCancellingShift(true);
+    setPosError("");
     try {
-      const ok = await useStore.getState().cancelSession(currentSession.id);
+      const sessionId = currentSession.id;
+      const ok = await useStore.getState().cancelSession(sessionId);
       if (!ok) {
-        setPosError("No se pudo cancelar el turno. La operación no fue confirmada.");
+        setPosError("No se pudo cancelar el turno. La operación no fue confirmada; el turno sigue abierto.");
         return;
       }
 
       setShowCancelShiftModal(false);
       setCancelShiftPassword("");
+      setShowCashManagementModal(false);
+      setShowDiscrepancyModal(false);
+      setClosingBalances({});
+      setFinalBalancesToClose([]);
+      setCashManagementTab('movements');
+      setDeductFromSalary(false);
       setShowOpenShiftModal(false);
       setJoiningSessionId(null);
       setJoiningSessionPassword("");
       setLastClosedSession(null);
       setActiveSessionId(null);
       clearCart();
-      setPosSuccess("Turno cancelado correctamente. Regresando al selector de empleado.");
+
+      setPosSuccess(
+        isOnline
+          ? "Turno cancelado correctamente. Regresando al selector de empleado."
+          : "Turno cancelado localmente. La cancelación quedó guardada y se sincronizará al recuperar la conexión."
+      );
       setTimeout(() => setPosSuccess(""), 3500);
     } catch (err: any) {
       console.error("[POS] Error cancelando turno:", err);
-      setPosError(err?.message || "No se pudo cancelar el turno.");
+      setPosError(err?.message || "No se pudo cancelar el turno. El turno permanece abierto.");
     } finally {
       setIsCancellingShift(false);
     }

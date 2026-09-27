@@ -523,6 +523,20 @@ export async function callCancelSessionRPC(
   const supabase = getSupabase();
   if (!supabase) return { success: false, error: "Supabase no configurado" };
 
+  const verifyCancelled = async () => {
+    const { data: persisted, error: verifyError } = await supabase
+      .from('cash_sessions')
+      .select('id,status,closed_at,delete_reason')
+      .eq('id', sessionId)
+      .maybeSingle();
+
+    if (verifyError) throw verifyError;
+    if (!persisted || persisted.status !== 'cancelled') {
+      throw new Error('Supabase no confirmó el turno como cancelado');
+    }
+    return persisted;
+  };
+
   try {
     const { data, error } = await supabase.rpc('cancel_cash_session_v2', {
       p_session_id: sessionId,
@@ -532,13 +546,23 @@ export async function callCancelSessionRPC(
 
     if (error) throw error;
     assertRpcSuccess(data, 'cancel_cash_session_v2');
-    return { success: true, data };
+    const persisted = await verifyCancelled();
+    return { success: true, data: { ...(data || {}), persisted } };
   } catch (e: any) {
-    // No hacemos escrituras parciales desde el cliente cuando el RPC falla.
-    // Un timeout/401/5xx puede significar que el servidor ya ejecutó la
-    // operación; el replay idempotente de la cola es la ruta segura.
-    console.warn('[RPC] cancel_cash_session_v2 failed; leaving operation for queue replay:', e);
-    return { success: false, error: formatSupabaseError(e) };
+    try {
+      const persisted = await verifyCancelled();
+      console.warn('[RPC] cancel_cash_session_v2 respondió con error, pero el turno ya consta como cancelado; reconciliando.');
+      return {
+        success: true,
+        data: { success: true, already_cancelled: true, persisted }
+      };
+    } catch (verifyError: any) {
+      console.warn('[RPC] cancel_cash_session_v2 failed; leaving operation for queue replay:', e);
+      return {
+        success: false,
+        error: formatSupabaseError(e) || formatSupabaseError(verifyError)
+      };
+    }
   }
 }
 
