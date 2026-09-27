@@ -146,6 +146,53 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     case 'warranty': { const d=data; const {error}=await supabase.from('warranties').upsert({id:d.id,product_id:d.productId,product_name:d.productName,transaction_id:d.transactionId,customer_id:d.customerId,customer_name:d.customerName,purchase_date:d.purchaseDate,expiry_date:d.expiryDate,serial_number:d.serialNumber,status:d.status}); if(error) throw error; return true; }
     case 'time_shift': { const d=data; const {error}=await supabase.from('time_shifts').upsert({id:d.id,user_id:d.userId,clock_in:d.clockIn,clock_out:d.clockOut,notes:d.notes}); if(error) throw error; return true; }
     case 'quote': { const d=data; const {error}=await supabase.from('quotes').upsert({id:d.id,branch_id:d.branchId,user_id:d.userId,customer_id:d.customerId,date:d.date,subtotal:d.subtotal,tax:d.tax,total:d.total,items:d.items||[],status:d.status,notes:d.notes}); if(error) throw error; return true; }
+    case 'bank_card': {
+      const d = data;
+      if (d.__balance_only) {
+        const synced = await setBankCardBalanceToSupabase(
+          d.id,
+          Number(d.expectedBalance) || 0,
+          Math.max(0, Number(d.newBalance) || 0)
+        );
+        if (!synced) throw new PermanentSyncError('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
+        return true;
+      }
+      if (d.__metadata_only) {
+        const { data: updated, error } = await supabase.from('bank_cards').update({
+          name: d.name || d.bankName || 'Tarjeta Bancaria',
+          bank: d.bank || d.bankName || 'Banco',
+          bank_name: d.bankName || d.bank || 'Banco',
+          card_holder: d.cardHolder || 'Titular',
+          account_number: d.accountNumber || d.lastFourDigits || d.lastFour || '',
+          phone: d.phone || '',
+          last_four_digits: d.lastFourDigits || d.lastFour || (d.accountNumber ? String(d.accountNumber).slice(-4) : '0000'),
+          currency: d.currency || 'CUP',
+          color: d.color || 'from-indigo-600 to-purple-800',
+          is_active: d.isActive !== false
+        }).eq('id', d.id).select('id');
+        if (error) throw error;
+        if (!updated?.length) {
+          throw new PermanentSyncError('La tarjeta bancaria ya no existe; no se aplica el cambio de metadatos para evitar recrearla con saldo 0.');
+        }
+        return true;
+      }
+      const { error } = await supabase.from('bank_cards').upsert({
+        id: d.id,
+        name: d.name || d.bankName || 'Tarjeta Bancaria',
+        bank: d.bank || d.bankName || 'Banco',
+        bank_name: d.bankName || d.bank || 'Banco',
+        card_holder: d.cardHolder || 'Titular',
+        account_number: d.accountNumber || d.lastFourDigits || d.lastFour || '',
+        phone: d.phone || '',
+        last_four_digits: d.lastFourDigits || d.lastFour || (d.accountNumber ? String(d.accountNumber).slice(-4) : '0000'),
+        balance: Number(d.balance) || 0,
+        currency: d.currency || 'CUP',
+        color: d.color || 'from-indigo-600 to-purple-800',
+        is_active: d.isActive !== false
+      });
+      if (error) throw error;
+      return true;
+    }
     case 'bank_card_balance': {
       const d = data;
       const synced = await setBankCardBalanceToSupabase(
