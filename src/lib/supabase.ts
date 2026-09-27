@@ -41,6 +41,21 @@ export function saveSupabaseCredentials(url: string, anonKey: string) {
 
 let cachedClient: SupabaseClient | null = null;
 
+/**
+ * Supabase REST must never be satisfied by a browser/service-worker cache.
+ * The POS queue needs the response from the live PostgREST endpoint so a
+ * reconnect cannot mistake a stale 404/401 for a successful synchronization.
+ */
+const supabaseFetch: typeof fetch = (input, init) => {
+  const requestInit: RequestInit = { ...(init || {}) };
+  const headers = new Headers(requestInit.headers || {});
+  headers.set('Cache-Control', 'no-cache, no-store, max-age=0');
+  headers.set('Pragma', 'no-cache');
+  requestInit.headers = headers;
+  requestInit.cache = 'no-store';
+  return fetch(input, requestInit);
+};
+
 export function getSupabase(): SupabaseClient | null {
   const { url, anonKey, isConfigured } = getSupabaseCredentials();
 
@@ -54,7 +69,13 @@ export function getSupabase(): SupabaseClient | null {
         auth: {
           persistSession: false,
           autoRefreshToken: false,
-        }
+        },
+        global: {
+          fetch: supabaseFetch,
+        },
+        db: {
+          timeout: 15000,
+        },
       });
     } catch (e) {
       console.error("Error inicializando cliente de Supabase:", e);
@@ -63,6 +84,35 @@ export function getSupabase(): SupabaseClient | null {
   }
 
   return cachedClient;
+}
+
+export async function checkSupabaseReachability(timeoutMs = 10000): Promise<{ ok: boolean; message?: string }> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return { ok: false, message: 'El dispositivo está offline.' };
+  }
+  const client = getSupabase();
+  if (!client) return { ok: false, message: 'Supabase no está configurado.' };
+
+  try {
+    // A tiny read proves the REST/Data API is actually reachable. We do not
+    // use this as an authorization check: any HTTP response means the network
+    // path is alive; the actual operation will still validate its own result.
+    const probe = client.from('settings').select('id').limit(1);
+    const timeout = new Promise<{ data: any; error: any }>(resolve =>
+      setTimeout(() => resolve({ data: null, error: { message: 'Tiempo de espera agotado al contactar Supabase.', code: 'NETWORK_TIMEOUT' } }), timeoutMs)
+    );
+    const { error } = await Promise.race([probe, timeout]);
+    if (error) {
+      const code = String((error as any).code || '');
+      const status = Number((error as any).status || 0);
+      if (code === 'NETWORK_TIMEOUT' || status >= 500 || code.startsWith('PGRST') || /network|fetch|failed|timeout/i.test(error.message || '')) {
+        return { ok: false, message: error.message || 'La API de Supabase no respondió correctamente.' };
+      }
+    }
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, message: e?.name === 'AbortError' ? 'Tiempo de espera agotado al contactar Supabase.' : (e?.message || 'No se pudo contactar Supabase.') };
+  }
 }
 
 export async function testSupabaseConnection(url?: string, anonKey?: string): Promise<{ success: boolean; message: string; tableCount?: number }> {

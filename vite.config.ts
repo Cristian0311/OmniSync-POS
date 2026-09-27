@@ -28,7 +28,16 @@ export default defineConfig(() => {
           ]
         },
         workbox: {
-          maximumFileSizeToCacheInBytes: 5000000
+          maximumFileSizeToCacheInBytes: 5000000,
+          // Supabase is the source of truth. Never let Workbox cache REST
+          // responses or make a reconnect replay a stale API response.
+          runtimeCaching: [
+            {
+              urlPattern: /^https:\/\/mszojsqwilfqqcaycxch\.supabase\.co\/(rest|auth|storage|functions)\/.*$/i,
+              handler: 'NetworkOnly',
+              options: { cacheName: 'supabase-network-only' }
+            }
+          ]
         }
       })
     ],

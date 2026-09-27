@@ -1,3 +1,0 @@
--- Fix supplier_order_items id handling
--- The app does not generate an ID for items. We can use uuid generation or alter table to auto generate.
--- Since id is text, we can alter it to use uuid_generate_v4() cast to text, OR generate it in the app.

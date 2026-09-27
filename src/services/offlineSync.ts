@@ -5,7 +5,7 @@
  * state. IndexedDB is used because POS devices can remain offline for long
  * periods and localStorage is too fragile for a growing transactional queue.
  */
-import { getSupabase } from '../lib/supabase';
+import { getSupabase, checkSupabaseReachability } from '../lib/supabase';
 import { useStore } from '../store/useStore';
 import {
   Transaction, CashRegisterSession,
@@ -531,6 +531,10 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   }
   const supabase = getSupabase();
   if (!supabase) return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), errors: [{ type: 'system', actionId: 'supabase', message: 'Supabase no está disponible en esta sesión.' }] };
+  const reachability = await checkSupabaseReachability();
+  if (!reachability.ok) {
+    return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), errors: [{ type: 'network', actionId: 'connectivity', message: reachability.message || 'Supabase no está accesible todavía.' }] };
+  }
   const queueAtStart = getOfflineQueue();
   if (!queueAtStart.length) return { processed: 0, failed: 0, remaining: 0, errors: [] };
 
@@ -538,35 +542,71 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   // Procesamos una instantánea estable. Las operaciones que entren mientras
   // sincronizamos se reconcilian al final y nunca se pierden por reemplazar
   // memoryQueue con una instantánea vieja.
-  // Ordenamos respetando dependencias de negocio, no solo el timestamp.
-  // En dispositivos offline varias operaciones pueden compartir el mismo
-  // milisegundo; si una venta quedara antes que la apertura de su turno, el
-  // procesamiento se detendría sobre la venta y nunca alcanzaría la apertura.
-  // La prioridad solo resuelve dependencias; dentro de cada nivel conservamos
-  // el orden temporal original.
-  const syncPriority = (item: OfflineQueueItem): number => {
-    if (item.type === 'cash_session') {
-      const op = item.data?.__operation;
-      if (op === 'open' || String(item.actionId).startsWith('cash-open:')) return 10;
-      if (op === 'snapshot') return 20;
-      if (op === 'cancel') return 80;
-      if (op === 'close') return 90;
-      return 20;
+  // Orden estable por dependencias reales. No usamos una prioridad global:
+  // hacerlo podría mover una corrección de inventario posterior a una venta
+  // anterior. Solo adelantamos una operación cuando otra operación ENCOLADA
+  // es una dependencia explícita de ella.
+  const queued = new Map<string, OfflineQueueItem>();
+  for (const q of queueAtStart) {
+    queued.set(`${q.type}:${q.actionId}`, q);
+    if (q.type === 'cash_session') queued.set(`cash_session_id:${q.data?.id}`, q);
+  }
+  const dep = (type: OfflineActionType, id?: string | null) => id ? queued.get(`${type}:${id}`) : undefined;
+  const dependencies = (item: OfflineQueueItem): OfflineQueueItem[] => {
+    const d: OfflineQueueItem[] = [];
+    const data = item.data || {};
+    const add = (x?: OfflineQueueItem) => { if (x && x.id !== item.id) d.push(x); };
+    switch (item.type) {
+      case 'cash_session':
+        if (data.__operation === 'open' || String(item.actionId).startsWith('cash-open:')) {
+          add(dep('branch', data.branchId)); add(dep('user', data.userId));
+        } else if (data.__operation === 'close' || data.__operation === 'cancel') {
+          add(queued.get(`cash_session_id:${data.id}`));
+        }
+        break;
+      case 'transaction':
+        add(dep('branch', data.branchId)); add(dep('user', data.userId)); add(dep('customer', data.customerId));
+        add(queued.get(`cash_session_id:${data.sessionId}`));
+        for (const it of data.items || []) add(dep('product', typeof it?.product === 'string' ? it.product : it?.product?.id));
+        break;
+      case 'void_transaction': add(dep('transaction', data.id)); break;
+      case 'return': add(dep('transaction', data.transactionId)); add(dep('product', data.productId)); add(dep('customer', data.customerId)); break;
+      case 'return_complete': add(dep('return', data.id)); break;
+      case 'inventory': case 'inventory_adjustment': case 'inventory_reconcile':
+        add(dep('branch', data.branchId)); add(dep('product', data.productId)); break;
+      case 'transfer':
+        add(dep('product', data.productId)); add(dep('branch', data.fromBranchId)); add(dep('branch', data.toBranchId)); add(dep('user', data.userId)); break;
+      case 'supplier_order': add(dep('supplier', data.supplierId)); add(dep('branch', data.branchId)); break;
+      case 'supplier_receive': add(dep('supplier_order', data.id)); break;
+      case 'inventory_audit': add(dep('branch', data.branchId)); add(dep('user', data.userId)); break;
+      case 'audit_complete': add(dep('inventory_audit', data.id)); break;
+      case 'salary_settlement': add(queued.get(`cash_session_id:${data.sessionId}`)); break;
+      case 'bank_transaction': add(dep('bank_card', data.cardId)); add(dep('transaction', data.transactionId)); break;
+      case 'idn_settlement_price': add(dep('product', data.productId)); add(dep('user', data.userId)); break;
+      case 'time_shift': add(dep('user', data.userId)); break;
+      case 'quote': add(dep('branch', data.branchId)); add(dep('user', data.userId)); add(dep('customer', data.customerId)); break;
+      case 'warranty': add(dep('product', data.productId)); add(dep('transaction', data.transactionId)); add(dep('customer', data.customerId)); break;
+      case 'user': add(dep('branch', data.branchId)); add(dep('branch', data.assignedBranchId)); add(dep('user', data.supervisorId)); break;
+      case 'product': add(dep('category', data.categoryId)); break;
+      case 'customer_delete': break;
     }
-    if (item.type === 'transaction') return 30;
-    if (item.type === 'void_transaction' || item.type === 'return_complete') return 40;
-    if (item.type === 'supplier_order') return 50;
-    if (item.type === 'supplier_receive') return 60;
-    if (item.type === 'inventory_audit') return 70;
-    if (item.type === 'audit_complete') return 80;
-    if (item.type === 'salary_settlement') return 100;
-    return 50;
+    return d;
   };
-  const sorted = [...queueAtStart].sort((a,b) =>
-    syncPriority(a) - syncPriority(b) ||
-    a.timestamp.localeCompare(b.timestamp) ||
-    a.id.localeCompare(b.id)
-  );
+
+  const sorted: OfflineQueueItem[] = [];
+  const pending = new Set(queueAtStart.map(x => x.id));
+  while (pending.size) {
+    const ready = queueAtStart
+      .filter(x => pending.has(x.id) && dependencies(x).every(d => !pending.has(d.id)))
+      .sort((a,b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id));
+    if (!ready.length) {
+      // Cycle protection: preserve deterministic FIFO rather than deadlocking
+      // the entire queue forever because of a malformed dependency graph.
+      const fallback = queueAtStart.filter(x => pending.has(x.id)).sort((a,b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id));
+      sorted.push(...fallback); break;
+    }
+    for (const item of ready) { sorted.push(item); pending.delete(item.id); }
+  }
   const startById = new Map(sorted.map(item => [item.id, item]));
   let processed = 0, failed = 0;
   const errors: Array<{ type: string; actionId: string; message: string; retryCount?: number }> = [];
@@ -698,6 +738,12 @@ export function initOfflineSyncWatcher(): () => void {
   let intervalId: any = null;
   const handleOnline = async () => {
     if (isManualOfflineSyncEnabled()) return;
+    // Chrome can emit 'online' before DNS/TLS/Internet access to Supabase is
+    // actually usable. Give the connection a short settling window and probe
+    // the REST endpoint before touching the durable queue.
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    const reachability = await checkSupabaseReachability(12000);
+    if (!reachability.ok) return;
     const count = getOfflineQueueCount();
     if (!count) return;
     useStore.getState().addNotification(`Conexión detectada. Sincronizando ${count} operaciones pendientes...`, 'info');

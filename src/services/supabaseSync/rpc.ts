@@ -85,11 +85,21 @@ export async function callOpenSessionRPCWithId(session: CashRegisterSession): Pr
   const supabase = getSupabase();
   if (!supabase) return { success: false, error: 'Supabase no configurado' };
   try {
-    const { data, error } = await supabase.rpc('open_cash_session_v3', {
+    const invoke = async () => supabase.rpc('open_cash_session_v3', {
       p_session_id: session.id, p_user_id: session.userId, p_worker_name: session.workerName,
       p_branch_id: session.branchId, p_opening_amount: session.openingAmount, p_opened_at: session.openedAt,
       p_working_employee_ids: session.workingEmployeeIds || [], p_notes: session.notes || ''
     });
+
+    let { data, error } = await invoke();
+    // PGRST202 means PostgREST did not resolve the function in its schema
+    // cache. This can happen for a short window immediately after reconnect or
+    // after a DDL change. Retry once instead of immediately manufacturing a
+    // second local cash session.
+    if (error?.code === 'PGRST202') {
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      ({ data, error } = await invoke());
+    }
     if (error) throw error;
     assertRpcSuccess(data, 'open_cash_session_v3');
     return { success: true, data };
