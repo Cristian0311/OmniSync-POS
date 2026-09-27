@@ -7,7 +7,7 @@ import {
   pushTransactionToSupabase, pushCashSessionToSupabase, pushWarrantyToSupabase, pushUserToSupabase, deleteUserFromSupabase, 
   pushIDNSettlementPriceToSupabase, deleteIDNSettlementPriceFromSupabase, SyncResult,
   pushBranchToSupabase, deleteBranchFromSupabase, pushCategoryToSupabase, deleteCategoryFromSupabase, deleteProductFromSupabase,
-  pushCurrencyToSupabase, clearSupabaseData, pushBankCardToSupabase, updateBankCardMetadataToSupabase, deleteBankCardFromSupabase, pushBankTransactionToSupabase, pushAllToSupabase,
+  pushCurrencyToSupabase, clearSupabaseData, pushBankCardToSupabase, updateBankCardMetadataToSupabase, setBankCardBalanceToSupabase, deleteBankCardFromSupabase, pushBankTransactionToSupabase, pushAllToSupabase,
   pushSupplierToSupabase, deleteSupplierFromSupabase, pushSupplierOrderToSupabase, pushCustomerToSupabase,
   applyInventoryAdjustmentToSupabase, reconcileInventoryToSupabase,
   pushReceiptConfigToSupabase, pushStoreConfigToSupabase, pushCatalogConfigToSupabase, deleteTransactionFromSupabase, deleteCustomerFromSupabase,
@@ -2262,8 +2262,12 @@ export const useStore = create<AppState>()(
       return { bankCards: updated };
     });
     if (found) {
-      const metadata = found;
-      updateBankCardMetadataToSupabase(metadata).then(ok => {
+      const metadata = { ...found };
+      const previous = get().bankCards.find(c => c.id === id)?.balance ?? found.balance ?? 0;
+      const requestedBalance = card.balance;
+      // Metadatos y saldo se sincronizan por rutas independientes. El saldo usa
+      // una operación compare-and-set para no pisar un movimiento bancario concurrente.
+      void updateBankCardMetadataToSupabase(metadata).then(ok => {
         if (!ok) {
           enqueueOfflineItem('bank_card', { ...metadata, __metadata_only: true }, 'bank-metadata:' + metadata.id)
             .catch(err => console.warn('[Bank] metadata queue failed:', err));
@@ -2273,6 +2277,34 @@ export const useStore = create<AppState>()(
         enqueueOfflineItem('bank_card', { ...metadata, __metadata_only: true }, 'bank-metadata:' + metadata.id)
           .catch(queueErr => console.warn('[Bank] metadata queue failed:', queueErr));
       });
+
+      if (requestedBalance !== undefined && Number.isFinite(Number(requestedBalance))) {
+        const balanceActionId = 'bank-balance:' + id + ':' + crypto.randomUUID();
+        const balancePayload = {
+          cardId: id,
+          expectedBalance: Number(previous) || 0,
+          newBalance: Math.max(0, Number(requestedBalance) || 0),
+          userId: get().currentUser?.id || null
+        };
+        void enqueueOfflineItem('bank_card_balance', balancePayload, balanceActionId).then(async () => {
+          if (typeof navigator !== 'undefined' && navigator.onLine) {
+            const ok = await setBankCardBalanceToSupabase(
+              balancePayload.cardId,
+              balancePayload.expectedBalance,
+              balancePayload.newBalance
+            );
+            if (ok) {
+              removeFromOfflineQueueByAction('bank_card_balance', balanceActionId);
+              set(state => ({
+                bankCards: state.bankCards.map(c => c.id === id ? { ...c, balance: balancePayload.newBalance } : c)
+              }));
+            } else {
+              console.warn('[Bank] Saldo no confirmado; permanece en la cola durable para evitar sobrescribir movimientos concurrentes.');
+              await get().refreshBankBalances?.();
+            }
+          }
+        }).catch(err => console.warn('[Bank] balance queue failed:', err));
+      }
     }
   },
   deleteBankCard: async (id) => {
