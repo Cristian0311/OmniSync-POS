@@ -188,19 +188,9 @@ async function migrateLegacyQueue(): Promise<void> {
   queueReady = true;
   emitQueueEvent();
 
-  // Si ya existe conexión al terminar la hidratación, no dejamos la cola
-  // esperando hasta el próximo evento 'online' o el intervalo de 30s.
-  // En modo manual el usuario conserva el control explícito.
-  if (typeof navigator !== 'undefined' && navigator.onLine) {
-    try {
-      const manual = useStore.getState().storeConfig?.manualOfflineSync === true;
-      if (!manual && memoryQueue.length > 0) {
-        void processOfflineQueue();
-      }
-    } catch {
-      // El store todavía puede estar inicializándose; el watcher volverá a intentarlo.
-    }
-  }
+  // El replay automático se inicia desde App después de que el store termine
+  // de hidratarse. No procesamos la cola aquí para evitar que IndexedDB y
+  // Zustand compitan durante el arranque y posteriormente se pisen el estado.
 }
 
 // Hydrate once at module load. Synchronous readers use the memory snapshot.
