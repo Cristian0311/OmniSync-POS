@@ -1969,29 +1969,47 @@ export const useStore = create<AppState>()(
       }).catch(() => {});
     }
   },
-  addCashMovement: (sessionId, movement) => {
+  addCashMovement: async (sessionId, movement) => {
     set((state) => ({
-      cashSessions: state.cashSessions.map(s => 
+      cashSessions: state.cashSessions.map(s =>
         s.id === sessionId ? { ...s, movements: [...(s.movements || []), movement] } : s
       )
     }));
     const updated = get().cashSessions.find(s => s.id === sessionId);
-    if (updated) {
-      enqueueOfflineItem('cash_session', updated, `cash-movement:${sessionId}:${movement.id}`);
-      if (navigator.onLine) pushCashSessionToSupabase(updated).catch(() => {});
+    if (!updated) return;
+
+    const actionId = `cash-movement:${sessionId}:${movement.id}`;
+    await enqueueOfflineItem('cash_session', updated, actionId);
+
+    if (navigator.onLine) {
+      const synced = await pushCashSessionToSupabase(updated);
+      // The movement snapshot was only an outbox safety net. Once the canonical
+      // session write succeeds (or a fallback snapshot has been queued), remove
+      // this extra movement-specific entry so the UI never reports a phantom
+      // pending operation for an already uploaded movement.
+      removeFromOfflineQueueByAction('cash_session', actionId);
+      return synced;
     }
+    return true;
   },
-  removeCashMovement: (sessionId, movementId) => {
+  removeCashMovement: async (sessionId, movementId) => {
     set((state) => ({
-      cashSessions: (state.cashSessions || []).map(s => 
+      cashSessions: (state.cashSessions || []).map(s =>
         s.id === sessionId ? { ...s, movements: (s.movements || []).filter(m => m.id !== movementId) } : s
       )
     }));
     const updated = get().cashSessions.find(s => s.id === sessionId);
-    if (updated) {
-      enqueueOfflineItem('cash_session', updated, `cash-movement-remove:${sessionId}:${movementId}:${Date.now()}`);
-      if (navigator.onLine) pushCashSessionToSupabase(updated).catch(() => {});
+    if (!updated) return;
+
+    const actionId = `cash-movement-remove:${sessionId}:${movementId}`;
+    await enqueueOfflineItem('cash_session', updated, actionId);
+
+    if (navigator.onLine) {
+      const synced = await pushCashSessionToSupabase(updated);
+      removeFromOfflineQueueByAction('cash_session', actionId);
+      return synced;
     }
+    return true;
   },
 
   transfers: [],
