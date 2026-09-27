@@ -5,7 +5,7 @@ import { generateId, cn } from '../lib/utils';
 import { CreditCard, Plus, ArrowUpRight, ArrowDownRight, Activity, Trash2, ShieldCheck, RefreshCw, List, X, CheckCircle2 } from 'lucide-react';
 import { BankCard, BankTransaction } from '../types';
 import { InfoTooltip } from '../components/InfoTooltip';
-import { enqueueOfflineItem, getOfflineQueue, removeFromOfflineQueue } from '../services/offlineSync';
+import { enqueueOfflineItem, getOfflineQueue, removeFromOfflineQueue } from '../services/offlineQueue';
 import { callBankInternalTransferRPC } from '../services/supabaseSync';
 
 export default function Banks() {
