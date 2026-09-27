@@ -1,6 +1,5 @@
 import { getSupabase } from '../../lib/supabase';
 import { useStore } from '../../store/useStore';
-import { enqueueOfflineItem } from '../offlineSync';
 import { normalizeSemanticText } from '../../utils/textUtils';
 import { 
   Product, Category, Branch, InventoryLevel, User, 
@@ -955,7 +954,10 @@ export async function pushBankCardToSupabase(card: BankCard) {
   }
 }
 
-export async function updateBankCardMetadataToSupabase(card: BankCard) {
+export async function updateBankCardMetadataToSupabase(card: BankCard): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase || (typeof navigator !== 'undefined' && !navigator.onLine)) return false;
+
   const payload = {
     name: card.name || card.bankName || 'Tarjeta Bancaria',
     bank: card.bank || card.bankName || 'Banco',
@@ -969,26 +971,13 @@ export async function updateBankCardMetadataToSupabase(card: BankCard) {
     is_active: card.isActive !== false
   };
 
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    enqueueOfflineItem('bank_card', { ...card, __metadata_only: true }, card.id);
-    return;
-  }
-
-  const supabase = getSupabase();
-  if (!supabase) {
-    enqueueOfflineItem('bank_card', { ...card, __metadata_only: true }, card.id);
-    return;
-  }
-
   try {
     const { data, error } = await supabase.from('bank_cards').update(payload).eq('id', card.id).select('id');
     if (error) throw error;
-    if (!data?.length) {
-      await pushBankCardToSupabase(card);
-    }
+    return Boolean(data?.length);
   } catch (e) {
-    enqueueOfflineItem('bank_card', { ...card, __metadata_only: true }, card.id);
     console.warn('Supabase bank card metadata update failed:', e);
+    return false;
   }
 }
 
