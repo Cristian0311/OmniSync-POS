@@ -11,7 +11,7 @@ import {
   pushSupplierToSupabase, deleteSupplierFromSupabase, pushSupplierOrderToSupabase, pushCustomerToSupabase,
   applyInventoryAdjustmentToSupabase, reconcileInventoryToSupabase,
   pushReceiptConfigToSupabase, pushStoreConfigToSupabase, pushCatalogConfigToSupabase, deleteTransactionFromSupabase, deleteCustomerFromSupabase,
-  deleteBankTransactionFromSupabase, clearSelectedDataFromSupabase, callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC, callCompleteInventoryAuditRPC, callCloseSessionRPC, callCancelSessionRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC
+  deleteBankTransactionFromSupabase, clearSelectedDataFromSupabase, callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC, callCompleteInventoryAuditRPC, callCloseSessionRPC, callCancelSessionRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC
 } from '../services/supabaseSync';
 import { getSupabaseCredentials } from '../lib/supabase';
 import { getOfflineQueue, enqueueOfflineItem, removeFromOfflineQueue } from '../services/offlineSync';
@@ -2038,42 +2038,70 @@ export const useStore = create<AppState>()(
   },
 
   bankTransactions: [],
-  addBankTransaction: (transaction) => {
-    set(state => {
-      // 1. Strict anti-duplication check
-      const isDuplicate = (state.bankTransactions || []).some(t => {
-        if (t.id === transaction.id) return true;
-        if (transaction.transactionId && t.transactionId && t.transactionId === transaction.transactionId) return true;
-        if (transaction.reference && t.reference && t.reference === transaction.reference && t.cardId === transaction.cardId) return true;
+  addBankTransaction: async (transaction) => {
+    const existing = (get().bankTransactions || []).some(t =>
+      t.id === transaction.id ||
+      (transaction.transactionId && t.transactionId && t.transactionId === transaction.transactionId) ||
+      (transaction.reference && t.reference && t.reference === transaction.reference && t.cardId === transaction.cardId)
+    );
+    if (existing) return true;
+
+    const actionId = 'bank-transaction:' + transaction.id;
+    await enqueueOfflineItem('bank_transaction', transaction, actionId);
+
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      try {
+        const res = await callProcessBankTransactionRPC(transaction);
+        if (!res.success) throw new Error(res.error || 'No se pudo guardar el movimiento bancario');
+
+        const queued = getOfflineQueue().find(item => item.type === 'bank_transaction' && item.actionId === actionId);
+        if (queued) await removeFromOfflineQueue(queued.id);
+
+        const data = res.data || {};
+        const balance = Number(data.balance);
+        set(state => ({
+          bankTransactions: [
+            transaction,
+            ...(state.bankTransactions || []).filter(t => t.id !== transaction.id)
+          ],
+          bankCards: (state.bankCards || []).map(card =>
+            card.id === transaction.cardId && Number.isFinite(balance)
+              ? { ...card, balance }
+              : card
+          )
+        }));
+        return true;
+      } catch (err: any) {
+        get().addNotification(err?.message || 'El movimiento bancario quedó pendiente de sincronización.', 'warning');
         return false;
-      });
-
-      if (isDuplicate) {
-        console.warn("[Bank] Duplicate bank transaction blocked:", transaction);
-        return state;
       }
+    }
 
-      const updatedCards = state.bankCards.map(card => {
-        if (card.id === transaction.cardId) {
-          let newBalance = card.balance;
-          if (transaction.type === 'deposit' || transaction.type === 'payment_received') {
-            newBalance += transaction.amount;
-          } else if (transaction.type === 'withdrawal' || transaction.type === 'supplier_payment') {
-            newBalance = Math.max(0, newBalance - transaction.amount);
-          }
-          const updatedCard = { ...card, balance: newBalance };
-          pushBankCardToSupabase(updatedCard).catch(() => {});
-          return updatedCard;
-        }
-        return card;
+    set(state => {
+      const duplicate = (state.bankTransactions || []).some(t =>
+        t.id === transaction.id ||
+        (transaction.transactionId && t.transactionId && t.transactionId === transaction.transactionId) ||
+        (transaction.reference && t.reference && t.reference === transaction.reference && t.cardId === transaction.cardId)
+      );
+      if (duplicate) return state;
+
+      const updatedCards = (state.bankCards || []).map(card => {
+        if (card.id !== transaction.cardId) return card;
+        const delta =
+          (transaction.type === 'deposit' || transaction.type === 'payment_received')
+            ? transaction.amount
+            : (transaction.type === 'withdrawal' || transaction.type === 'supplier_payment')
+              ? -transaction.amount
+              : 0;
+        return { ...card, balance: Math.max(0, card.balance + delta) };
       });
 
-      pushBankTransactionToSupabase(transaction).catch(() => {});
       return {
-        bankTransactions: [transaction, ...state.bankTransactions],
+        bankTransactions: [transaction, ...(state.bankTransactions || [])],
         bankCards: updatedCards
       };
     });
+    return true;
   },
 
   deleteBankTransaction: async (id) => {
