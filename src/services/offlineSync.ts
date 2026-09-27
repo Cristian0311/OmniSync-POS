@@ -148,64 +148,6 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     case 'quote': { const d=data; const {error}=await supabase.from('quotes').upsert({id:d.id,branch_id:d.branchId,user_id:d.userId,customer_id:d.customerId,date:d.date,subtotal:d.subtotal,tax:d.tax,total:d.total,items:d.items||[],status:d.status,notes:d.notes}); if(error) throw error; return true; }
     case 'bank_card_balance': {
       const d = data;
-      const ok = await setBankCardBalanceToSupabase(
-        String(d.cardId),
-        Number(d.expectedBalance) || 0,
-        Math.max(0, Number(d.newBalance) || 0)
-      );
-      if (!ok) throw new Error('El saldo bancario cambió en el servidor o no pudo confirmarse; se conserva la operación pendiente.');
-      return true;
-    }
-    case 'bank_card': {
-      const d=data;
-      if (d.__balance_only) {
-        const synced = await setBankCardBalanceToSupabase(
-          d.id,
-          Number(d.expectedBalance) || 0,
-          Math.max(0, Number(d.newBalance) || 0)
-        );
-        if (!synced) throw new PermanentSyncError('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
-        return true;
-      }
-      if (d.__metadata_only) {
-        const { data: updated, error } = await supabase.from('bank_cards').update({
-          name:d.name||d.bankName||'Tarjeta Bancaria',
-          bank:d.bank||d.bankName||'Banco',
-          bank_name:d.bankName||d.bank||'Banco',
-          card_holder:d.cardHolder||'Titular',
-          account_number:d.accountNumber||d.lastFourDigits||d.lastFour||'',
-          phone:d.phone||'',
-          last_four_digits:d.lastFourDigits||d.lastFour||(d.accountNumber?String(d.accountNumber).slice(-4):'0000'),
-          currency:d.currency||'CUP', color:d.color||'from-indigo-600 to-purple-800',
-          is_active:d.isActive!==false
-        }).eq('id',d.id).select('id');
-        if(error) throw error;
-        if(!updated?.length) {
-          const {error: insertError}=await supabase.from('bank_cards').upsert({
-            id:d.id,name:d.name||d.bankName||'Tarjeta Bancaria',bank:d.bank||d.bankName||'Banco',
-            bank_name:d.bankName||d.bank||'Banco',card_holder:d.cardHolder||'Titular',
-            account_number:d.accountNumber||d.lastFourDigits||d.lastFour||'',phone:d.phone||'',
-            last_four_digits:d.lastFourDigits||d.lastFour||(d.accountNumber?String(d.accountNumber).slice(-4):'0000'),
-            balance:d.balance||0,currency:d.currency||'CUP',
-            color:d.color||'from-indigo-600 to-purple-800',is_active:d.isActive!==false
-          });
-          if(insertError) throw insertError;
-        }
-        return true;
-      }
-      const {error}=await supabase.from('bank_cards').upsert({
-        id:d.id,name:d.name||d.bankName||'Tarjeta Bancaria',bank:d.bank||d.bankName||'Banco',
-        bank_name:d.bankName||d.bank||'Banco',card_holder:d.cardHolder||'Titular',
-        account_number:d.accountNumber||d.lastFourDigits||d.lastFour||'',phone:d.phone||'',
-        last_four_digits:d.lastFourDigits||d.lastFour||(d.accountNumber?String(d.accountNumber).slice(-4):'0000'),
-        balance:d.balance||0,currency:d.currency||'CUP',color:d.color||'from-indigo-600 to-purple-800',
-        is_active:d.isActive!==false
-      });
-      if(error) throw error;
-      return true;
-    }
-    case 'bank_card_balance': {
-      const d = data;
       const synced = await setBankCardBalanceToSupabase(
         d.id,
         Number(d.expectedBalance) || 0,
