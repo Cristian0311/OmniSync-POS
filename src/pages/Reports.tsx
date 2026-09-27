@@ -4116,7 +4116,7 @@ export default function Reports() {
                           title="Permite registrar productos vendidos en este turno sin alterar el stock físico de inventario"
                         >
                           <Plus className="w-3 h-3" />
-                          <span>+ Añadir Producto al Informe (Sin afectar stock)</span>
+                          <span>+ Regularizar una venta del turno (Sin afectar stock)</span>
                         </button>
                       </div>
                       <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
@@ -4428,14 +4428,34 @@ export default function Reports() {
                       </div>
                     )}
 
+                    <div className="p-3 rounded-2xl border border-base bg-secondary">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="p-2.5 rounded-xl bg-subtle border border-base">
+                          <div className="text-[7px] font-black uppercase text-muted">1 · Arqueo</div>
+                          <div className="text-[8px] font-bold text-primary mt-0.5">Confirmar el efectivo/transferencias declarados.</div>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-subtle border border-base">
+                          <div className="text-[7px] font-black uppercase text-muted">2 · Investigar</div>
+                          <div className="text-[8px] font-bold text-primary mt-0.5">Buscar error de registro, venta omitida o duplicada.</div>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-subtle border border-base">
+                          <div className="text-[7px] font-black uppercase text-muted">3 · Corregir</div>
+                          <div className="text-[8px] font-bold text-primary mt-0.5">Solo ajustar stock cuando la causa sea física.</div>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Panel de Auditoría y Resolución Editable */}
                     <div className="p-3.5 rounded-2xl bg-subtle border border-base space-y-3">
                       <div className="flex items-center justify-between flex-wrap gap-2">
                         <div className="flex items-center gap-2">
                           <ListChecks className="w-4 h-4 text-indigo-600" />
-                          <span className="text-[9px] font-black uppercase text-primary tracking-wider">
-                            Dictamen y Notas de Auditoría
-                          </span>
+                          <div>
+                            <span className="text-[9px] font-black uppercase text-primary tracking-wider block">
+                              Revisión del descuadre
+                            </span>
+                            <span className="text-[7px] font-bold text-muted uppercase">Registrar la causa y decidir si requiere corrección documental.</span>
+                          </div>
                         </div>
 
                         <div className="flex items-center gap-1.5">
@@ -4585,7 +4605,7 @@ export default function Reports() {
                             )}
                           >
                             <Plus className="w-3.5 h-3.5" />
-                            <span>➕ Agregar Faltante (Descuenta Almacén)</span>
+                            <span>Registrar venta omitida · Ajustar stock</span>
                           </button>
                           <button
                             type="button"
@@ -4598,7 +4618,7 @@ export default function Reports() {
                             )}
                           >
                             <Minus className="w-3.5 h-3.5" />
-                            <span>➖ Restar Duplicado (Suma a Almacén)</span>
+                            <span>Eliminar venta duplicada · Reponer stock</span>
                           </button>
                         </div>
 
@@ -4622,9 +4642,9 @@ export default function Reports() {
                       )}>
                         <p className="text-[8px] font-semibold uppercase leading-relaxed">
                           {auditActionMode === 'add' ? (
-                            <>ℹ️ <strong>MODO AGREGAR FALTANTE:</strong> Los productos agregados se registrarán como venta de este turno y <strong>se descontarán directamente del almacén ({branch?.name || 'este almacén'})</strong>.</>
+                            <><strong>VENTA OMITIDA:</strong> úsalo cuando existe evidencia de una venta que no quedó registrada. Se crea la regularización del turno y <strong>se descuenta del inventario</strong>.</>
                           ) : (
-                            <>ℹ️ <strong>MODO RESTAR DUPLICADO:</strong> Los productos restados corregirán ventas anotadas doblemente en el turno y <strong>SE SUMARÁN NUEVAMENTE al inventario del almacén ({branch?.name || 'este almacén'})</strong>.</>
+                            <><strong>VENTA DUPLICADA:</strong> úsalo cuando la operación quedó registrada dos veces. Se crea una corrección negativa y <strong>se repone el inventario</strong>.</>
                           )}
                         </p>
                       </div>
@@ -5614,7 +5634,7 @@ export default function Reports() {
 
             <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 p-3 rounded-2xl mb-3 text-left">
               <p className="text-[9px] font-bold text-amber-950 dark:text-amber-200 uppercase leading-relaxed">
-                ℹ️ Este ajuste agrega el producto vendido directamente al informe de este turno y recalcula la venta y liquidación, <strong>sin descontar nuevamente la mercancía física del almacén</strong>.
+                Corrección documental del turno. Esta pantalla permite reconstruir una venta que faltó en el informe. Elige explícitamente si la corrección debe afectar el stock físico.
               </p>
             </div>
 
@@ -5777,6 +5797,16 @@ export default function Reports() {
 
             <div className="space-y-2 pt-4 border-t border-base mt-2 flex flex-col">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="p-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50">
+                    <div className="text-[8px] font-black uppercase text-indigo-700 dark:text-indigo-300">Solo reporte</div>
+                    <div className="text-[8px] font-bold text-indigo-900/80 dark:text-indigo-200 mt-0.5">Corrige ventas/comisiones sin volver a tocar la mercancía.</div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900/50">
+                    <div className="text-[8px] font-black uppercase text-amber-700 dark:text-amber-300">Reporte + stock</div>
+                    <div className="text-[8px] font-bold text-amber-900/80 dark:text-amber-200 mt-0.5">Usa esta opción solo cuando el producto realmente salió del inventario.</div>
+                  </div>
+                </div>
                 <button
                   type="button"
                   disabled={isAddingManualItem || !manualItemProductId || manualItemQuantity <= 0}
@@ -5819,7 +5849,7 @@ export default function Reports() {
                   ) : (
                     <Plus className="w-3.5 h-3.5 text-indigo-600" />
                   )}
-                  <span>Añadir sin afectar stock</span>
+                  <span>Solo reporte · NO cambia stock</span>
                 </button>
 
                 <button
@@ -5864,7 +5894,7 @@ export default function Reports() {
                   ) : (
                     <Plus className="w-3.5 h-3.5" />
                   )}
-                  <span>Añadir afectando stock</span>
+                  <span>Reporte + stock · Ajuste físico</span>
                 </button>
               </div>
 
