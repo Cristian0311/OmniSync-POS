@@ -692,7 +692,7 @@ export const useStore = create<AppState>()(
     const activeVariants = variants.filter(v => v.quantity > 0).map(v => ({ variantLabel: v.variantLabel || '', quantity: v.quantity }));
     if (activeVariants.length === 0) return { success: false, error: 'Debes indicar una cantidad mayor a 0 para transferir.' };
 
-    const operationId = batchId || transactionId || crypto.randomUUID();
+    const operationId = transactionId || crypto.randomUUID();
     const userId = (get().currentUser?.id && get().users.some(u => u.id === get().currentUser?.id)) ? get().currentUser!.id : 'system';
     const serverPayload = { operationId, productId, fromBranchId, toBranchId, variants: activeVariants, userId };
     const actionId = 'transfer:' + operationId;
