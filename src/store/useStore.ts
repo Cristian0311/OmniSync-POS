@@ -2123,7 +2123,11 @@ export const useStore = create<AppState>()(
         for (const item of remote || []) map.set(item.id, item);
         return Array.from(map.values());
       };
-      const branchInv = d.inventory || [];
+      // Never blank a branch because a reconnect pull returned zero rows.
+      // Keep the last local branch snapshot until a non-empty authoritative
+      // snapshot arrives; pending offline operations are then replayed normally.
+      const hasBranchInventory = Array.isArray(d.inventory) && d.inventory.length > 0;
+      const branchInv = hasBranchInventory ? d.inventory : (state.inventory || []).filter((item: InventoryLevel) => !branchId || item.branchId === branchId);
       const invMap = new Map<string, InventoryLevel>();
       for (const item of state.inventory || []) {
         if (branchId && item.branchId === branchId) continue;
