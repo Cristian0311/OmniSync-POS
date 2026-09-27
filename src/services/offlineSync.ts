@@ -22,6 +22,7 @@ import {
   callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC,
   callStartInventoryAuditRPC, callSaveInventoryAuditCountRPC, callRequestInventoryAuditRecountRPC, callApproveInventoryAuditRPC,
   callBankInternalTransferRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC,
+  setBankCardBalanceToSupabase,
   pushCashSessionToSupabase
 } from './supabaseSync';
 import { addSyncLog } from '../utils/syncLogger';
@@ -145,6 +146,16 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     case 'warranty': { const d=data; const {error}=await supabase.from('warranties').upsert({id:d.id,product_id:d.productId,product_name:d.productName,transaction_id:d.transactionId,customer_id:d.customerId,customer_name:d.customerName,purchase_date:d.purchaseDate,expiry_date:d.expiryDate,serial_number:d.serialNumber,status:d.status}); if(error) throw error; return true; }
     case 'time_shift': { const d=data; const {error}=await supabase.from('time_shifts').upsert({id:d.id,user_id:d.userId,clock_in:d.clockIn,clock_out:d.clockOut,notes:d.notes}); if(error) throw error; return true; }
     case 'quote': { const d=data; const {error}=await supabase.from('quotes').upsert({id:d.id,branch_id:d.branchId,user_id:d.userId,customer_id:d.customerId,date:d.date,subtotal:d.subtotal,tax:d.tax,total:d.total,items:d.items||[],status:d.status,notes:d.notes}); if(error) throw error; return true; }
+    case 'bank_card_balance': {
+      const d = data;
+      const ok = await setBankCardBalanceToSupabase(
+        String(d.cardId),
+        Number(d.expectedBalance) || 0,
+        Math.max(0, Number(d.newBalance) || 0)
+      );
+      if (!ok) throw new Error('El saldo bancario cambió en el servidor o no pudo confirmarse; se conserva la operación pendiente.');
+      return true;
+    }
     case 'bank_card': {
       const d=data;
       if (d.__metadata_only) {
