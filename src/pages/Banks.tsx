@@ -92,7 +92,7 @@ export default function Banks() {
         addNotification('Saldo insuficiente en la cuenta de origen.', 'error');
         return;
       }
-      addBankTransaction({
+      const saved = await addBankTransaction({
         id: generateId('BTX'),
         cardId: fromCard.id,
         type: 'withdrawal',
@@ -101,6 +101,7 @@ export default function Banks() {
         reference: ref,
         description: `Transferencia Externa a ${transferData.toExternalName} (${transferData.toExternalCard}): ${transferData.reason}`
       });
+      if (!saved) return;
       addNotification(`Transferencia externa de ${transferData.amount} registrada.`, 'success');
     } else {
       const toCard = bankCards.find(c => c.id === transferData.toCardId);
