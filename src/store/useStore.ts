@@ -1361,11 +1361,14 @@ export const useStore = create<AppState>()(
             workingEmployeeIds: res.data.working_employee_ids || [],
             movements: res.data.movements || []
           };
-          set((state) => ({
-            cashSessions: [...(state.cashSessions || []), officialSession],
-            lastTurnNumber: Math.max(state.lastTurnNumber, parseInt(officialSession.id.split('-')[1]) || 0),
-            cart: []
-          }));
+          set((state) => {
+            const sessions = (state.cashSessions || []).filter(s => s.id !== officialSession.id);
+            return {
+              cashSessions: [...sessions, officialSession],
+              lastTurnNumber: Math.max(state.lastTurnNumber, parseInt(officialSession.id.split('-')[1]) || 0),
+              cart: []
+            };
+          });
           return true;
         }
         if (res.errorCode) {
