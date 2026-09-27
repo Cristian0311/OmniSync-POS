@@ -199,6 +199,21 @@ export default function POS() {
   const [posSuccess, setPosSuccess] = useState("");
   const [openingAmount, setOpeningAmount] = useState("");
   const [sessionWorkerName, setSessionWorkerName] = useState("");
+  // La identidad del trabajador debe reconstruirse desde la sesión persistida
+  // después de cambiar de módulo, recargar la página o rehidratar Zustand.
+  useEffect(() => {
+    if (!currentSession) {
+      if (!activeSessionId) setSessionWorkerName("");
+      return;
+    }
+    if (sessionWorkerName !== (currentSession.workerName || "")) {
+      setSessionWorkerName(currentSession.workerName || "");
+    }
+    if (currentBranchId !== currentSession.branchId) {
+      setCurrentBranch(currentSession.branchId);
+    }
+  }, [currentSession?.id, currentSession?.workerName, currentSession?.branchId, activeSessionId, sessionWorkerName, currentBranchId, setCurrentBranch]);
+
   const [employeePickerOpen, setEmployeePickerOpen] = useState(false);
   const [employeePickerSearch, setEmployeePickerSearch] = useState("");
   const employeePickerRef = useRef<HTMLDivElement>(null);
