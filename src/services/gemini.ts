@@ -6,7 +6,7 @@ export async function getBusinessSummaryAI(data: {
   baseCurrency: string;
 }) {
   try {
-    const response = await fetch('/api/ai-business-summary', {
+    const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/ai-business-summary`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
