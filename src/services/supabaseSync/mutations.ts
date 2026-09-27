@@ -219,18 +219,9 @@ export async function pushTransactionToSupabase(tx: Transaction): Promise<boolea
   }
 
   try {
-    // Si la transacción está asociada a una sesión de caja, asegurar que la sesión esté en Supabase primero
-    if (tx.sessionId) {
-      try {
-        const localSession = useStore.getState().cashSessions?.find(s => s.id === tx.sessionId);
-        if (localSession) {
-          await pushCashSessionToSupabase(localSession);
-        }
-      } catch (e) {
-        // Ignorar si falla
-      }
-    }
-
+    // La venta NO modifica el estado del turno. Apertura, cierre y cancelación
+    // tienen sus propias operaciones atómicas; empujar aquí la sesión local
+    // podría sobrescribir un estado remoto más reciente durante una reconexión.
     const row = {
       id: tx.id,
       date: tx.date,
