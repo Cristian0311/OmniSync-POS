@@ -2238,7 +2238,9 @@ export const useStore = create<AppState>()(
             getOfflineQueue().filter(i => i.type === 'transaction' || i.type === 'void_transaction').map(i => i.data.id)
           );
           const mergedTransactionsRaw = mergeUnique(data.transactions, state.transactions || [], { offlineIds: offlineQueuedTxIds });
-          const mergedTransactions = data.transactions
+          // Do not purge local operational history from an empty remote snapshot.
+          // Empty/partial reads can occur during reconnects or visibility changes.
+          const mergedTransactions = Array.isArray(data.transactions) && data.transactions.length > 0
             ? mergedTransactionsRaw.filter(t => data.transactions.some((st: any) => st.id === t.id) || offlineQueuedTxIds.has(t.id))
             : mergedTransactionsRaw;
 
@@ -2247,7 +2249,7 @@ export const useStore = create<AppState>()(
             getOfflineQueue().filter(i => i.type === 'cash_session').map(i => i.data.id)
           );
           const mergedCashSessionsRaw = mergeUnique(data.cashSessions, state.cashSessions || [], { offlineIds: offlineQueuedSessionIds });
-          const mergedCashSessions = data.cashSessions
+          const mergedCashSessions = Array.isArray(data.cashSessions) && data.cashSessions.length > 0
             ? mergedCashSessionsRaw.filter(cs => data.cashSessions.some((ss: any) => ss.id === cs.id) || offlineQueuedSessionIds.has(cs.id))
             : mergedCashSessionsRaw;
 
@@ -2262,7 +2264,7 @@ export const useStore = create<AppState>()(
             getOfflineQueue().filter(i => i.type === 'return' || i.type === 'return_complete').map(i => i.data.id)
           );
           const mergedReturnsRaw = mergeUnique(data.returns, state.returns || [], { offlineIds: offlineQueuedReturnIds });
-          const mergedReturns = data.returns
+          const mergedReturns = Array.isArray(data.returns) && data.returns.length > 0
             ? mergedReturnsRaw.filter(r => data.returns.some((sr: any) => sr.id === r.id) || offlineQueuedReturnIds.has(r.id))
             : mergedReturnsRaw;
 
@@ -2288,19 +2290,19 @@ export const useStore = create<AppState>()(
           // --- 7. Otros (Deduplicación simple por ID o clave única) ---
           const mergedProducts = mergeUnique(data.products, state.products || []);
           // Purge Productos
-          const finalProducts = (data.products && data.products.length > 0) 
+          const finalProducts = (Array.isArray(data.products) && data.products.length > 0)
             ? mergedProducts.filter(p => data.products.some((sp: any) => sp.id === p.id))
             : mergedProducts;
 
           const mergedCategories = mergeUnique(data.categories, state.categories || []);
           // Purge Categorías
-          const finalCategories = (data.categories && data.categories.length > 0)
+          const finalCategories = (Array.isArray(data.categories) && data.categories.length > 0)
             ? mergedCategories.filter(c => data.categories.some((sc: any) => sc.id === c.id))
             : mergedCategories;
 
           const mergedUsers = mergeUnique(data.users, state.users || []);
           // Purge Users (except initial admins)
-          const finalUsers = (data.users && data.users.length > 0)
+          const finalUsers = (Array.isArray(data.users) && data.users.length > 0)
             ? mergedUsers.filter(u => data.users.some((su: any) => su.id === u.id) || u.id.startsWith('admin-') || u.id.startsWith('employee-'))
             : mergedUsers;
 
