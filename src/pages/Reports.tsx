@@ -4,7 +4,7 @@ import {
   TrendingUp, DollarSign, Calendar, Calculator, Package, User, Users, Smartphone, Eye,
   X, ArrowDownRight, ArrowUpRight, ArrowLeftRight, ArrowRight, History, Download, Printer, CheckCircle2, 
   Clock, AlertCircle, AlertTriangle, FileSpreadsheet, ChevronDown, Check, Plus, Search,
-  BarChart3, Brain, ListChecks, ShieldAlert, Loader2, Trash2,
+  PieChart as PieChartIcon, BarChart3, Brain, ListChecks, ShieldAlert, Loader2, Trash2,
   HelpCircle, Edit3, Save, FileText, CheckCircle, Minus
 } from "lucide-react";
 import { useStore } from "../store/useStore";
@@ -224,7 +224,6 @@ export default function Reports() {
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
     const update = () => setIsReportsMobile(media.matches);
-    update();
     media.addEventListener?.("change", update);
     return () => media.removeEventListener?.("change", update);
   }, []);
@@ -1389,7 +1388,18 @@ export default function Reports() {
                 {tab.badge !== undefined && tab.badge > 0 && (
                   <span className={cn(
                     "px-1.5 py-0.2 text-[7px] font-black rounded-full ml-1",
-                    activeTab === tab.id ? "bg-white/30 text-white" : (tab.badgeClass || "bg-indigo-100      {/* Visual Analytics Toggle for Mobile */}
+                    activeTab === tab.id ? "bg-white/30 text-white" : (tab.badgeClass || "bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300")
+                  )}>
+                    {tab.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Visual Analytics Toggle for Mobile */}
       <div className="md:hidden flex items-center justify-between p-2.5 bg-secondary rounded-2xl border border-base shadow-xs">
         <span className="text-[11px] font-black text-primary uppercase tracking-tight flex items-center gap-1.5">
           <BarChart3 className="w-3.5 h-3.5 text-indigo-600" />
@@ -1417,16 +1427,6 @@ export default function Reports() {
           />
         </Suspense>
       )}
-}</span>
-                  </div>
-                  <span className="text-[9px] font-black text-primary">{formatMoney(item.value)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="bg-secondary p-3 rounded-2xl shadow-sm border border-base flex items-start gap-3">
