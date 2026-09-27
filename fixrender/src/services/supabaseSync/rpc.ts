@@ -146,7 +146,7 @@ export async function callReceiveSupplierOrderRPC(orderId: string, userId: strin
 }
 
 export async function callTransferInventoryRPC(params: {
-  operationId: string; productId: string; fromBranchId: string; toBranchId: string;
+  operationId: string; batchId?: string; productId: string; fromBranchId: string; toBranchId: string;
   variants: { variantLabel: string; quantity: number }[]; userId: string;
 }): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
   const supabase = getSupabase();
