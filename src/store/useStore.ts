@@ -999,7 +999,7 @@ export const useStore = create<AppState>()(
       // Primero hacemos durable la operación. Esto elimina la ventana peligrosa
       // entre "el cajero confirmó" y "la RPC terminó": si la pestaña muere o la
       // red cae durante el request, el ticket ya existe en IndexedDB para replay.
-      enqueueOfflineItem('transaction', transaction, transaction.id);
+      await enqueueOfflineItem('transaction', transaction, transaction.id);
       try {
         const res = await callProcessTransactionRPC(transaction);
         if (!res.success) {
@@ -1027,8 +1027,8 @@ export const useStore = create<AppState>()(
 
     // Offline: apply once to the local model and persist the exact operation for
     // later RPC execution. The transaction id is the idempotency key.
+    await enqueueOfflineItem('transaction', transaction, transaction.id);
     applyLocalCompletedSale(transaction);
-    enqueueOfflineItem('transaction', transaction, transaction.id);
     return true;
   },
 
