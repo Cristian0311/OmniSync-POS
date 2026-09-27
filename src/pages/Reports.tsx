@@ -17,6 +17,7 @@ import { InfoTooltip } from "../components/InfoTooltip";
 import { useReportsAnalytics } from "../hooks/useReportsAnalytics";
 import type { ExcelExportData } from "../utils/excelExport";
 import { pullPosBootstrapFromSupabase } from "../services/supabaseSync/pull";
+import { getOfflineQueueCount } from "../services/offlineQueue";
 
 export default function Reports() {
   const store = useStore(useShallow((state) => ({
@@ -88,10 +89,7 @@ export default function Reports() {
         if (!cloud.success || !cloud.data) return;
 
         // Never overwrite local state while an offline write is waiting to be replayed.
-        const hasPending = typeof window !== 'undefined'
-          ? window.localStorage.getItem('omnisync-pos-offline-queue') !== null
-          : false;
-        if (hasPending) return;
+        if (getOfflineQueueCount() > 0) return;
 
         useStore.setState({
           transactions: cloud.data.transactions || [],
