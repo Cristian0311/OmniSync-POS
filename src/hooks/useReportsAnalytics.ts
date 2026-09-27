@@ -186,7 +186,6 @@ export function useReportsAnalytics(params: {
       unitsSold: number;
       totalSettled: number;
       estimatedPublic: number;
-      workerProfit: number;
       companyProfit: number;
     }>();
 
@@ -204,7 +203,6 @@ export function useReportsAnalytics(params: {
           unitsSold: 0,
           totalSettled: 0,
           estimatedPublic: 0,
-          workerProfit: 0,
           companyProfit: 0
         });
       }
@@ -227,7 +225,6 @@ export function useReportsAnalytics(params: {
       entry.totalSettled += tx.total || 0;
       entry.estimatedPublic += itemStats.publicVal;
       entry.companyProfit += (tx.total || 0) - itemStats.costVal;
-      entry.workerProfit += itemStats.publicVal - (tx.total || 0);
     });
 
     return Array.from(map.values());
@@ -238,10 +235,9 @@ export function useReportsAnalytics(params: {
       acc.totalSettled += curr.totalSettled;
       acc.estimatedPublic += curr.estimatedPublic;
       acc.unitsSold += curr.unitsSold;
-      acc.workerProfit += curr.workerProfit;
       acc.companyProfit += curr.companyProfit;
       return acc;
-    }, { totalSettled: 0, estimatedPublic: 0, unitsSold: 0, workerProfit: 0, companyProfit: 0 });
+    }, { totalSettled: 0, estimatedPublic: 0, unitsSold: 0, companyProfit: 0 });
   }, [idnWorkerStats]);
 
   return {
