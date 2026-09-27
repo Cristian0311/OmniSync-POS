@@ -14,13 +14,20 @@ let pollIntervalId: any = null;
 let branchRepairIntervalId: any = null;
 let isSyncInProgress = false;
 let debounceTimeout: any = null;
+let bootstrappedBranchId: string | null = null;
 const BRANCH_SCOPED_TABLES = new Set(['inventory','transactions','cash_sessions','inventory_transfers','supplier_orders','inventory_audits','time_shifts','bank_transactions']);
 const REMOTE_SYNC_TABLES = ['settings','cash_movements','currencies','branches','categories','products','users','inventory','customers','cash_sessions','transactions','idn_settlement_prices','inventory_transfers','warranties','returns','quotes','time_shifts','bank_cards','bank_transactions','suppliers','supplier_orders','inventory_audits','salary_settlements','inventory_movements','inventory_audit_items'];
 
-async function reconcileRemoteState(): Promise<void> {
+async function reconcileRemoteState(forceBootstrap = false): Promise<void> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return;
   if (getOfflineQueueCount() > 0) { await triggerBackgroundSync(false); return; }
-  await useStore.getState().bootstrapPosFromSupabase();
+  const branchId = useStore.getState().currentBranchId || null;
+  if (forceBootstrap || bootstrappedBranchId !== branchId) {
+    await useStore.getState().bootstrapPosFromSupabase();
+    bootstrappedBranchId = branchId;
+  } else {
+    await useStore.getState().refreshBranchInventory();
+  }
 }
 
 export async function triggerBackgroundSync(force = false): Promise<void> {
@@ -30,8 +37,17 @@ export async function triggerBackgroundSync(force = false): Promise<void> {
   try {
     const manualOfflineSync = useStore.getState().storeConfig?.manualOfflineSync === true;
     if (getOfflineQueueCount() > 0 && (!manualOfflineSync || force)) await processOfflineQueue();
-    if (getOfflineQueueCount() === 0) await useStore.getState().bootstrapPosFromSupabase();
-    else if (!force) await useStore.getState().refreshBranchInventory();
+    if (getOfflineQueueCount() === 0) {
+      const branchId = useStore.getState().currentBranchId || null;
+      if (force || bootstrappedBranchId !== branchId) {
+        await useStore.getState().bootstrapPosFromSupabase();
+        bootstrappedBranchId = branchId;
+      } else {
+        await useStore.getState().refreshBranchInventory();
+      }
+    } else if (!force) {
+      await useStore.getState().refreshBranchInventory();
+    }
   } catch (err) { console.warn('[RealtimeSync] Error en sincronización de fondo:', err); }
   finally { isSyncInProgress = false; }
 }
@@ -69,8 +85,19 @@ export function initMultiDeviceRealtimeSync(): () => void {
   const handleOffline = () => { if (realtimeChannel && supabase) { try { supabase.removeChannel(realtimeChannel); } catch {} realtimeChannel = null; } };
   const handleOnline = () => { subscribeRealtime(); triggerBackgroundSync(false).catch(() => {}); };
   if (navigator.onLine) { subscribeRealtime(); triggerBackgroundSync(false).catch(() => {}); }
-  const handleVisibilityChange = () => { if (document.visibilityState === 'visible' && navigator.onLine) triggerBackgroundSync(false).catch(() => {}); };
-  const handleWindowFocus = () => { if (navigator.onLine) triggerBackgroundSync(false).catch(() => {}); };
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible' && navigator.onLine) {
+      // Returning to the POS must not redownload the complete bootstrap.
+      // Realtime + the branch inventory refresh are sufficient here.
+      useStore.getState().refreshBranchInventory().catch(() => {});
+    }
+  };
+  const handleWindowFocus = () => {
+    if (navigator.onLine && !isSyncInProgress) {
+      if (getOfflineQueueCount() > 0) triggerBackgroundSync(false).catch(() => {});
+      else useStore.getState().refreshBranchInventory().catch(() => {});
+    }
+  };
   document.addEventListener('visibilitychange', handleVisibilityChange);
   window.addEventListener('focus', handleWindowFocus);
   window.addEventListener('online', handleOnline);
@@ -88,7 +115,7 @@ export function initMultiDeviceRealtimeSync(): () => void {
       useStore.getState().refreshBranchInventory().catch(() => {});
     }
   }, 30000);
-  branchRepairIntervalId = setInterval(() => { if (navigator.onLine && !isSyncInProgress) reconcileRemoteState().catch(() => {}); }, 120000);
+  branchRepairIntervalId = setInterval(() => { if (navigator.onLine && !isSyncInProgress) reconcileRemoteState(false).catch(() => {}); }, 120000);
   return () => {
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.removeEventListener('focus', handleWindowFocus);
