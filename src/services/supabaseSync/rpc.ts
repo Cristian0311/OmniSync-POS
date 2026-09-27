@@ -115,6 +115,38 @@ export async function callOpenSessionRPCWithId(session: CashRegisterSession): Pr
 
     if (!error) return { success: true, data };
 
+    // The insert can reach PostgreSQL and commit successfully while the HTTP
+    // response is lost on a mobile/unstable connection. Before treating that
+    // attempt as offline, query the stable session ID and recover the official
+    // row so the terminal does not falsely report "cannot confirm".
+    const existingById = await supabase
+      .from('cash_sessions')
+      .select('*')
+      .eq('id', session.id)
+      .maybeSingle();
+
+    if (existingById.data) {
+      if (
+        existingById.data.status === 'open' &&
+        existingById.data.branch_id === session.branchId &&
+        (
+          existingById.data.user_id === session.userId ||
+          (Array.isArray(existingById.data.working_employee_ids) &&
+            existingById.data.working_employee_ids.includes(session.userId))
+        )
+      ) {
+        return { success: true, data: existingById.data };
+      }
+
+      if (existingById.data.status !== 'open') {
+        return {
+          success: false,
+          error: 'El turno ya existe y no está abierto; no se puede reabrir automáticamente.',
+          errorCode: 'CASH_SESSION_REOPEN_BLOCKED'
+        };
+      }
+    }
+
     // A retry must never reopen a session that was already closed/cancelled.
     // The previous upsert could overwrite its status back to "open".
     if (error.code === '23505') {
