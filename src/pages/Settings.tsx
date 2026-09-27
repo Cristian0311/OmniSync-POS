@@ -2312,16 +2312,39 @@ export default function Settings() {
                 </button>
                 <button
                   onClick={async () => {
+                    setIsLoading(true);
                     try {
+                      // Cache reset must never touch localStorage or IndexedDB: those contain
+                      // POS state and the durable offline queue. Only browser cache/SW/session
+                      // state is removed here.
                       sessionStorage.clear();
+
+                      if ('serviceWorker' in navigator) {
+                        const registrations = await navigator.serviceWorker.getRegistrations();
+                        await Promise.all(registrations.map(registration => registration.unregister()));
+                      }
+
                       if ('caches' in window) {
                         const cacheNames = await caches.keys();
                         await Promise.all(cacheNames.map(name => caches.delete(name)));
                       }
+
+                      setShowConfirmCache(false);
+                      showToast('Caché, Service Worker y recursos temporales limpiados. Los datos operativos fueron conservados.');
+
+                      // Give the browser one tick to finish unregister/delete operations, then
+                      // force a fresh document request so an old controlled page cannot remain.
+                      setTimeout(() => {
+                        const url = new URL(window.location.href);
+                        url.searchParams.set('_cache_reset', Date.now().toString());
+                        window.location.replace(url.toString());
+                      }, 100);
                     } catch (e) {
                       console.error('Error limpiando caché:', e);
+                      showToast('No se pudo completar la limpieza de caché. Los datos operativos no fueron modificados.', 'error');
+                    } finally {
+                      setIsLoading(false);
                     }
-                    window.location.href = "/";
                   }}
                   className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md active:scale-95"
                 >
