@@ -194,6 +194,18 @@ export const useStore = create<AppState>()(
   },
   logout: () => set({ currentUser: null, cart: [] }), // LIMPIAR CARRITO AL SALIR
   clearAllData: async () => {
+    // A full reset must never leave durable business operations behind.
+    // Otherwise the cloud is emptied and the offline queue can repopulate it
+    // later, resurrecting old sales or cash sessions.
+    const pendingQueue = getOfflineQueue().filter(item => item.type !== 'conflict');
+    if (pendingQueue.length > 0) {
+      get().addNotification(
+        `No se puede borrar todo mientras hay ${pendingQueue.length} operación(es) offline pendientes. Sincronízalas primero.`,
+        'warning'
+      );
+      return;
+    }
+
     // 1. Clear Supabase (with timeout/error handling to prevent blocking)
     try {
       // Give supabase 10 seconds max, but don't block the UI forever
