@@ -12,10 +12,7 @@ type CategoryRow = { name: string; value: number };
 export interface ReportsChartsProps {
   hourData: HourRow[];
   categoryData: CategoryRow[];
-  showChartsOnMobile: boolean;
-  onToggleMobileCharts: () => void;
   formatMoney: (amount: number) => string;
-  isMobile: boolean;
 }
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
@@ -37,43 +34,10 @@ function CustomTooltip({ active, payload, label, formatMoney }: any) {
 export default function ReportsCharts({
   hourData,
   categoryData,
-  showChartsOnMobile,
-  onToggleMobileCharts,
   formatMoney,
-  isMobile,
 }: ReportsChartsProps) {
-  if (isMobile && !showChartsOnMobile) {
-    return (
-      <div className="md:hidden flex items-center justify-between p-2.5 bg-secondary rounded-2xl border border-base shadow-xs">
-        <span className="text-[11px] font-black text-primary uppercase tracking-tight flex items-center gap-1.5">
-          <BarChart3 className="w-3.5 h-3.5 text-indigo-600" />
-          Gráficos y Tendencias
-        </span>
-        <button
-          onClick={onToggleMobileCharts}
-          className="px-2.5 py-1 text-[9px] font-black uppercase tracking-wider rounded-lg bg-subtle hover:bg-secondary border border-base text-primary transition-all cursor-pointer"
-        >
-          Ver Gráficos
-        </button>
-      </div>
-    );
-  }
-
   return (
     <>
-      <div className="md:hidden flex items-center justify-between p-2.5 bg-secondary rounded-2xl border border-base shadow-xs">
-        <span className="text-[11px] font-black text-primary uppercase tracking-tight flex items-center gap-1.5">
-          <BarChart3 className="w-3.5 h-3.5 text-indigo-600" />
-          Gráficos y Tendencias
-        </span>
-        <button
-          onClick={onToggleMobileCharts}
-          className="px-2.5 py-1 text-[9px] font-black uppercase tracking-wider rounded-lg bg-subtle hover:bg-secondary border border-base text-primary transition-all cursor-pointer"
-        >
-          {showChartsOnMobile ? 'Ocultar' : 'Ver Gráficos'}
-        </button>
-      </div>
-
       <div className={cn("grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4", !showChartsOnMobile && "hidden md:grid")}>
         <div className="lg:col-span-2 bg-secondary rounded-[2rem] p-5 shadow-sm border border-base flex flex-col gap-4">
           <div className="flex items-center justify-between">
