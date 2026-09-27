@@ -191,6 +191,7 @@ export interface AppState {
   syncWithSupabase: () => Promise<SyncResult>;
   bootstrapPosFromSupabase: () => Promise<boolean>;
   refreshBranchInventory: () => Promise<boolean>;
+  refreshBranchOperationalData: () => Promise<boolean>;
   seedDemoProducts: () => void;
   restoreTransactionsFromBackup: () => void;
 
