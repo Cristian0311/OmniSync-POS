@@ -1603,8 +1603,13 @@ export const useStore = create<AppState>()(
       cashSessions: (state.cashSessions || []).map(s => s.id === sessionId ? updatedSession : s)
     }));
     // Joining a shared shift is a real state change and must survive reloads.
-    void enqueueOfflineItem('cash_session', updatedSession, `cash-join:${sessionId}:${userId}`);
-    if (navigator.onLine) pushCashSessionToSupabase(updatedSession).catch(() => {});
+    const actionId = `cash-join:${sessionId}:${userId}`;
+    void enqueueOfflineItem('cash_session', updatedSession, actionId).then(async () => {
+      if (!navigator.onLine) return;
+      const synced = await pushCashSessionToSupabase(updatedSession);
+      removeFromOfflineQueueByAction('cash_session', actionId);
+      if (!synced) console.warn('[joinOpenSession] El alta del colaborador quedó encolada para replay.');
+    }).catch(err => console.warn('[joinOpenSession] No se pudo persistir la intención de unión:', err));
   },
   getCurrentSession: (branchId, userId) => {
     const sessions = get().cashSessions || [];
