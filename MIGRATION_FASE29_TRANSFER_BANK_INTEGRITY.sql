@@ -852,3 +852,29 @@ END
 $function$;
 
 NOTIFY pgrst,'reload schema';
+
+
+-- FASE 30: control formal de conteo fisico
+ALTER TABLE public.inventory_audits
+  ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'cycle_count',
+  ADD COLUMN IF NOT EXISTS blind_count boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS snapshot_at timestamptz,
+  ADD COLUMN IF NOT EXISTS submitted_at timestamptz,
+  ADD COLUMN IF NOT EXISTS review_status text NOT NULL DEFAULT 'counting',
+  ADD COLUMN IF NOT EXISTS counted_by text,
+  ADD COLUMN IF NOT EXISTS reviewed_by text,
+  ADD COLUMN IF NOT EXISTS reviewed_at timestamptz,
+  ADD COLUMN IF NOT EXISTS recount_count integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS adjustment_posted_at timestamptz;
+
+ALTER TABLE public.inventory_audit_items
+  ADD COLUMN IF NOT EXISTS system_at_submission integer,
+  ADD COLUMN IF NOT EXISTS adjustment_delta integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS count_cycle integer NOT NULL DEFAULT 1;
+
+CREATE INDEX IF NOT EXISTS idx_inventory_audits_review_status ON public.inventory_audits(review_status);
+CREATE INDEX IF NOT EXISTS idx_inventory_audits_branch_status ON public.inventory_audits(branch_id,status);
+
+-- start_inventory_audit_v2 / save_inventory_audit_count_v2 / request_inventory_audit_recount_v2 /
+-- approve_inventory_audit_v2: ver definiciones finales aplicadas en la BD de esta fase.
+NOTIFY pgrst,'reload schema';
