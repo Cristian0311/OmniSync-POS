@@ -250,7 +250,7 @@ function persistQueueSnapshot(queue: OfflineQueueItem[]): void {
   });
 }
 
-function persistQueueItem(item: OfflineQueueItem): void {
+function persistQueueItem(item: OfflineQueueItem): Promise<void> {
   persistenceChain = persistenceChain.then(async () => {
     if (!queueReady && queueInitPromise) await queueInitPromise;
     if (typeof indexedDB !== 'undefined') {
@@ -265,9 +265,10 @@ function persistQueueItem(item: OfflineQueueItem): void {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch { /* se reporta y se conserva en memoria */ }
     console.error('[offlineSync] Error persistiendo cola:', e);
   });
+  return persistenceChain;
 }
 
-function persistQueueDelete(id: string): void {
+function persistQueueDelete(id: string): Promise<void> {
   persistenceChain = persistenceChain.then(async () => {
     if (!queueReady && queueInitPromise) await queueInitPromise;
     if (typeof indexedDB !== 'undefined') {
@@ -282,6 +283,7 @@ function persistQueueDelete(id: string): void {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch { /* se reporta y se conserva en memoria */ }
     console.error('[offlineSync] Error persistiendo cola:', e);
   });
+  return persistenceChain;
 }
 
 async function waitForQueuePersistence(): Promise<void> {
@@ -302,7 +304,7 @@ function persistQueueClear(): void {
   }).catch(e => console.error('[offlineSync] Error persistiendo cola:', e));
 }
 
-export function enqueueOfflineItem(type: OfflineActionType, data: any, actionId?: string): void {
+export function enqueueOfflineItem(type: OfflineActionType, data: any, actionId?: string): Promise<void> {
   const finalActionId = actionId || data?.id || crypto.randomUUID();
   const currentQueue = getOfflineQueue();
   const existingIdx = currentQueue.findIndex(item => item.type === type && item.actionId === finalActionId);
@@ -324,7 +326,7 @@ export function enqueueOfflineItem(type: OfflineActionType, data: any, actionId?
   }
   memoryQueue = currentQueue;
   emitQueueEvent();
-  persistQueueItem(currentQueue[existingIdx >= 0 ? existingIdx : currentQueue.length - 1]);
+  const persistence = persistQueueItem(currentQueue[existingIdx >= 0 ? existingIdx : currentQueue.length - 1]);
   addSyncLog({ level: 'info', source: 'offline_queue', title: `Elemento encolado (${type})`, details: `Operación ${finalActionId} guardada offline. Pendientes: ${currentQueue.length}`, entityType: type, actionId: finalActionId });
 }
 
@@ -341,7 +343,14 @@ export function clearOfflineQueue(): void {
   emitQueueEvent();
   persistQueueClear();
 }
-export function getOfflineQueueCount(): number { return memoryQueue.length; }
+export function getOfflineQueueCount(): number {
+  // Los conflictos definitivos ya no son operaciones pendientes y no deben
+  // despertar el sincronizador cada 30s indefinidamente.
+  return memoryQueue.filter(item => item.status !== 'conflict').length;
+}
+export function getOfflineConflictCount(): number {
+  return memoryQueue.filter(item => item.status === 'conflict').length;
+}
 
 async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<boolean> {
   const { type, data } = item;
@@ -535,7 +544,7 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   if (!reachability.ok) {
     return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), errors: [{ type: 'network', actionId: 'connectivity', message: reachability.message || 'Supabase no está accesible todavía.' }] };
   }
-  const queueAtStart = getOfflineQueue();
+  const queueAtStart = getOfflineQueue().filter(item => item.status !== 'conflict');
   if (!queueAtStart.length) return { processed: 0, failed: 0, remaining: 0, errors: [] };
 
   isProcessingQueue = true;
