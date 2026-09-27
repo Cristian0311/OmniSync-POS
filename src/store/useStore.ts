@@ -2012,14 +2012,25 @@ export const useStore = create<AppState>()(
       const updated = state.bankCards.map(c => {
         if (c.id !== id) return c;
         // El saldo es autoritativo del servidor y solo cambia mediante RPC.
-        // Editar nombre/banco/etc. nunca debe reenviar un balance potencialmente antiguo.
         const next = { ...c, ...card, balance: c.balance };
         found = next;
         return next;
       });
       return { bankCards: updated };
     });
-    if (found) updateBankCardMetadataToSupabase(found).catch(() => {});
+    if (found) {
+      const metadata = found;
+      updateBankCardMetadataToSupabase(metadata).then(ok => {
+        if (!ok) {
+          enqueueOfflineItem('bank_card', { ...metadata, __metadata_only: true }, 'bank-metadata:' + metadata.id)
+            .catch(err => console.warn('[Bank] metadata queue failed:', err));
+        }
+      }).catch(err => {
+        console.warn('[Bank] metadata update failed:', err);
+        enqueueOfflineItem('bank_card', { ...metadata, __metadata_only: true }, 'bank-metadata:' + metadata.id)
+          .catch(queueErr => console.warn('[Bank] metadata queue failed:', queueErr));
+      });
+    }
   },
   deleteBankCard: async (id) => {
     const card = get().bankCards.find(c => c.id === id);
