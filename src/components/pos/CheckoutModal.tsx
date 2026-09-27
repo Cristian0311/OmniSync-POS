@@ -74,6 +74,7 @@ export default function CheckoutModal({
     return `${symbol} ${amount.toLocaleString("es-CU", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
   };
 
+  return (
         <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[80] flex items-center justify-center p-2 sm:p-4 overflow-hidden animate-in fade-in duration-200">
           <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md sm:max-w-lg overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[94vh] sm:max-h-[90vh] border border-slate-200 dark:border-slate-800">
             
