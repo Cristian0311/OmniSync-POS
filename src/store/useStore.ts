@@ -11,7 +11,7 @@ import {
   pushSupplierToSupabase, deleteSupplierFromSupabase, pushSupplierOrderToSupabase, pushCustomerToSupabase,
   applyInventoryAdjustmentToSupabase, reconcileInventoryToSupabase,
   pushReceiptConfigToSupabase, pushStoreConfigToSupabase, pushCatalogConfigToSupabase, deleteTransactionFromSupabase, deleteCustomerFromSupabase,
-  deleteBankTransactionFromSupabase, clearSelectedDataFromSupabase, callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC, callCompleteInventoryAuditRPC, callCloseSessionRPC, callCancelSessionRPC
+  deleteBankTransactionFromSupabase, clearSelectedDataFromSupabase, callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC, callCompleteInventoryAuditRPC, callCloseSessionRPC, callCancelSessionRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC
 } from '../services/supabaseSync';
 import { getSupabaseCredentials } from '../lib/supabase';
 import { getOfflineQueue, enqueueOfflineItem, removeFromOfflineQueue } from '../services/offlineSync';
@@ -2014,9 +2014,27 @@ export const useStore = create<AppState>()(
       return { bankCards: updated };
     });
   },
-  deleteBankCard: (id) => {
-    set(state => ({ bankCards: state.bankCards.filter(c => c.id !== id) }));
-    deleteBankCardFromSupabase(id).catch(() => {});
+  deleteBankCard: async (id) => {
+    const card = get().bankCards.find(c => c.id === id);
+    if (!card) return true;
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      get().addNotification('No se puede eliminar una cuenta bancaria sin conexión. Conéctate para validar su historial y evitar borrar datos remotos.', 'warning');
+      return false;
+    }
+
+    try {
+      const res = await callDeleteBankCardRPC(id);
+      if (!res.success) {
+        get().addNotification(res.error || 'No se pudo eliminar la cuenta bancaria.', 'error');
+        return false;
+      }
+      set(state => ({ bankCards: state.bankCards.filter(c => c.id !== id) }));
+      return true;
+    } catch (e: any) {
+      get().addNotification(e?.message || 'No se pudo eliminar la cuenta bancaria.', 'error');
+      return false;
+    }
   },
 
   bankTransactions: [],
@@ -2051,51 +2069,136 @@ export const useStore = create<AppState>()(
       });
 
       pushBankTransactionToSupabase(transaction).catch(() => {});
-      return { 
+      return {
         bankTransactions: [transaction, ...state.bankTransactions],
         bankCards: updatedCards
       };
     });
   },
 
-  deleteBankTransaction: (id) => {
-    set(state => {
-      const txToDelete = (state.bankTransactions || []).find(t => t.id === id);
-      if (!txToDelete) return state;
+  deleteBankTransaction: async (id) => {
+    const tx = get().bankTransactions.find(t => t.id === id);
+    if (!tx) return true;
 
-      // Adjust card balance
-      const updatedCards = state.bankCards.map(card => {
-        if (card.id === txToDelete.cardId) {
-          let newBalance = card.balance;
-          if (txToDelete.type === 'deposit' || txToDelete.type === 'payment_received') {
-            // Deduct deposit amount from card balance
-            newBalance = Math.max(0, newBalance - txToDelete.amount);
-          } else if (txToDelete.type === 'withdrawal' || txToDelete.type === 'supplier_payment') {
-            // Restore withdrawal amount to card balance
-            newBalance = newBalance + txToDelete.amount;
-          }
-          const updatedCard = { ...card, balance: newBalance };
-          pushBankCardToSupabase(updatedCard).catch(() => {});
-          return updatedCard;
-        }
-        return card;
-      });
+    const operationId =
+      tx.transactionId ||
+      ((/:OUT$|:IN$/i).test(tx.id) ? tx.id.replace(/:(OUT|IN)$/i, '') : null);
 
-      // Deletions must also be durable offline; otherwise the local deletion
-      // silently reappears after the next cloud pull.
-      if (typeof navigator !== 'undefined' && navigator.onLine) {
-        deleteBankTransactionFromSupabase(id).catch(() => {
-          enqueueOfflineItem('bank_transaction', { id, __operation: 'delete' }, `bank-delete:${id}`);
-        });
-      } else {
-        enqueueOfflineItem('bank_transaction', { id, __operation: 'delete' }, `bank-delete:${id}`);
+    const isInternal = Boolean(operationId && get().bankTransactions.some(other =>
+      other.id !== tx.id &&
+      (
+        (other.transactionId && other.transactionId === operationId) ||
+        other.id === operationId + ':OUT' ||
+        other.id === operationId + ':IN'
+      )
+    ));
+
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      const res = isInternal
+        ? await callDeleteBankInternalTransferRPC(operationId!)
+        : await callDeleteBankTransactionRPC(id);
+
+      if (!res.success) {
+        get().addNotification(res.error || 'No se pudo eliminar el movimiento bancario.', 'error');
+        return false;
       }
 
-      return {
+      set(state => {
+        if (isInternal) {
+          const targetIds = new Set(
+            (state.bankTransactions || [])
+              .filter(t =>
+                (t.transactionId && t.transactionId === operationId) ||
+                t.id === operationId + ':OUT' ||
+                t.id === operationId + ':IN'
+              )
+              .map(t => t.id)
+          );
+          const data = res.data || {};
+          const fromBalance = Number(data.from_balance);
+          const toBalance = Number(data.to_balance);
+          return {
+            bankTransactions: state.bankTransactions.filter(t => !targetIds.has(t.id)),
+            bankCards: state.bankCards.map(card => {
+              if (card.id === data.from_card_id && Number.isFinite(fromBalance)) return { ...card, balance: fromBalance };
+              if (card.id === data.to_card_id && Number.isFinite(toBalance)) return { ...card, balance: toBalance };
+              return card;
+            })
+          };
+        }
+
+        const data = res.data || {};
+        const cardId = data.card_id || tx.cardId;
+        const balance = Number(data.balance);
+        return {
+          bankTransactions: state.bankTransactions.filter(t => t.id !== id),
+          bankCards: state.bankCards.map(card =>
+            card.id === cardId && Number.isFinite(balance) ? { ...card, balance } : card
+          )
+        };
+      });
+      return true;
+    }
+
+    try {
+      if (isInternal) {
+        const pair = get().bankTransactions.filter(t =>
+          (t.transactionId && t.transactionId === operationId) ||
+          t.id === operationId + ':OUT' ||
+          t.id === operationId + ':IN'
+        );
+        const outTx = pair.find(t => t.type === 'withdrawal');
+        const inTx = pair.find(t => t.type === 'deposit');
+        if (!outTx || !inTx) {
+          get().addNotification('La transferencia bancaria interna está incompleta; no se puede eliminar offline.', 'error');
+          return false;
+        }
+        await enqueueOfflineItem(
+          'bank_internal_transfer_delete',
+          { operationId },
+          'bank-delete-transfer:' + operationId
+        );
+        set(state => ({
+          bankTransactions: state.bankTransactions.filter(t =>
+            !(t.transactionId && t.transactionId === operationId) &&
+            t.id !== operationId + ':OUT' &&
+            t.id !== operationId + ':IN'
+          ),
+          bankCards: state.bankCards.map(card => {
+            if (card.id === outTx.cardId) return { ...card, balance: card.balance + outTx.amount };
+            if (card.id === inTx.cardId) return { ...card, balance: Math.max(0, card.balance - inTx.amount) };
+            return card;
+          })
+        }));
+        get().addNotification('Transferencia bancaria eliminada offline; la reversión quedó en la cola de sincronización.', 'info');
+        return true;
+      }
+
+      await enqueueOfflineItem(
+        'bank_transaction_delete',
+        { id },
+        'bank-delete:' + id
+      );
+
+      set(state => ({
         bankTransactions: state.bankTransactions.filter(t => t.id !== id),
-        bankCards: updatedCards
-      };
-    });
+        bankCards: state.bankCards.map(card => {
+          if (card.id !== tx.cardId) return card;
+          const next =
+            (tx.type === 'deposit' || tx.type === 'payment_received')
+              ? card.balance - tx.amount
+              : (tx.type === 'withdrawal' || tx.type === 'supplier_payment')
+                ? card.balance + tx.amount
+                : card.balance;
+          return { ...card, balance: Math.max(0, next) };
+        })
+      }));
+      get().addNotification('Movimiento eliminado offline; la reversión quedó en la cola de sincronización.', 'info');
+      return true;
+    } catch (e: any) {
+      get().addNotification(e?.message || 'No se pudo guardar la eliminación en la cola offline.', 'error');
+      return false;
+    }
   },
 
   reconcileBankBalances: async () => {
