@@ -26,6 +26,11 @@ import {
 } from './storeInitialData';
 
 // --- Definición del Store ---
+function removeFromOfflineQueueByAction(type: string, actionId: string) {
+  const queued = getOfflineQueue().find(item => item.type === type && item.actionId === actionId);
+  if (queued) removeFromOfflineQueue(queued.id);
+}
+
 function removeFromOfflineQueueByTransactionId(transactionId: string) {
   const queued = getOfflineQueue().find(item => item.type === 'transaction' && item.actionId === transactionId);
   if (queued) removeFromOfflineQueue(queued.id);
@@ -1035,33 +1040,34 @@ export const useStore = create<AppState>()(
   deleteTransaction: async (id: string, reason?: string) => {
     const state = get();
     const tx = (state.transactions || []).find(t => t.id === id);
-    if (!tx || tx.deletedAt) return;
+    if (!tx || tx.deletedAt) return false;
     const userId = state.currentUser?.id || 'system';
+    const finalReason = reason || 'Anulación de venta';
 
-    // Restore stock locally
-    applyLocalVoidTransaction(tx);
-    
-    set((current) => {
+    if (!navigator.onLine) {
+      await enqueueOfflineItem('void_transaction', { id, userId, reason: finalReason }, 'void:' + id);
+      applyLocalVoidTransaction(tx);
       const deletedAt = new Date().toISOString();
-      return {
-        transactions: current.transactions.map(t => t.id === id ? {
-          ...t, deletedAt, deletedBy: userId, deleteReason: reason || 'Anulación de venta'
-        } : t)
-      };
-    });
+      set((current) => ({
+        transactions: current.transactions.map(t => t.id === id ? { ...t, deletedAt, deletedBy: userId, deleteReason: finalReason } : t)
+      }));
+      return true;
+    }
 
-    // Online: server reverses the exact original stock consumption atomically.
-    if (navigator.onLine) {
-      try {
-        const res = await callVoidTransactionRPC(id, userId, reason || 'Anulación de venta');
-        if (!res.success) throw new Error(res.error || 'No se pudo anular la venta');
-      } catch (err) {
-        console.warn('[deleteTransaction] No se pudo confirmar la anulación; se encola:', err);
-        enqueueOfflineItem('void_transaction', { id, userId, reason }, `void:${id}`);
-        return;
-      }
-    } else {
-      enqueueOfflineItem('void_transaction', { id, userId, reason }, `void:${id}`);
+    await enqueueOfflineItem('void_transaction', { id, userId, reason: finalReason }, 'void:' + id);
+    try {
+      const res = await callVoidTransactionRPC(id, userId, finalReason);
+      if (!res.success) throw new Error(res.error || 'No se pudo anular la venta');
+      applyLocalVoidTransaction(tx);
+      const deletedAt = new Date().toISOString();
+      set((current) => ({
+        transactions: current.transactions.map(t => t.id === id ? { ...t, deletedAt, deletedBy: userId, deleteReason: finalReason } : t)
+      }));
+      removeFromOfflineQueueByAction('void_transaction', 'void:' + id);
+      return true;
+    } catch (err) {
+      console.warn('[deleteTransaction] Anulación no confirmada; queda durable para reintento:', err);
+      return false;
     }
   },
 
@@ -1168,16 +1174,17 @@ export const useStore = create<AppState>()(
 
     if (action === 'complete') {
       if (navigator.onLine) {
+        await enqueueOfflineItem('return_complete', { id, userId }, 'return:' + id);
         try {
           const res = await callCompleteReturnRPC(id, userId);
           if (!res.success) throw new Error(res.error || 'No se pudo completar la devolución');
+          removeFromOfflineQueueByAction('return_complete', 'return:' + id);
         } catch (err) {
-          console.warn('[processReturn] Devolución no confirmada; se encola:', err);
-          enqueueOfflineItem('return_complete', { id, userId }, `return:${id}`);
-          return true;
+          console.warn('[processReturn] Devolución no confirmada; queda durable para reintento:', err);
+          return false;
         }
       } else {
-        enqueueOfflineItem('return_complete', { id, userId }, `return:${id}`);
+        await enqueueOfflineItem('return_complete', { id, userId }, 'return:' + id);
       }
     }
 
@@ -1196,9 +1203,7 @@ export const useStore = create<AppState>()(
 
       if (action === 'complete') {
         if (req.type === 'refund') adjustLocal(req.productId, req.quantity, req.variantLabel);
-        if (req.type === 'warranty_exchange' && req.replacementProductId) {
-          adjustLocal(req.replacementProductId, -(req.replacementQuantity || req.quantity));
-        }
+        if (req.type === 'warranty_exchange' && req.replacementProductId) adjustLocal(req.replacementProductId, -(req.replacementQuantity || req.quantity));
         const warrantyIdx = updatedWarranties.findIndex(w => w.transactionId === req.transactionId && w.productId === req.productId);
         if (warrantyIdx !== -1) updatedWarranties[warrantyIdx] = { ...updatedWarranties[warrantyIdx], status: req.type === 'warranty_exchange' ? 'exchanged' : 'refunded' };
       }
