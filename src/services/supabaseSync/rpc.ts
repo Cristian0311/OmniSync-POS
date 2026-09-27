@@ -185,7 +185,7 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
     // and accidentally turn a second sale into a false success.
     const { data: persisted, error: verifyError } = await supabase
       .from('transactions')
-      .select('id,branch_id,user_id,total,tax,discount,session_id,payment_method,items,payments')
+      .select('id,branch_id,user_id,total,tax,discount,session_id,payment_method,status,items,payments')
       .eq('id', tx.id)
       .maybeSingle();
 
@@ -207,7 +207,8 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
       Number(persisted.tax || 0) === Number(tx.tax || 0) &&
       Number(persisted.discount || 0) === Number(tx.discount || 0) &&
       (persisted.session_id || null) === (tx.sessionId || null) &&
-      (persisted.payment_method || 'cash') === (tx.paymentMethod || 'cash');
+      (persisted.payment_method || 'cash') === (tx.paymentMethod || 'cash') &&
+      persisted.status === 'completed';
 
     if (!sameCore || !sameItems || !samePayments) {
       const e: any = new Error('Conflicto de idempotencia: el ID del ticket ya pertenece a otra venta.');
