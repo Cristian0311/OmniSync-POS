@@ -1694,65 +1694,63 @@ export const useStore = create<AppState>()(
         ? session.closingBalances
         : [{ currencyCode: get().getBaseCurrency().code, amount: session.openingBalance || 0, method: 'cash' as const, exchangeRate: 1 }];
 
+    const sessionTxs = (get().transactions || []).filter(t =>
+      t.sessionId === session.id ||
+      (t.branchId === session.branchId &&
+        new Date(t.date).getTime() >= new Date(session.openedAt).getTime() &&
+        new Date(t.date).getTime() <= new Date(finalClosingDate).getTime())
+    );
+    const user = get().users.find(u => u.id === session.userId || u.name?.toLowerCase() === session.workerName?.toLowerCase());
+    const commissions = sessionTxs.reduce((sum, tx) =>
+      sum + (tx.items || []).reduce((itemSum, item) => {
+        const prodObj = typeof item.product === 'object'
+          ? item.product
+          : get().products.find(p => p.id === (item.product as unknown as string));
+        return itemSum + ((prodObj?.commissionValue || 0) * (item.quantity || 0));
+      }, 0), 0);
+    const settlement: SalarySettlement = {
+      id: crypto.randomUUID(),
+      userId: session.userId,
+      userName: session.workerName || user?.name || 'Vendedor',
+      sessionId: session.id,
+      baseSalary: user?.baseSalary || 0,
+      commissions,
+      discrepancyDeduction: 0,
+      total: (user?.baseSalary || 0) + commissions,
+      date: finalClosingDate,
+      status: 'pending'
+    };
     const updatedSession: CashRegisterSession = {
       ...session,
       status: 'closed',
       closedAt: finalClosingDate,
       closingDate: finalClosingDate,
       closingBalances: finalBalances,
-      notes: notes ? (session.notes ? `${session.notes} | ${notes}` : notes) : session.notes
+      notes: notes ? (session.notes ? session.notes + ' | ' + notes : notes) : session.notes
     };
+    const queueData = { ...updatedSession, __operation: 'close', settlement };
+    await enqueueOfflineItem('cash_session', queueData, 'cash-close:' + sessionId);
 
-    // Actualizar localmente de inmediato
+    if (navigator.onLine) {
+      try {
+        const res = await callCloseSessionRPC(sessionId, finalBalances, finalClosingDate, updatedSession.notes || '', settlement);
+        if (!res.success) throw new Error(res.error || 'No se pudo cerrar el turno');
+        set(state => ({
+          cashSessions: state.cashSessions.map(s => s.id === sessionId ? updatedSession : s),
+          salarySettlements: [...(state.salarySettlements || []).filter(st => st.sessionId !== sessionId), { ...settlement, id: res.data?.settlement_id || settlement.id }]
+        }));
+        removeFromOfflineQueueByAction('cash_session', 'cash-close:' + sessionId);
+        return { success: true };
+      } catch (err) {
+        get().addNotification('El cierre no fue confirmado por la nube; quedó protegido para reintento.', 'warning');
+        return { success: false };
+      }
+    }
+
     set(state => ({
-      cashSessions: state.cashSessions.map(s => s.id === sessionId ? updatedSession : s)
+      cashSessions: state.cashSessions.map(s => s.id === sessionId ? updatedSession : s),
+      salarySettlements: [...(state.salarySettlements || []).filter(st => st.sessionId !== sessionId), settlement]
     }));
-
-    // Si no tiene liquidación de salario generada, crearla
-    const sessionTxs = (get().transactions || []).filter(t => 
-      t.sessionId === session.id || (
-        t.branchId === session.branchId &&
-        new Date(t.date).getTime() >= new Date(session.openedAt).getTime() &&
-        new Date(t.date).getTime() <= new Date(finalClosingDate).getTime()
-      )
-    );
-
-    const user = get().users.find(u => u.id === session.userId || u.name?.toLowerCase() === session.workerName?.toLowerCase());
-    const commissions = sessionTxs.reduce((sum, tx) => {
-      return sum + (tx.items || []).reduce((itemSum, item) => {
-        const prodObj = typeof item.product === 'object' ? item.product : get().products.find(p => p.id === (item.product as unknown as string));
-        const commVal = prodObj?.commissionValue || 0;
-        return itemSum + (commVal * (item.quantity || 0));
-      }, 0);
-    }, 0);
-
-    const baseSalary = user?.baseSalary || 0;
-    const totalSalary = baseSalary + commissions;
-
-    const settlement: SalarySettlement = {
-      id: crypto.randomUUID(),
-      userId: session.userId,
-      userName: session.workerName || user?.name || 'Vendedor',
-      sessionId: session.id,
-      baseSalary: baseSalary,
-      commissions: commissions,
-      discrepancyDeduction: 0,
-      total: totalSalary,
-      date: finalClosingDate,
-      status: 'pending'
-    };
-
-    set(state => {
-      const filtered = (state.salarySettlements || []).filter(st => st.sessionId !== session.id);
-      return { salarySettlements: [...filtered, settlement] };
-    });
-
-    // Subir a Supabase
-    pushCashSessionToSupabase(updatedSession).catch(() => {});
-    import('../services/supabaseSync').then(({ pushSalarySettlementToSupabase }) => {
-      pushSalarySettlementToSupabase(settlement).catch(() => {});
-    });
-
     return { success: true };
   },
 
