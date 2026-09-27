@@ -15,15 +15,29 @@ export default defineConfig(() => {
           enabled: true
         },
         manifest: {
-          name: 'OmniPOS System',
-          short_name: 'OmniPOS',
+          id: '/',
+          name: 'MARÉ POS - Sistema de Gestión',
+          short_name: 'MARÉ POS',
           description: 'Punto de Venta Offline-First',
+          start_url: '/',
+          scope: '/',
+          display: 'standalone',
+          display_override: ['fullscreen', 'standalone'],
+          orientation: 'any',
+          background_color: '#ffffff',
           theme_color: '#ffffff',
           icons: [
             {
-              src: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>',
+              src: '/pwa-192.svg',
               sizes: '192x192',
-              type: 'image/svg+xml'
+              type: 'image/svg+xml',
+              purpose: 'any maskable'
+            },
+            {
+              src: '/pwa-512.svg',
+              sizes: '512x512',
+              type: 'image/svg+xml',
+              purpose: 'any maskable'
             }
           ]
         },
