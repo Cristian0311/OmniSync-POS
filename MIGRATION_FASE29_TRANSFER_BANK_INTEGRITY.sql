@@ -878,3 +878,79 @@ CREATE INDEX IF NOT EXISTS idx_inventory_audits_branch_status ON public.inventor
 -- start_inventory_audit_v2 / save_inventory_audit_count_v2 / request_inventory_audit_recount_v2 /
 -- approve_inventory_audit_v2: ver definiciones finales aplicadas en la BD de esta fase.
 NOTIFY pgrst,'reload schema';
+
+
+-- FASE 30B: accept camelCase count payloads used by the web client
+CREATE OR REPLACE FUNCTION public.save_inventory_audit_count_v2(
+  p_audit_id text,p_user_id text,p_items jsonb,p_notes text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path TO 'public','pg_temp'
+AS $function$
+DECLARE
+  a RECORD; i RECORD; current_qty integer; v_count integer;
+  v_product_id text; v_product_name text; v_variant text; item_json jsonb;
+BEGIN
+  SELECT * INTO a FROM public.inventory_audits WHERE id=p_audit_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Auditoría % no encontrada',p_audit_id USING ERRCODE='P0001'; END IF;
+  IF a.status='completed' OR COALESCE(a.review_status,'counting')='approved' THEN
+    RETURN jsonb_build_object('success',true,'already_approved',true,'audit_id',p_audit_id);
+  END IF;
+  IF COALESCE(a.review_status,'counting') NOT IN ('counting','recount_requested') THEN
+    RAISE EXCEPTION 'La auditoría no está disponible para conteo. Estado: %',COALESCE(a.review_status,'counting') USING ERRCODE='P0001';
+  END IF;
+
+  FOR i IN SELECT * FROM jsonb_to_recordset(COALESCE(p_items,'[]'::jsonb))
+    AS x(product_id text,"productId" text,product_name text,"productName" text,variant_label text,"variantLabel" text,counted integer,actual integer)
+  LOOP
+    v_product_id:=COALESCE(i.product_id,i."productId");
+    v_product_name:=COALESCE(i.product_name,i."productName",'Producto');
+    v_variant:=COALESCE(i.variant_label,i."variantLabel",'');
+    IF NULLIF(btrim(v_product_id),'') IS NULL THEN RAISE EXCEPTION 'Línea de conteo sin producto' USING ERRCODE='P0001'; END IF;
+    IF i.counted IS NULL AND i.actual IS NULL THEN RAISE EXCEPTION 'Falta el conteo físico de %',v_product_name USING ERRCODE='P0001'; END IF;
+    v_count:=GREATEST(0,COALESCE(i.counted,i.actual,0));
+
+    SELECT quantity INTO current_qty FROM public.inventory
+    WHERE product_id=v_product_id AND branch_id=a.branch_id AND COALESCE(variant_label,'')=v_variant FOR UPDATE;
+    current_qty:=COALESCE(current_qty,0);
+
+    UPDATE public.inventory_audit_items
+    SET counted=v_count,actual=v_count,difference=v_count-expected,
+        system_at_submission=current_qty,adjustment_delta=0,
+        count_cycle=GREATEST(count_cycle,COALESCE(a.recount_count,0)+1)
+    WHERE audit_id=p_audit_id AND product_id=v_product_id AND COALESCE(variant_label,'')=v_variant;
+
+    IF NOT FOUND THEN
+      INSERT INTO public.inventory_audit_items(
+        id,audit_id,product_id,product_name,variant_label,expected,actual,counted,
+        difference,system_at_submission,adjustment_delta,count_cycle
+      ) VALUES(
+        gen_random_uuid()::text,p_audit_id,v_product_id,v_product_name,v_variant,current_qty,v_count,v_count,
+        v_count-current_qty,current_qty,0,COALESCE(a.recount_count,0)+1
+      );
+    END IF;
+  END LOOP;
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'productId',iai.product_id,'productName',iai.product_name,'variantLabel',iai.variant_label,
+    'expected',iai.expected,'counted',iai.counted,'actual',iai.actual,'difference',iai.difference,
+    'systemAtSubmission',iai.system_at_submission,'adjustmentDelta',iai.adjustment_delta,'countCycle',iai.count_cycle
+  ) ORDER BY iai.product_name,iai.variant_label),'[]'::jsonb)
+  INTO item_json FROM public.inventory_audit_items iai WHERE iai.audit_id=p_audit_id;
+
+  UPDATE public.inventory_audits
+  SET items=item_json,notes=COALESCE(p_notes,notes),submitted_at=NOW(),
+      user_id=COALESCE(p_user_id,user_id),counted_by=COALESCE(p_user_id,counted_by),
+      review_status='pending_approval'
+  WHERE id=p_audit_id;
+
+  INSERT INTO public.audit_log(user_id,action,entity_type,entity_id,meta)
+  VALUES(p_user_id,'SUBMIT_INVENTORY_AUDIT','inventory_audit',p_audit_id,
+    jsonb_build_object('items',jsonb_array_length(item_json),'submitted_at',NOW()));
+
+  RETURN jsonb_build_object('success',true,'audit_id',p_audit_id,'review_status','pending_approval','items',item_json);
+END
+$function$;
+
+NOTIFY pgrst,'reload schema';
