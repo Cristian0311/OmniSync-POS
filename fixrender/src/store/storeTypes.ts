@@ -177,11 +177,11 @@ export interface AppState {
   bankCards: import('../types').BankCard[];
   addBankCard: (card: import('../types').BankCard) => void;
   updateBankCard: (id: string, card: Partial<import('../types').BankCard>) => void;
-  deleteBankCard: (id: string) => Promise<boolean>;
+  deleteBankCard: (id: string) => void;
   
   bankTransactions: import('../types').BankTransaction[];
   addBankTransaction: (transaction: import('../types').BankTransaction) => void;
-  deleteBankTransaction: (id: string) => Promise<boolean>;
+  deleteBankTransaction: (id: string) => void;
   reconcileBankBalances: () => Promise<{ removedDuplicates: number; totalSales?: number; totalMovements?: number; message: string }>;
 
   // Supabase Sync
