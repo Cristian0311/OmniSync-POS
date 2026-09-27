@@ -1735,22 +1735,36 @@ export default function POS() {
       return;
     }
 
-    // Register bank activeTransactions only after the sale is confirmed.
+    // Register bank movements only after the sale is confirmed.
+    // Aggregate multiple transfer lines hitting the same bank account into one
+    // movement per account/sale, avoiding duplicate references and preserving
+    // the actual amount in the bank card currency (transfers are forced to CUP).
+    const transferByCard = new Map<string, number>();
     finalizedPayments.forEach(p => {
       if (p.method === 'transfer' && p.bankCardId) {
-        const itemDetails = cart.map(item => `${item.quantity}x ${item.product?.name || 'Producto'}`).join(', ');
+        transferByCard.set(p.bankCardId, (transferByCard.get(p.bankCardId) || 0) + p.amount);
+      }
+    });
+
+    const itemDetails = cart.map(item => `${item.quantity}x ${item.product?.name || 'Producto'}`).join(', ');
+    const bankSaveResults = await Promise.all(
+      Array.from(transferByCard.entries()).map(([cardId, amount]) =>
         addBankTransaction({
           id: generateId('BTX'),
-          cardId: p.bankCardId,
+          cardId,
           type: 'payment_received',
-          amount: p.amount * p.exchangeRate,
+          amount,
           date: tx.date,
           reference: tx.id,
           description: `Venta ${tx.id}: ${itemDetails.substring(0, 100)}${itemDetails.length > 100 ? '...' : ''}`,
           transactionId: tx.id
-        });
-      }
-    });
+        })
+      )
+    );
+
+    if (bankSaveResults.some(saved => !saved)) {
+      addNotification('La venta quedó registrada, pero uno o más ingresos bancarios quedaron pendientes de sincronización.', 'warning');
+    }
 
     // Close all checkout and mobile cart drawers cleanly
     setShowCheckoutModal(false);
