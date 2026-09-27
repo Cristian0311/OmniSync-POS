@@ -7,7 +7,7 @@
  */
 import { getSupabase } from '../lib/supabase';
 import { useStore } from '../store/useStore';
-import { processOfflineQueue, getOfflineQueueCount } from './offlineSync';
+import { getOfflineQueueCount } from './offlineQueue';
 
 let realtimeChannel: any = null;
 let pollIntervalId: any = null;
@@ -36,7 +36,10 @@ export async function triggerBackgroundSync(force = false): Promise<void> {
   isSyncInProgress = true;
   try {
     const manualOfflineSync = useStore.getState().storeConfig?.manualOfflineSync === true;
-    if (getOfflineQueueCount() > 0 && (!manualOfflineSync || force)) await processOfflineQueue();
+    if (getOfflineQueueCount() > 0 && (!manualOfflineSync || force)) {
+      const { processOfflineQueue } = await import('./offlineSync');
+      await processOfflineQueue();
+    }
     if (getOfflineQueueCount() === 0) {
       const branchId = useStore.getState().currentBranchId || null;
       if (force || bootstrappedBranchId !== branchId) {
