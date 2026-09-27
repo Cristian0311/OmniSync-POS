@@ -117,18 +117,23 @@ export function initMultiDeviceRealtimeSync(): () => void {
   const handleOffline = () => { bootstrappedBranchId = null; if (realtimeChannel && supabase) { try { supabase.removeChannel(realtimeChannel); } catch {} realtimeChannel = null; } };
   const handleOnline = () => { subscribeRealtime(); triggerBackgroundSync(false).catch(() => {}); };
   if (navigator.onLine) { subscribeRealtime(); triggerBackgroundSync(false).catch(() => {}); }
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === 'visible' && navigator.onLine) {
-      // Returning to the POS must not redownload the complete bootstrap.
-      // Realtime + the branch inventory refresh are sufficient here.
-      useStore.getState().refreshBranchInventory().catch(() => {});
+  const refreshOperationalOnReturn = () => {
+    if (!navigator.onLine || isSyncInProgress) return;
+    // Cash sessions are critical state, so refresh them on focus/visibility.
+    // Inventory-only refreshes could leave the employee selector showing a
+    // stale worker status after another terminal opened/closed a shift.
+    if (getOfflineQueueCount() > 0) {
+      triggerBackgroundSync(false).catch(() => {});
+    } else {
+      useStore.getState().refreshBranchOperationalData().catch(() => {});
+      useStore.getState().refreshGlobalCatalogData().catch(() => {});
     }
   };
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') refreshOperationalOnReturn();
+  };
   const handleWindowFocus = () => {
-    if (navigator.onLine && !isSyncInProgress) {
-      if (getOfflineQueueCount() > 0) triggerBackgroundSync(false).catch(() => {});
-      else useStore.getState().refreshBranchInventory().catch(() => {});
-    }
+    refreshOperationalOnReturn();
   };
   document.addEventListener('visibilitychange', handleVisibilityChange);
   window.addEventListener('focus', handleWindowFocus);
@@ -144,7 +149,9 @@ export function initMultiDeviceRealtimeSync(): () => void {
     if (getOfflineQueueCount() > 0) {
       triggerBackgroundSync(false).catch(() => {});
     } else {
-      useStore.getState().refreshBranchInventory().catch(() => {});
+      // Keep the lightweight periodic repair focused on branch operational
+      // state instead of letting an open/closed cash session become stale.
+      useStore.getState().refreshBranchOperationalData().catch(() => {});
     }
   }, 30000);
   branchRepairIntervalId = setInterval(() => { if (navigator.onLine && !isSyncInProgress) reconcileRemoteState(false).catch(() => {}); }, 120000);
