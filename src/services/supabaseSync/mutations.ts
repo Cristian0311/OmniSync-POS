@@ -310,6 +310,20 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
       delete_reason: session.deleteReason || null
     };
 
+    // Nunca permitimos que un snapshot local antiguo reabra o reescriba un
+    // turno que otro terminal ya cerró/canceló.
+    const { data: remoteSession, error: remoteReadError } = await supabase
+      .from('cash_sessions')
+      .select('id,status,closed_at,deleted_at,branch_id,user_id,working_employee_ids')
+      .eq('id', session.id)
+      .maybeSingle();
+    if (remoteReadError) throw remoteReadError;
+
+    if (remoteSession && remoteSession.status !== 'open' && session.status === 'open') {
+      console.warn('[CashSession] Snapshot local rechazado: el turno remoto ya está cerrado/cancelado.');
+      return false;
+    }
+
     const res = await safeUpsert(supabase, 'cash_sessions', row);
     if (res?.error) {
       await queue();
