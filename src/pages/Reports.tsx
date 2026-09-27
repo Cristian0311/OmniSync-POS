@@ -16,6 +16,7 @@ import { cn } from "../lib/utils";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { useReportsAnalytics } from "../hooks/useReportsAnalytics";
 import type { ExcelExportData } from "../utils/excelExport";
+import { pullPosBootstrapFromSupabase } from "../services/supabaseSync/pull";
 
 export default function Reports() {
   const store = useStore(useShallow((state) => ({
@@ -74,10 +75,38 @@ export default function Reports() {
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.onLine) return;
-    // Reports needs an authoritative cross-branch snapshot. The local store is
-    // intentionally persistent for offline POS work, so opening Reports must
-    // reconcile it with Supabase instead of displaying stale historical cache.
-    void store.syncWithSupabase();
+
+    // Reports is an administrative, cross-branch view. It must use the complete
+    // operational snapshot from Supabase, not only the current branch cache.
+    let cancelled = false;
+    const refreshReportsFromCloud = async () => {
+      try {
+        await store.syncWithSupabase();
+        if (cancelled) return;
+
+        const cloud = await pullPosBootstrapFromSupabase();
+        if (!cloud.success || !cloud.data) return;
+
+        // Never overwrite local state while an offline write is waiting to be replayed.
+        const hasPending = typeof window !== 'undefined'
+          ? window.localStorage.getItem('omnisync-pos-offline-queue') !== null
+          : false;
+        if (hasPending) return;
+
+        useStore.setState({
+          transactions: cloud.data.transactions || [],
+          cashSessions: cloud.data.cashSessions || [],
+          transfers: cloud.data.transfers || [],
+          bankCards: cloud.data.bankCards || [],
+          bankTransactions: cloud.data.bankTransactions || []
+        });
+      } catch (error) {
+        console.warn('[Reports] No se pudo actualizar la vista global:', error);
+      }
+    };
+
+    void refreshReportsFromCloud();
+    return () => { cancelled = true; };
   }, [store.syncWithSupabase]);
 
   const baseCurrency = getBaseCurrency ? getBaseCurrency() : (currencies.find(c => c.isBase) || currencies[0] || { code: 'CUP', name: 'Peso Cubano', symbol: '$', rateToBase: 1, isBase: true });
