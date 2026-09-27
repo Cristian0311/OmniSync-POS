@@ -175,24 +175,41 @@ export default function Banks() {
         // Offline fallback keeps both ledger entries durable. They are replayed
         // independently, while the internal RPC is used whenever connectivity
         // returns for online-originated transfers.
-        addBankTransaction({
-          id: ref + ':OUT',
-          cardId: fromCard.id,
-          type: 'withdrawal',
-          amount: transferData.amount,
-          date,
-          reference: ref,
-          description: `Transferencia a ${toCard.bank} (****${toCard.lastFour}): ${transferData.reason}`
-        });
-        addBankTransaction({
-          id: ref + ':IN',
-          cardId: toCard.id,
-          type: 'deposit',
-          amount: targetAmount,
-          date,
-          reference: ref,
-          description: `Transferencia desde ${fromCard.bank} (****${fromCard.lastFour}): ${transferData.reason}`
-        });
+        await enqueueOfflineItem(
+          'bank_internal_transfer',
+          payload,
+          actionId
+        );
+        useStore.setState(state => ({
+          bankTransactions: [
+            {
+              id: ref + ':IN',
+              cardId: toCard.id,
+              type: 'deposit',
+              amount: targetAmount,
+              date,
+              reference: ref,
+              transactionId: ref,
+              description: `Transferencia desde ${fromCard.bank} (****${fromCard.lastFour}): ${transferData.reason}`
+            },
+            {
+              id: ref + ':OUT',
+              cardId: fromCard.id,
+              type: 'withdrawal',
+              amount: transferData.amount,
+              date,
+              reference: ref,
+              transactionId: ref,
+              description: `Transferencia a ${toCard.bank} (****${toCard.lastFour}): ${transferData.reason}`
+            },
+            ...(state.bankTransactions || []).filter(t => t.reference !== ref)
+          ],
+          bankCards: (state.bankCards || []).map(card => {
+            if (card.id === fromCard.id) return { ...card, balance: card.balance - transferData.amount };
+            if (card.id === toCard.id) return { ...card, balance: card.balance + targetAmount };
+            return card;
+          })
+        }));
         addNotification('Transferencia guardada offline; se sincronizará al reconectar.', 'info');
       }
     }
