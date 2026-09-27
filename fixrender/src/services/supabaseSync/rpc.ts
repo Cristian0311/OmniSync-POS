@@ -153,7 +153,7 @@ export async function callTransferInventoryRPC(params: {
   if (!supabase) return { success: false, error: 'Supabase no configurado' };
   try {
     const { data, error } = await supabase.rpc('process_inventory_transfer_v2', {
-      p_operation_id: params.operationId, p_product_id: params.productId,
+      p_operation_id: params.operationId, p_batch_id: params.batchId || null, p_product_id: params.productId,
       p_from_branch_id: params.fromBranchId, p_to_branch_id: params.toBranchId,
       p_variants: params.variants, p_user_id: params.userId
     });
