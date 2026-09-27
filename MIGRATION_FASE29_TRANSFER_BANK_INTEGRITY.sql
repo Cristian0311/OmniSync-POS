@@ -704,3 +704,79 @@ END
 $function$;
 
 NOTIFY pgrst,'reload schema';
+
+
+-- FASE 29D: fix PL/pgSQL alias collision in sale void bank reversal
+CREATE OR REPLACE FUNCTION public.void_pos_transaction_v2(p_id text, p_user_id text, p_reason text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path TO 'public','pg_temp'
+AS $function$
+DECLARE
+  t RECORD; i RECORD; c RECORD; b RECORD; bt RECORD;
+  qty integer; v_variant text; v_reversed_bank numeric;
+BEGIN
+  SELECT * INTO t FROM public.transactions WHERE id=p_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Venta % no encontrada',p_id; END IF;
+  IF t.deleted_at IS NOT NULL THEN RETURN jsonb_build_object('success',true,'id',p_id,'already_voided',true); END IF;
+
+  FOR i IN SELECT * FROM jsonb_to_recordset(t.items) AS item_row(product_id text,quantity integer,variant_label text,is_kit boolean,kit_components jsonb) LOOP
+    IF COALESCE(i.quantity,0)<=0 THEN RAISE EXCEPTION 'Cantidad inválida en venta %',p_id; END IF;
+    IF COALESCE(i.is_kit,false) AND jsonb_array_length(COALESCE(i.kit_components,'[]'::jsonb))>0 THEN
+      FOR c IN SELECT * FROM jsonb_to_recordset(i.kit_components) AS component_row(product_id text,quantity integer) LOOP
+        qty:=c.quantity*i.quantity;
+        PERFORM pg_advisory_xact_lock(hashtext('inventory:'||c.product_id||':'||t.branch_id||':'));
+        UPDATE public.inventory SET quantity=quantity+qty WHERE product_id=c.product_id AND branch_id=t.branch_id AND COALESCE(variant_label,'')='';
+        IF NOT FOUND THEN INSERT INTO public.inventory(id,product_id,branch_id,variant_label,quantity,min_quantity) VALUES(gen_random_uuid()::text,c.product_id,t.branch_id,'',qty,5); END IF;
+        INSERT INTO public.inventory_movements(product_id,branch_id,variant_label,quantity_delta,movement_type,reference_id,user_id,metadata)
+        VALUES(c.product_id,t.branch_id,'',qty,'KIT_RETURN',p_id,p_user_id,jsonb_build_object('kit_product_id',i.product_id));
+      END LOOP;
+    ELSE
+      v_variant:=COALESCE(i.variant_label,'');
+      PERFORM pg_advisory_xact_lock(hashtext('inventory:'||i.product_id||':'||t.branch_id||':'||v_variant));
+      UPDATE public.inventory SET quantity=quantity+i.quantity WHERE product_id=i.product_id AND branch_id=t.branch_id AND COALESCE(variant_label,'')=v_variant;
+      IF NOT FOUND THEN INSERT INTO public.inventory(id,product_id,branch_id,variant_label,quantity,min_quantity) VALUES(gen_random_uuid()::text,i.product_id,t.branch_id,v_variant,i.quantity,5); END IF;
+      INSERT INTO public.inventory_movements(product_id,branch_id,variant_label,quantity_delta,movement_type,reference_id,user_id)
+      VALUES(i.product_id,t.branch_id,v_variant,i.quantity,'VOID_RETURN',p_id,p_user_id);
+    END IF;
+  END LOOP;
+
+  FOR b IN
+    SELECT bc.*
+    FROM public.bank_cards bc
+    WHERE bc.id IN (
+      SELECT DISTINCT tx_row.card_id
+      FROM public.bank_transactions tx_row
+      WHERE tx_row.transaction_id=p_id AND tx_row.type='payment_received'
+    )
+    ORDER BY bc.id
+    FOR UPDATE
+  LOOP
+    v_reversed_bank := 0;
+    FOR bt IN
+      SELECT tx_row.*
+      FROM public.bank_transactions tx_row
+      WHERE tx_row.card_id=b.id AND tx_row.transaction_id=p_id AND tx_row.type='payment_received'
+      ORDER BY tx_row.id
+      FOR UPDATE
+    LOOP
+      IF b.balance < bt.amount + v_reversed_bank THEN
+        RAISE EXCEPTION 'No se puede anular la venta %: saldo insuficiente en % para revertir %',p_id,b.id,bt.amount USING ERRCODE='P0001';
+      END IF;
+      v_reversed_bank := v_reversed_bank + bt.amount;
+    END LOOP;
+    IF v_reversed_bank > 0 THEN
+      UPDATE public.bank_cards SET balance=b.balance-v_reversed_bank WHERE id=b.id;
+      DELETE FROM public.bank_transactions WHERE card_id=b.id AND transaction_id=p_id AND type='payment_received';
+    END IF;
+  END LOOP;
+
+  UPDATE public.transactions SET deleted_at=NOW(),deleted_by=p_user_id,delete_reason=p_reason,status='refunded' WHERE id=p_id;
+  INSERT INTO public.audit_log(user_id,action,entity_type,entity_id,meta)
+  VALUES(p_user_id,'VOID_TRANSACTION','transaction',p_id,jsonb_build_object('reason',p_reason,'reversed_bank_income',true));
+
+  RETURN jsonb_build_object('success',true,'id',p_id,'bank_reversed',true);
+END
+$function$;
+
+NOTIFY pgrst,'reload schema';
