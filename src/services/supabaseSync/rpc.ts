@@ -139,16 +139,27 @@ export async function callOpenSessionRPCWithId(session: CashRegisterSession): Pr
       // Do not create a local "phantom" shift that could later accept sales.
       const branchOpen = await supabase
         .from('cash_sessions')
-        .select('id,branch_id,user_id,worker_name,status,opened_at')
+        .select('*')
         .eq('branch_id', session.branchId)
         .eq('status', 'open')
         .is('deleted_at', null)
         .maybeSingle();
       if (branchOpen.data) {
+        const sameWorker =
+          branchOpen.data.user_id === session.userId ||
+          Array.isArray(branchOpen.data.working_employee_ids) &&
+          branchOpen.data.working_employee_ids.includes(session.userId);
+
+        if (sameWorker) {
+          // Idempotencia a nivel de sucursal: otro intento/dispositivo del
+          // mismo trabajador debe continuar el turno oficial ya existente.
+          return { success: true, data: branchOpen.data };
+        }
+
         return {
           success: false,
           data: branchOpen.data,
-          error: 'La sucursal ya tiene un turno abierto en otra terminal.',
+          error: `La sucursal ya tiene un turno abierto: ${branchOpen.data.worker_name || 'otro trabajador'}.`,
           errorCode: 'CASH_BRANCH_ALREADY_OPEN'
         };
       }
