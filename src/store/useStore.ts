@@ -2048,7 +2048,7 @@ export const useStore = create<AppState>()(
   addBankTransaction: async (transaction) => {
     const existing = (get().bankTransactions || []).some(t =>
       t.id === transaction.id ||
-      (transaction.transactionId && t.transactionId && t.transactionId === transaction.transactionId) ||
+      (transaction.transactionId && t.transactionId && t.cardId === transaction.cardId && t.transactionId === transaction.transactionId) ||
       (transaction.reference && t.reference && t.reference === transaction.reference && t.cardId === transaction.cardId)
     );
     if (existing) return true;
@@ -2119,14 +2119,16 @@ export const useStore = create<AppState>()(
       tx.transactionId ||
       ((/:OUT$|:IN$/i).test(tx.id) ? tx.id.replace(/:(OUT|IN)$/i, '') : null);
 
-    const isInternal = Boolean(operationId && get().bankTransactions.some(other =>
+    const hasTransferSuffix = /:(OUT|IN)$/i.test(tx.id);
+    const hasInternalPair = Boolean(operationId && get().bankTransactions.some(other =>
       other.id !== tx.id &&
+      other.transactionId === operationId &&
       (
-        (other.transactionId && other.transactionId === operationId) ||
-        other.id === operationId + ':OUT' ||
-        other.id === operationId + ':IN'
+        (tx.type === 'withdrawal' && other.type === 'deposit') ||
+        (tx.type === 'deposit' && other.type === 'withdrawal')
       )
     ));
+    const isInternal = hasTransferSuffix || hasInternalPair;
 
     if (typeof navigator !== 'undefined' && navigator.onLine) {
       const res = isInternal
@@ -2249,7 +2251,7 @@ export const useStore = create<AppState>()(
     for (const bt of state.bankTransactions || []) {
       const isDuplicate =
         seenIds.has(bt.id) ||
-        (bt.transactionId && seenTxIds.has(bt.transactionId)) ||
+        (bt.transactionId && seenTxIds.has(bt.cardId + '::' + bt.transactionId)) ||
         (bt.reference && seenRefs.has(`${bt.cardId}::${bt.reference}`));
 
       if (isDuplicate) {
@@ -2258,7 +2260,7 @@ export const useStore = create<AppState>()(
       }
 
       seenIds.add(bt.id);
-      if (bt.transactionId) seenTxIds.add(bt.transactionId);
+      if (bt.transactionId) seenTxIds.add(bt.cardId + '::' + bt.transactionId);
       if (bt.reference) seenRefs.add(`${bt.cardId}::${bt.reference}`);
       uniqueTxs.push(bt);
     }
