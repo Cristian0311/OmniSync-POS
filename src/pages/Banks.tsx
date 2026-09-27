@@ -213,9 +213,10 @@ export default function Banks() {
     }
   };
 
-  const handleConfirmDeleteMovement = () => {
+  const handleConfirmDeleteMovement = async () => {
     if (!movementToDelete) return;
-    deleteBankTransaction(movementToDelete.id);
+    const deleted = await deleteBankTransaction(movementToDelete.id);
+    if (!deleted) return;
     addNotification(`Movimiento ${movementToDelete.reference || movementToDelete.id} eliminado y saldo de tarjeta ajustado correctamente.`, 'info');
     setMovementToDelete(null);
   };
@@ -243,10 +244,12 @@ export default function Banks() {
                 Cancelar
               </button>
               <button 
-                onClick={() => {
-                  deleteBankCard(cardToDelete);
+                onClick={async () => {
+                  const id = cardToDelete;
+                  const deleted = await deleteBankCard(id);
+                  if (!deleted) return;
                   setCardToDelete(null);
-                  if (selectedCardId === cardToDelete) setSelectedCardId(null);
+                  if (selectedCardId === id) setSelectedCardId(null);
                   addNotification("Tarjeta eliminada correctamente.", 'info');
                 }}
                 className="py-2 bg-rose-600 text-white rounded-xl font-black text-[9px] uppercase tracking-wider shadow-lg shadow-rose-200 dark:shadow-none cursor-pointer"
