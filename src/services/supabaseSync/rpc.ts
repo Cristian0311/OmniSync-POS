@@ -84,56 +84,43 @@ export async function callOpenSessionRPC(session: CashRegisterSession): Promise<
 export async function callOpenSessionRPCWithId(session: CashRegisterSession): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
   const supabase = getSupabase();
   if (!supabase) return { success: false, error: 'Supabase no configurado' };
+
+  // IMPORTANT:
+  // PostgREST in this project is currently serving a stale schema cache for
+  // open_cash_session_v3 (PGRST202), even though the exact PostgreSQL function
+  // exists. Do not call the broken RPC from the POS path: doing so produces a
+  // visible error and adds latency before the stable-ID fallback.
+  //
+  // The cash_sessions table has a unique partial index enforcing one open
+  // session per branch, so this write remains safe/idempotent by session ID.
   try {
-    const invoke = async () => supabase.rpc('open_cash_session_v3', {
-      p_session_id: session.id, p_user_id: session.userId, p_worker_name: session.workerName,
-      p_branch_id: session.branchId, p_opening_amount: session.openingAmount, p_opened_at: session.openedAt,
-      p_working_employee_ids: session.workingEmployeeIds || [], p_notes: session.notes || ''
-    });
+    const row = {
+      id: session.id,
+      user_id: session.userId || null,
+      worker_name: session.workerName || null,
+      branch_id: session.branchId,
+      opened_at: session.openedAt,
+      opening_balance: session.openingAmount || 0,
+      opening_amount: session.openingAmount || 0,
+      status: 'open',
+      working_employee_ids: session.workingEmployeeIds || [],
+      notes: session.notes || '',
+    };
 
-    let { data, error } = await invoke();
-    // PGRST202 is a PostgREST schema-cache failure, not proof that the cash
-    // session operation itself is invalid. Do not let this infrastructure
-    // problem block the POS. Retry once, then use the stable-ID table path.
-    if (error?.code === 'PGRST202') {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      ({ data, error } = await invoke());
-    }
-    if (!error) {
-      assertRpcSuccess(data, 'open_cash_session_v3');
-      return { success: true, data };
-    }
+    const { data, error } = await supabase
+      .from('cash_sessions')
+      .upsert(row, { onConflict: 'id' })
+      .select()
+      .single();
 
-    if (error.code === 'PGRST202') {
-      const row = {
-        id: session.id,
-        user_id: session.userId || null,
-        worker_name: session.workerName || null,
-        branch_id: session.branchId,
-        opened_at: session.openedAt,
-        opening_balance: session.openingAmount || 0,
-        opening_amount: session.openingAmount || 0,
-        status: 'open',
-        working_employee_ids: session.workingEmployeeIds || [],
-        notes: session.notes || '',
-      };
-      const { data: fallbackData, error: fallbackError } = await supabase
-        .from('cash_sessions')
-        .upsert(row, { onConflict: 'id' })
-        .select()
-        .single();
-      if (!fallbackError && fallbackData) {
-        console.warn('[CashSession] v3 unavailable in PostgREST cache; used stable-ID table fallback');
-        return { success: true, data: fallbackData };
-      }
-      if (fallbackError) {
-        console.warn('[CashSession] stable-ID table fallback failed:', fallbackError);
-      }
+    if (error) {
+      console.error('[CashSession] No se pudo crear el turno estable:', error);
+      return { success: false, error: formatSupabaseError(error), errorCode: error.code || undefined };
     }
 
-    throw error;
+    return { success: true, data };
   } catch (e: any) {
-    console.error('[RPC] open_cash_session_v3 failed:', e);
+    console.error('[CashSession] Error creando turno estable:', e);
     return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
   }
 }
