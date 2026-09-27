@@ -2116,8 +2116,10 @@ export const useStore = create<AppState>()(
       });
       return { success: true };
     } catch (err: any) {
-      removeFromOfflineQueueByAction('audit_approve', actionId);
-      return { success: false, error: err?.message || 'No se pudo aprobar la auditoría.' };
+      // La aprobación queda protegida en la cola durable hasta recibir confirmación.
+      // Nunca se elimina una aprobación que Supabase no haya confirmado.
+      console.warn('[approveInventoryAudit] Aprobación no confirmada; queda durable:', err);
+      return { success: false, error: err?.message || 'No se pudo aprobar la auditoría. La operación quedó pendiente de sincronización.' };
     }
   },
 
