@@ -93,17 +93,91 @@ export async function pullBranchInventoryFromSupabase(branchId?: string): Promis
   }
 }
 
-
-export async function pullBranchOperationalDataFromSupabase(branchId: string): Promise<{ success: boolean; transactions: Transaction[]; cashSessions: CashRegisterSession[]; inventory: InventoryLevel[]; message?: string }> {
+export async function pullTransferHistoryFromSupabase(): Promise<{ success: boolean; transfers: InventoryTransfer[]; message?: string }> {
   const supabase = getSupabase();
-  if (!supabase) return { success: false, transactions: [], cashSessions: [], inventory: [], message: 'Supabase no configurado' };
+  if (!supabase) return { success: false, transfers: [], message: 'Supabase no configurado' };
   try {
-    const [txRes, sessionsRes, invRes] = await Promise.all([
+    const data = await fetchAllRows(supabase, 'inventory_transfers', 'date');
+    return {
+      success: true,
+      transfers: (data || []).map((t: any): InventoryTransfer => ({
+        id: t.id,
+        operationId: t.operation_id || t.id,
+        productId: t.product_id,
+        productName: t.product_name || 'Producto',
+        fromBranchId: t.from_branch_id,
+        fromBranchName: t.from_branch_name || 'Sucursal Origen',
+        toBranchId: t.to_branch_id,
+        toBranchName: t.to_branch_name || 'Sucursal Destino',
+        variantLabel: t.variant_label || 'Producto Base',
+        quantity: Number(t.quantity) || 0,
+        variants: Array.isArray(t.variants) ? t.variants : [],
+        date: t.date,
+        userId: t.user_id,
+        status: t.status || 'completed'
+      }))
+    };
+  } catch (e: any) {
+    return { success: false, transfers: [], message: e?.message || 'No se pudo actualizar el historial de transferencias' };
+  }
+}
+
+export async function pullBankDataFromSupabase(): Promise<{ success: boolean; bankCards: BankCard[]; bankTransactions: BankTransaction[]; message?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, bankCards: [], bankTransactions: [], message: 'Supabase no configurado' };
+  try {
+    const [cardsRes, txData] = await Promise.all([
+      supabase.from('bank_cards').select('*'),
+      fetchAllRows(supabase, 'bank_transactions', 'date')
+    ]);
+    if (cardsRes.error) throw cardsRes.error;
+    return {
+      success: true,
+      bankCards: (cardsRes.data || []).map((bc: any): BankCard => ({
+        id: bc.id,
+        name: bc.name || bc.card_holder || bc.bank_name || 'Tarjeta Bancaria',
+        bank: bc.bank || bc.bank_name || 'Banco',
+        bankName: bc.bank_name || bc.bank || 'Banco',
+        cardHolder: bc.card_holder || bc.name || 'Titular',
+        accountNumber: bc.account_number || bc.last_four_digits || '',
+        lastFour: bc.last_four || bc.last_four_digits || (bc.account_number ? String(bc.account_number).slice(-4) : ''),
+        lastFourDigits: bc.last_four_digits || bc.last_four || (bc.account_number ? String(bc.account_number).slice(-4) : ''),
+        phone: bc.phone || '',
+        currency: bc.currency || 'CUP',
+        balance: Number(bc.balance) || 0,
+        color: bc.color || 'from-blue-600 to-indigo-800',
+        isActive: bc.is_active !== false
+      })),
+      bankTransactions: (txData || []).map((bt: any): BankTransaction => ({
+        id: bt.id,
+        cardId: bt.card_id || bt.cardId,
+        type: bt.type,
+        amount: Number(bt.amount) || 0,
+        date: bt.date,
+        reference: bt.reference || '',
+        description: bt.description || '',
+        transactionId: bt.transaction_id || bt.transactionId
+      }))
+    };
+  } catch (e: any) {
+    return { success: false, bankCards: [], bankTransactions: [], message: e?.message || 'No se pudieron actualizar las cuentas bancarias' };
+  }
+}
+
+
+export async function pullBranchOperationalDataFromSupabase(branchId: string): Promise<{ success: boolean; transactions: Transaction[]; cashSessions: CashRegisterSession[]; inventory: InventoryLevel[]; transfers: InventoryTransfer[]; message?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, transactions: [], cashSessions: [], inventory: [], transfers: [], message: 'Supabase no configurado' };
+  try {
+    const [txRes, sessionsRes, invRes, transferRes] = await Promise.all([
       supabase.from('transactions').select('*').eq('branch_id', branchId).order('created_at', { ascending: false }).limit(1000),
       supabase.from('cash_sessions').select('*').eq('branch_id', branchId).order('opened_at', { ascending: false }).limit(20),
-      supabase.from('inventory').select('*').eq('branch_id', branchId)
+      supabase.from('inventory').select('*').eq('branch_id', branchId),
+      supabase.from('inventory_transfers').select('*')
+        .or(`from_branch_id.eq.${branchId},to_branch_id.eq.${branchId}`)
+        .order('date', { ascending: false }).limit(5000)
     ]);
-    const firstError = [txRes, sessionsRes, invRes].find(r => r.error)?.error;
+    const firstError = [txRes, sessionsRes, invRes, transferRes].find(r => r.error)?.error;
     if (firstError) throw firstError;
     const catalogProducts = useStore.getState().products || [];
     const transactions: Transaction[] = (txRes.data || []).map((t:any) => ({
@@ -126,9 +200,16 @@ export async function pullBranchOperationalDataFromSupabase(branchId: string): P
       id:i.id,productId:i.product_id,branchId:i.branch_id,variantLabel:i.variant_label||undefined,
       quantity:Number(i.quantity)||0,minQuantity:Number(i.min_quantity)||0
     }));
-    return { success:true, transactions, cashSessions, inventory };
+    const transfers: InventoryTransfer[] = (transferRes.data || []).map((t:any) => ({
+      id:t.id,operationId:t.operation_id||t.id,productId:t.product_id,productName:t.product_name||'Producto',
+      fromBranchId:t.from_branch_id,fromBranchName:t.from_branch_name||'Sucursal Origen',
+      toBranchId:t.to_branch_id,toBranchName:t.to_branch_name||'Sucursal Destino',
+      variantLabel:t.variant_label||'Producto Base',quantity:Number(t.quantity)||0,
+      variants:Array.isArray(t.variants)?t.variants:[],date:t.date,userId:t.user_id,status:t.status||'completed'
+    }));
+    return { success:true, transactions, cashSessions, inventory, transfers };
   } catch (e:any) {
-    return { success:false, transactions:[], cashSessions:[], inventory:[], message:e?.message||'No se pudieron actualizar los datos operativos' };
+    return { success:false, transactions:[], cashSessions:[], inventory:[], transfers:[], message:e?.message||'No se pudieron actualizar los datos operativos' };
   }
 }
 
@@ -193,7 +274,7 @@ export async function pullPosBootstrapFromSupabase(branchId?: string): Promise<{
   const supabase = getSupabase();
   if (!supabase) return { success: false, data: null, message: 'Supabase no configurado' };
   try {
-    const [branchesRes, categoriesRes, productsRes, inventoryRes, usersRes, customersRes, currenciesRes, idnRes, txRes, sessionsRes, settingsRes] = await Promise.all([
+    const [branchesRes, categoriesRes, productsRes, inventoryRes, usersRes, customersRes, currenciesRes, idnRes, txRes, sessionsRes, settingsRes, transferRes, bankCardsRes, bankTxData] = await Promise.all([
       supabase.from('branches').select('*'),
       supabase.from('categories').select('*'),
       supabase.from('products').select('*').eq('status', 'active'),
@@ -204,9 +285,12 @@ export async function pullPosBootstrapFromSupabase(branchId?: string): Promise<{
       supabase.from('idn_settlement_prices').select('*'),
       branchId ? supabase.from('transactions').select('*').eq('branch_id', branchId).order('created_at', { ascending: false }).limit(1000) : supabase.from('transactions').select('*').order('created_at', { ascending: false }).limit(1000),
       branchId ? supabase.from('cash_sessions').select('*').eq('branch_id', branchId).order('opened_at', { ascending: false }).limit(20) : supabase.from('cash_sessions').select('*').order('opened_at', { ascending: false }).limit(20),
-      supabase.from('settings').select('*').eq('id', 'global').maybeSingle()
+      supabase.from('settings').select('*').eq('id', 'global').maybeSingle(),
+      supabase.from('inventory_transfers').select('*').order('date', { ascending: false }).limit(5000),
+      supabase.from('bank_cards').select('*'),
+      fetchAllRows(supabase, 'bank_transactions', 'date')
     ]);
-    const firstError = [branchesRes,categoriesRes,productsRes,inventoryRes,usersRes,customersRes,currenciesRes,idnRes,txRes,sessionsRes].find(r => r.error)?.error;
+    const firstError = [branchesRes,categoriesRes,productsRes,inventoryRes,usersRes,customersRes,currenciesRes,idnRes,txRes,sessionsRes,transferRes,bankCardsRes].find(r => r.error)?.error;
     if (firstError) throw firstError;
     const mapProduct = (p:any): Product => ({ id:p.id,name:p.name,sku:p.sku||'',barcode:p.barcode||'',costPrice:Number(p.cost_price)||0,price:Number(p.price)||0,margin:Number(p.margin)||0,categoryId:p.category_id||'',color:p.color||'bg-slate-100 text-slate-700',commissionType:p.commission_type||'percentage',commissionValue:Number(p.commission_value)||0,unit:p.unit||'unidad',status:p.status||'active',minStockAlert:Number(p.min_stock_alert)||5,hasSerial:Boolean(p.has_serial),warrantyDays:Number(p.warranty_days)||0,isKit:Boolean(p.is_kit),kitItems:Array.isArray(p.kit_items)?p.kit_items:[],kitComponents:Array.isArray(p.kit_components)?p.kit_components:(Array.isArray(p.kit_items)?p.kit_items:[]),deviceColor:p.device_color||'',availableSizes:Array.isArray(p.available_sizes)?p.available_sizes:[],availableColors:Array.isArray(p.available_colors)?p.available_colors:[] });
     const mappedProducts = (productsRes.data||[]).map(mapProduct);
@@ -221,7 +305,11 @@ export async function pullPosBootstrapFromSupabase(branchId?: string): Promise<{
       products:(productsRes.data||[]).map(mapProduct), inventory:(inventoryRes.data||[]).map(mapInventory), users:(usersRes.data||[]).map(mapUser),
       customers:(customersRes.data||[]).map(mapCustomer), currencies:(currenciesRes.data||[]).map((c:any)=>({code:c.code,name:c.name||c.code,symbol:c.symbol||c.code,rateToBase:Number(c.rate_to_base)||1,isBase:Boolean(c.is_base)})),
       idnSettlementPrices:(idnRes.data||[]).map((p:any)=>({id:p.id,userId:p.user_id,productId:p.product_id,settlementPrice:Number(p.settlement_price)||0})),
-      transactions:(txRes.data||[]).map(mapTx), cashSessions:(sessionsRes.data||[]).map(mapSession), settings:settingsRes.data||null
+      transactions:(txRes.data||[]).map(mapTx), cashSessions:(sessionsRes.data||[]).map(mapSession),
+      transfers:(transferRes.data||[]).map((t:any)=>({id:t.id,operationId:t.operation_id||t.id,productId:t.product_id,productName:t.product_name||'Producto',fromBranchId:t.from_branch_id,fromBranchName:t.from_branch_name||'Sucursal Origen',toBranchId:t.to_branch_id,toBranchName:t.to_branch_name||'Sucursal Destino',variantLabel:t.variant_label||'Producto Base',quantity:Number(t.quantity)||0,variants:Array.isArray(t.variants)?t.variants:[],date:t.date,userId:t.user_id,status:t.status||'completed'})),
+      bankCards:(bankCardsRes.data||[]).map((bc:any)=>({id:bc.id,name:bc.name||bc.card_holder||bc.bank_name||'Tarjeta Bancaria',bank:bc.bank||bc.bank_name||'Banco',bankName:bc.bank_name||bc.bank||'Banco',cardHolder:bc.card_holder||bc.name||'Titular',accountNumber:bc.account_number||bc.last_four_digits||'',lastFour:bc.last_four_digits||(bc.account_number?String(bc.account_number).slice(-4):''),lastFourDigits:bc.last_four_digits||'',phone:bc.phone||'',currency:bc.currency||'CUP',balance:Number(bc.balance)||0,color:bc.color||'from-blue-600 to-indigo-800',isActive:bc.is_active!==false})),
+      bankTransactions:(bankTxData||[]).map((bt:any)=>({id:bt.id,cardId:bt.card_id||bt.cardId,type:bt.type,amount:Number(bt.amount)||0,date:bt.date,reference:bt.reference||'',description:bt.description||'',transactionId:bt.transaction_id||bt.transactionId})),
+      settings:settingsRes.data||null
     }};
   } catch (e:any) { return { success:false, data:null, message:e?.message||'No se pudo cargar el caché POS' }; }
 }
