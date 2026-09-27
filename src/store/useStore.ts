@@ -1275,7 +1275,15 @@ export const useStore = create<AppState>()(
         if (warrantyIdx !== -1) updatedWarranties[warrantyIdx] = { ...updatedWarranties[warrantyIdx], status: req.type === 'warranty_exchange' ? 'exchanged' : 'refunded' };
       }
       return {
-        returns: current.returns.map(r => r.id === id ? { ...r, status: action === 'complete' ? 'completed' : 'rejected', processedBy: userId } : r),
+        returns: current.returns.map(r => r.id === id ? {
+          ...r,
+          status: action === 'complete' ? 'completed' : 'rejected',
+          processedBy: userId,
+          receivedAt: action === 'complete' ? new Date().toISOString() : r.receivedAt,
+          refundStatus: action === 'complete'
+            ? (r.type === 'refund' ? (r.refundStatus || 'pending') : 'not_required')
+            : r.refundStatus
+        } : r),
         inventory: updatedInventory,
         warranties: updatedWarranties
       };
