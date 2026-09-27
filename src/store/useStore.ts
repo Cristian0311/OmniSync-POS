@@ -1383,7 +1383,10 @@ export const useStore = create<AppState>()(
     // usar la venta offline como session_id cuando llegue a Supabase.
     const sessionWithSequentialId = {
       ...session,
-      id: `Turno-${nextTurn}-${crypto.randomUUID().slice(0, 8)}`,
+      // Keep the original stable ID. If the online insert actually succeeded
+      // but its response was lost, replaying this exact operation becomes an
+      // idempotent lookup instead of creating a second turn.
+      id: session.id,
       workingEmployeeIds: session.workingEmployeeIds && session.workingEmployeeIds.length > 0 
         ? session.workingEmployeeIds 
         : [session.userId]
@@ -1401,7 +1404,7 @@ export const useStore = create<AppState>()(
   closeSession: async (sessionId, closingBalances, workerName, closingDate, discrepancyDeduction, sessionMeta) => {
     const finalClosingDate = closingDate || new Date().toISOString();
     const session = get().cashSessions.find(s => s.id === sessionId);
-    if (!session) return;
+    if (!session) return false;
 
     const sessionTxs = get().transactions.filter(t =>
       t.sessionId
@@ -1452,10 +1455,10 @@ export const useStore = create<AppState>()(
           cart: []
         }));
         removeFromOfflineQueueByAction('cash_session', actionId);
-        return;
+        return true;
       } catch (err) {
         console.warn("[closeSession] El cierre no fue confirmado; queda durable para reintento:", err);
-        return;
+        return false;
       }
     }
 
@@ -1464,6 +1467,7 @@ export const useStore = create<AppState>()(
       salarySettlements: [...(state.salarySettlements || []).filter(st => st.sessionId !== sessionId), settlement],
       cart: []
     }));
+    return true;
   },
   updateCashSession: (id, updates) => {
     set((state) => ({
