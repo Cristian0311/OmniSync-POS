@@ -389,27 +389,60 @@ export default function Reports() {
     return Array.from(sessionMap.values());
   }, [cashSessions, transactions]);
 
-  // Chronological mapping so all sessions (historical and new) have consistent Turno-1, Turno-2, etc.
+  // El número de turno es el orden operativo, no el orden de cierre.
+  // Conservamos números reales del formato Turno-N y asignamos los IDs UUID
+  // históricos restantes a los números libres según su fecha de apertura.
   const sessionTurnMap = useMemo(() => {
     const map = new Map<string, string>();
-    const sorted = [...reconciledSessions].sort(
-      (a, b) => new Date(a.openedAt || a.closedAt || '').getTime() - new Date(b.openedAt || b.closedAt || '').getTime()
+    const ordered = [...reconciledSessions].sort(
+      (a, b) =>
+        new Date(a.openedAt || a.closedAt || '').getTime() -
+        new Date(b.openedAt || b.closedAt || '').getTime()
     );
-    sorted.forEach((s, idx) => {
-      if (s.id.startsWith('Turno-')) {
-        map.set(s.id, s.id);
-      } else {
-        map.set(s.id, `Turno-${idx + 1}`);
+    const usedNumbers = new Set<number>();
+
+    for (const session of ordered) {
+      const match = String(session.id || '').match(/^Turno-(\d+)$/i);
+      if (!match) continue;
+      const number = Number(match[1]);
+      if (Number.isFinite(number) && number > 0) {
+        map.set(session.id, `Turno-${number}`);
+        usedNumbers.add(number);
       }
-    });
+    }
+
+    let nextNumber = 1;
+    for (const session of ordered) {
+      if (map.has(session.id)) continue;
+      while (usedNumbers.has(nextNumber)) nextNumber += 1;
+      map.set(session.id, `Turno-${nextNumber}`);
+      usedNumbers.add(nextNumber);
+      nextNumber += 1;
+    }
+
     return map;
   }, [reconciledSessions]);
+
+  const getSessionTurnNumber = useCallback((session: CashRegisterSession) => {
+    const label = sessionTurnMap.get(session.id) || '';
+    const match = label.match(/^(?:Turno-)?(\d+)$/i);
+    return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+  }, [sessionTurnMap]);
+
+  const sortSessionsByTurn = useCallback((a: CashRegisterSession, b: CashRegisterSession) => {
+    const turnA = getSessionTurnNumber(a);
+    const turnB = getSessionTurnNumber(b);
+    if (turnA !== turnB) return turnA - turnB;
+    const openedA = new Date(a.openedAt || a.closedAt || '').getTime();
+    const openedB = new Date(b.openedAt || b.closedAt || '').getTime();
+    return openedA - openedB;
+  }, [getSessionTurnNumber]);
 
   const closedSessions = useMemo(() => {
     return [...reconciledSessions]
       .filter(s => s.status === 'closed' && !s.deletedAt)
-      .sort((a, b) => new Date(b.closingDate || b.closedAt || b.openedAt || '').getTime() - new Date(a.closingDate || a.closedAt || a.openedAt || '').getTime());
-  }, [reconciledSessions]);
+      .sort(sortSessionsByTurn);
+  }, [reconciledSessions, sortSessionsByTurn]);
 
   const filteredSessions = useMemo(() => {
     const todayYMD = getLocalDateYMD(new Date().toISOString());
@@ -440,8 +473,8 @@ export default function Reports() {
         }
         return true;
       })
-      .sort((a, b) => new Date(b.closingDate || b.closedAt || b.openedAt || '').getTime() - new Date(a.closingDate || a.closedAt || a.openedAt || '').getTime());
-  }, [reconciledSessions, statusFilter, selectedBranchFilter, selectedWorkerFilter, selectedFilterDate, sessionFilter, users]);
+      .sort(sortSessionsByTurn);
+  }, [reconciledSessions, statusFilter, selectedBranchFilter, selectedWorkerFilter, selectedFilterDate, sessionFilter, users, sortSessionsByTurn]);
 
   const filteredClosedSessions = useMemo(() => {
     return filteredSessions.filter(s => s.status === 'closed');
@@ -864,12 +897,8 @@ export default function Reports() {
       }
     });
 
-    return list.sort((a, b) => {
-      const dateA = new Date(a.session.closingDate || a.session.closedAt || a.session.openedAt).getTime();
-      const dateB = new Date(b.session.closingDate || b.session.closedAt || b.session.openedAt).getTime();
-      return dateB - dateA;
-    });
-  }, [cashSessions, transactions, baseCurrency, currencies, salarySettlements, products]);
+    return list.sort((a, b) => sortSessionsByTurn(a.session, b.session));
+  }, [cashSessions, transactions, baseCurrency, currencies, salarySettlements, products, sortSessionsByTurn]);
 
   const filteredDiscrepancySessions = useMemo(() => {
     return allDiscrepancySessions.filter(({ session, info }) => {
@@ -938,8 +967,12 @@ export default function Reports() {
       });
     });
 
-    return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [cashSessions, sessionTurnMap, branches, users]);
+    return list.sort((a, b) => {
+      const turnOrder = sortSessionsByTurn(a.session, b.session);
+      if (turnOrder !== 0) return turnOrder;
+      return new Date(a.date).getTime() - new Date(b.date).getTime();
+    });
+  }, [cashSessions, sessionTurnMap, branches, users, sortSessionsByTurn]);
 
   const filteredDetailedMovements = useMemo(() => {
     return allDetailedMovements.filter(m => {
