@@ -21,6 +21,7 @@ export default function Reports() {
   const store = useStore(useShallow((state) => ({
     addInformationalSoldProductToSession: state.addInformationalSoldProductToSession,
     addNotification: state.addNotification,
+    syncWithSupabase: state.syncWithSupabase,
     addSalarySettlement: state.addSalarySettlement,
     bankCards: state.bankCards,
     bankTransactions: state.bankTransactions,
@@ -70,6 +71,14 @@ export default function Reports() {
   const addNotification = store.addNotification;
   const receiptConfig = store.receiptConfig;
   const getBaseCurrency = store.getBaseCurrency;
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.onLine) return;
+    // Reports needs an authoritative cross-branch snapshot. The local store is
+    // intentionally persistent for offline POS work, so opening Reports must
+    // reconcile it with Supabase instead of displaying stale historical cache.
+    void store.syncWithSupabase();
+  }, [store.syncWithSupabase]);
 
   const baseCurrency = getBaseCurrency ? getBaseCurrency() : (currencies.find(c => c.isBase) || currencies[0] || { code: 'CUP', name: 'Peso Cubano', symbol: '$', rateToBase: 1, isBase: true });
 
