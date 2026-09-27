@@ -506,7 +506,7 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
     const persistenceMessage = persistenceError?.message || 'Error de IndexedDB/localStorage. Las operaciones se conservaron para reintento.';
     errors.push({ type: 'offline_queue', actionId: 'persistence', message: persistenceMessage });
     addSyncLog({ level:'error', source:'offline_queue', title:'Cola local no pudo persistirse', details:persistenceMessage, entityType:'offline_queue' });
-    return { processed, failed, remaining: memoryQueue.length, errors };
+    return { processed, failed, remaining: getOfflineQueue().length, errors };
   }
 
   isProcessingQueue = false;
