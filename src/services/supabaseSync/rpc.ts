@@ -134,6 +134,24 @@ export async function callOpenSessionRPCWithId(session: CashRegisterSession): Pr
           errorCode: 'CASH_SESSION_REOPEN_BLOCKED'
         };
       }
+
+      // Another device already owns the only open shift for this branch.
+      // Do not create a local "phantom" shift that could later accept sales.
+      const branchOpen = await supabase
+        .from('cash_sessions')
+        .select('id,branch_id,user_id,worker_name,status,opened_at')
+        .eq('branch_id', session.branchId)
+        .eq('status', 'open')
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (branchOpen.data) {
+        return {
+          success: false,
+          data: branchOpen.data,
+          error: 'La sucursal ya tiene un turno abierto en otra terminal.',
+          errorCode: 'CASH_BRANCH_ALREADY_OPEN'
+        };
+      }
     }
 
     console.error('[CashSession] No se pudo crear el turno estable:', error);
