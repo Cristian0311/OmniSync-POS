@@ -2221,7 +2221,14 @@ export const useStore = create<AppState>()(
       const updated = state.bankCards.map(c => {
         if (c.id !== id) return c;
         // El saldo es autoritativo del servidor y solo cambia mediante RPC.
-        const next = { ...c, ...card, balance: c.balance };
+        const incomingBalance = card.balance;
+        const next = {
+          ...c,
+          ...card,
+          balance: incomingBalance !== undefined && Number.isFinite(Number(incomingBalance))
+            ? Number(incomingBalance)
+            : c.balance
+        };
         found = next;
         return next;
       });
