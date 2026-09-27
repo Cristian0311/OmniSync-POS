@@ -1026,21 +1026,16 @@ export async function setBankCardBalanceToSupabase(cardId: string, expectedBalan
   if (!supabase || (typeof navigator !== 'undefined' && !navigator.onLine)) return false;
   const expected = Number(expectedBalance) || 0;
   const next = Math.max(0, Number(newBalance) || 0);
-  try {
-    const { data, error } = await supabase
-      .from('bank_cards')
-      .update({ balance: next })
-      .eq('id', cardId)
-      .eq('balance', expected)
-      .select('id,balance');
-    if (error) throw error;
-    return Boolean(data?.length && Number(data[0]?.balance) === next);
-  } catch (e) {
-    console.warn('[Bank] atomic balance update failed:', e);
-    return false;
-  }
+  const { data, error } = await supabase
+    .from('bank_cards')
+    .update({ balance: next })
+    .eq('id', cardId)
+    .eq('balance', expected)
+    .select('id,balance');
+  if (error) throw error;
+  // false significa conflicto real: el saldo ya no coincide con el esperado.
+  return Boolean(data?.length && Number(data[0]?.balance) === next);
 }
-
 export async function updateBankCardMetadataToSupabase(card: BankCard): Promise<boolean> {
   const supabase = getSupabase();
   if (!supabase || (typeof navigator !== 'undefined' && !navigator.onLine)) return false;
