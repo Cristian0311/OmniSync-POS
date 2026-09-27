@@ -71,7 +71,13 @@ export function initMultiDeviceRealtimeSync(): () => void {
     if (BRANCH_SCOPED_TABLES.has(table)) {
       if (debounceTimeout) clearTimeout(debounceTimeout);
       debounceTimeout = setTimeout(() => {
-        if (navigator.onLine && !isSyncInProgress) {
+        if (!navigator.onLine || isSyncInProgress) return;
+        // Mientras existan operaciones locales pendientes, no reemplazar el
+        // espejo optimista con un snapshot remoto anterior. Primero drenar la
+        // cola y después hacer el refresh autoritativo.
+        if (getOfflineQueueCount() > 0) {
+          triggerBackgroundSync(false).catch(() => {});
+        } else {
           useStore.getState().refreshBranchOperationalData().catch(() => {});
         }
       }, 500);
@@ -80,7 +86,13 @@ export function initMultiDeviceRealtimeSync(): () => void {
     if (table === 'bank_cards' || table === 'bank_transactions') {
       if (debounceTimeout) clearTimeout(debounceTimeout);
       debounceTimeout = setTimeout(() => {
-        if (navigator.onLine && !isSyncInProgress) {
+        if (!navigator.onLine || isSyncInProgress) return;
+        // Los movimientos bancarios locales también son optimistic. Un
+        // bootstrap durante una cola pendiente podía devolver temporalmente el
+        // saldo anterior y borrar visualmente el movimiento recién registrado.
+        if (getOfflineQueueCount() > 0) {
+          triggerBackgroundSync(false).catch(() => {});
+        } else {
           useStore.getState().bootstrapPosFromSupabase().catch(() => {});
         }
       }, 700);
