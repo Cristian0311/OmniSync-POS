@@ -994,14 +994,16 @@ export const useStore = create<AppState>()(
       try {
         const res = await callProcessTransactionRPC(transaction);
         if (!res.success) {
-          // PostgreSQL business/idempotency errors are definitive. Transport
-          // failures are queued, but the sale is still mirrored locally so the
-          // cashier does not lose the ticket while the durable queue retries it.
-          if (res.errorCode) {
+          // Only explicit business/idempotency rejections are definitive.
+          // Verification failures, timeouts, schema-cache issues and unknown
+          // transport failures remain retryable so the sale cannot be lost.
+          const code = String(res.errorCode || '');
+          const permanentCodes = new Set(['P0001', '23503', '23505', '22P02', '22003', '22007', 'IDEMPOTENCY_CONFLICT']);
+          if (permanentCodes.has(code)) {
             console.error('[processTransaction] Operación rechazada por servidor:', res.error);
             return false;
           }
-          throw new Error(res.error || 'No se pudo procesar la venta');
+          throw new Error(res.error || 'No se pudo confirmar la venta');
         }
         applyLocalCompletedSale(transaction);
         return true;
