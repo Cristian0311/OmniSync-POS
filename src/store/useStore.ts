@@ -694,7 +694,7 @@ export const useStore = create<AppState>()(
 
     const operationId = transactionId || crypto.randomUUID();
     const userId = (get().currentUser?.id && get().users.some(u => u.id === get().currentUser?.id)) ? get().currentUser!.id : 'system';
-    const serverPayload = { operationId, productId, fromBranchId, toBranchId, variants: activeVariants, userId };
+    const serverPayload = { operationId, batchId: batchId || undefined, productId, fromBranchId, toBranchId, variants: activeVariants, userId };
     const actionId = 'transfer:' + operationId;
 
     await enqueueOfflineItem('transfer', serverPayload, actionId);
