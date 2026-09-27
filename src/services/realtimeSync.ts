@@ -99,11 +99,37 @@ export function initMultiDeviceRealtimeSync(): () => void {
   const handleWindowFocus = () => {
     if (navigator.onLine && getOfflineQueueCount() > 0) triggerBackgroundSync().catch(() => {});
   };
-  const handleOnline = () => triggerBackgroundSync(false).catch(() => {});
+  const handleOffline = () => {
+    if (realtimeChannel && supabase) {
+      try { supabase.removeChannel(realtimeChannel); } catch {}
+      realtimeChannel = null;
+    }
+  };
+  const handleOnline = () => {
+    if (supabase && !realtimeChannel) {
+      try {
+        const branchId = useStore.getState().currentBranchId;
+        realtimeChannel = supabase.channel(`pos-sync-${branchId || 'global'}`);
+        realtimeChannel.on('postgres_changes', {
+          event: '*', schema: 'public', table: 'inventory',
+          ...(branchId ? { filter: `branch_id=eq.${branchId}` } : {})
+        }, handleInventoryChange);
+        realtimeChannel.on('postgres_changes', {
+          event: '*', schema: 'public', table: 'transactions',
+          ...(branchId ? { filter: `branch_id=eq.${branchId}` } : {})
+        }, handleTransactionChange);
+        realtimeChannel.subscribe();
+      } catch (e) {
+        console.warn('[RealtimeSync] No se pudo reanudar Realtime:', e);
+      }
+    }
+    triggerBackgroundSync(false).catch(() => {});
+  };
 
   document.addEventListener('visibilitychange', handleVisibilityChange);
   window.addEventListener('focus', handleWindowFocus);
   window.addEventListener('online', handleOnline);
+  window.addEventListener('offline', handleOffline);
 
   pollIntervalId = setInterval(() => {
     if (navigator.onLine && getOfflineQueueCount() > 0 && !isSyncInProgress) {
@@ -120,6 +146,7 @@ export function initMultiDeviceRealtimeSync(): () => void {
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.removeEventListener('focus', handleWindowFocus);
     window.removeEventListener('online', handleOnline);
+    window.removeEventListener('offline', handleOffline);
     if (pollIntervalId) clearInterval(pollIntervalId);
     if (branchRepairIntervalId) clearInterval(branchRepairIntervalId);
     if (debounceTimeout) clearTimeout(debounceTimeout);
