@@ -994,8 +994,9 @@ export const useStore = create<AppState>()(
       try {
         const res = await callProcessTransactionRPC(transaction);
         if (!res.success) {
-          // PostgreSQL business errors (stock, closed shift, invalid data) are not
-          // retryable. Only transport/configuration failures enter the offline queue.
+          // PostgreSQL business/idempotency errors are definitive. Transport
+          // failures are queued, but the sale is still mirrored locally so the
+          // cashier does not lose the ticket while the durable queue retries it.
           if (res.errorCode) {
             console.error('[processTransaction] Operación rechazada por servidor:', res.error);
             return false;
@@ -1005,8 +1006,8 @@ export const useStore = create<AppState>()(
         applyLocalCompletedSale(transaction);
         return true;
       } catch (err) {
-        console.warn('[processTransaction] Venta no confirmada online; se encola para reintento idempotente:', err);
-        // Do not apply stock locally a second time here. Queue the exact operation.
+        console.warn('[processTransaction] No hubo confirmación definitiva del servidor; venta preservada localmente y encolada para replay idempotente:', err);
+        applyLocalCompletedSale(transaction);
         enqueueOfflineItem('transaction', transaction, transaction.id);
         return true;
       }
