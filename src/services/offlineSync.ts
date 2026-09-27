@@ -175,7 +175,31 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       if(error) throw error;
       return true;
     }
-    case 'bank_transaction': { const d=data; if (d.__operation === 'delete') { const res = await callDeleteBankTransactionRPC(d.id); if (!res.success) throw new Error(res.error || 'No se pudo eliminar el movimiento bancario'); return true; } const res = await callProcessBankTransactionRPC(d); if (!res.success) throw new Error(res.error || 'No se pudo sincronizar el movimiento bancario'); return true; }
+    case 'bank_transaction': {
+      const d = data;
+      if (d.__operation === 'delete') {
+        const res = await callDeleteBankTransactionRPC(d.id);
+        if (!res.success) throw new Error(res.error || 'No se pudo eliminar el movimiento bancario');
+        return true;
+      }
+      // Un ingreso generado por una venta nunca se procesa solo. Aunque su
+      // dependencia haya quedado marcada como conflict, verificamos de nuevo
+      // que la venta exista y siga válida en Supabase antes del banco.
+      if (d.transactionId) {
+        const { data: sale, error: saleError } = await supabase
+          .from('transactions')
+          .select('id,status,deleted_at')
+          .eq('id', d.transactionId)
+          .maybeSingle();
+        if (saleError) throw saleError;
+        if (!sale || sale.deleted_at || sale.status !== 'completed') {
+          throw new Error('La venta asociada todavía no está confirmada en Supabase; el movimiento bancario permanece pendiente.');
+        }
+      }
+      const res = await callProcessBankTransactionRPC(d);
+      if (!res.success) throw new Error(res.error || 'No se pudo sincronizar el movimiento bancario');
+      return true;
+    }
     case 'supplier': { const d=data; const {error}=await supabase.from('suppliers').upsert({id:d.id,name:d.name,phone:d.phone||'',address:d.address||'',email:d.email||'',rating:d.rating||5,type_of_merchandise:d.typeOfMerchandise||''}); if(error) throw error; return true; }
     case 'supplier_order': { const d=data; const {error}=await supabase.from('supplier_orders').upsert({id:d.id,supplier_id:d.supplierId,date:d.date,expected_delivery_date:d.expectedDeliveryDate,items:d.items||[],total:d.total,status:d.status,branch_id:d.branchId,transport_details:d.transportDetails,transport_cost:d.transportCost}); if(error) throw error; return true; }
     case 'inventory_audit': { const d=data; const {error}=await supabase.from('inventory_audits').upsert({id:d.id,date:d.date,branch_id:d.branchId,user_id:d.userId,status:d.status,items:d.items||[],notes:d.notes}); if(error) throw error; return true; }
@@ -200,7 +224,13 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       }
       const res = await callProcessTransactionRPC(transaction);
       if (!res.success) {
-        if (res.errorCode) throw new PermanentSyncError(res.error || 'La venta fue rechazada por Supabase');
+        // Solo códigos de negocio explícitamente irreversibles se consideran
+        // conflictos permanentes. Un timeout, 5xx, PostgREST o pérdida de
+        // conexión debe volver a intentarse aunque incluya metadata de error.
+        const permanentCodes = new Set(['P0001','23503','23505','22P02','22003','22007','IDEMPOTENCY_CONFLICT']);
+        if (res.errorCode && permanentCodes.has(String(res.errorCode))) {
+          throw new PermanentSyncError(res.error || 'La venta fue rechazada por Supabase');
+        }
         throw new Error(res.error || 'No se pudo sincronizar la venta');
       }
 
@@ -356,10 +386,11 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
           add(cashOp(data.id, 'open'));
           if (data.__operation === 'close' || data.__operation === 'cancel' ||
               String(item.actionId).startsWith('cash-close:') || String(item.actionId).startsWith('cash-cancel:')) {
-            // A close/cancel must replay after every queued sale created before
-            // that operation. This protects against clock/order races between devices.
+            // Un cierre/cancelación debe esperar a TODA operación de venta/liquidación
+            // del turno que esté encolada. No dependemos del reloj local porque una
+            // operación puede reintentarse horas después y recibir un timestamp nuevo.
             for (const candidate of queueAtStart) {
-              if (candidate.type === 'transaction' && candidate.data?.sessionId === data.id && candidate.timestamp <= item.timestamp) add(candidate);
+              if (candidate.type === 'transaction' && candidate.data?.sessionId === data.id) add(candidate);
             }
           }
         } else {
@@ -432,7 +463,11 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
       const hint = err?.hint ? ` — ${err.hint}` : '';
       item.lastError = `${err?.message || 'Error desconocido'}${code}${status}${detail}${hint}`;
       const permanent = err?.permanent === true;
-      item.status = permanent || item.retryCount >= 8 ? 'conflict' : 'failed';
+      // Las operaciones críticas nunca se abandonan por cantidad de reintentos.
+      // Una tablet puede permanecer offline durante muchas horas/días y la
+      // operación debe seguir pendiente hasta recibir una confirmación real.
+      const criticalDurable = ['transaction', 'cash_session'].includes(item.type);
+      item.status = permanent || (!criticalDurable && item.retryCount >= 8) ? 'conflict' : 'failed';
       remainingFromRun.push(item);
       errors.push({ type: item.type, actionId: item.actionId, message: item.lastError, retryCount: item.retryCount });
       addSyncLog({ level:'error', source:'offline_queue', title:`Error al procesar item (${item.type})`, details:item.lastError, entityType:item.type, actionId:item.actionId, retryAttempt:item.retryCount, maxRetries:8 });
