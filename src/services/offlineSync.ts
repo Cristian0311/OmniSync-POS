@@ -14,6 +14,7 @@ import {
 import {
   callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCancelSessionRPC,
   callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC,
+  callStartInventoryAuditRPC, callSaveInventoryAuditCountRPC, callRequestInventoryAuditRecountRPC, callApproveInventoryAuditRPC,
   callCompleteInventoryAuditRPC, callBankInternalTransferRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC
 } from './supabaseSync';
 import { addSyncLog } from '../utils/syncLogger';
@@ -539,7 +540,7 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     case 'bank_transaction_delete': { const res = await callDeleteBankTransactionRPC(data.id); if (!res.success) throw new Error(res.error || 'No se pudo eliminar el movimiento bancario'); return true; }
     case 'bank_card_delete': { const res = await callDeleteBankCardRPC(data.id); if (!res.success) throw new Error(res.error || 'No se pudo eliminar la cuenta bancaria'); return true; }
     case 'supplier_receive': { const res = await callReceiveSupplierOrderRPC(data.id, data.userId || 'system'); if (!res.success) throw new Error(res.error || 'No se pudo recibir la orden'); return true; }
-    case 'audit_complete': { const res = await callCompleteInventoryAuditRPC(data.id, data.branchId, data.userId, data.items || [], data.notes); if (!res.success) throw new Error(res.error || 'No se pudo completar la auditoría'); return true; }
+    case 'audit_complete': { const res = await callSaveInventoryAuditCountRPC(data.id, data.userId, data.items || [], data.notes); if (!res.success) throw new Error(res.error || 'No se pudo guardar el conteo'); return true; }
     case 'inventory': {
       // Compatibilidad con colas antiguas que guardaban un stock absoluto.
       // Nunca sobrescribimos silenciosamente un cambio remoto: solo aceptamos
