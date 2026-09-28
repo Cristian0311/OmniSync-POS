@@ -535,13 +535,23 @@ export default function POS() {
       (u.name && currentSession.workerName && u.name.toLowerCase() === currentSession.workerName.toLowerCase())
     );
 
-    const isPasswordValid =
-      (worker?.password && cancelShiftPassword === worker.password) ||
-      (currentUser?.password && cancelShiftPassword === currentUser.password) ||
-      users.some(u => u.role === 'admin' && u.password === cancelShiftPassword);
+    const isAdminAuthorized =
+      currentUser?.role === 'admin' &&
+      !!currentUser.password &&
+      cancelShiftPassword === currentUser.password;
 
-    if (!isPasswordValid) {
-      setPosError("Contraseña incorrecta. Por favor ingresa la contraseña asignada al trabajador.");
+    const isWorkerAuthorized =
+      currentUser?.role !== 'admin' &&
+      !!worker?.password &&
+      cancelShiftPassword === worker.password &&
+      worker.isActive !== false;
+
+    if (!isAdminAuthorized && !isWorkerAuthorized) {
+      setPosError(
+        currentUser?.role === 'admin'
+          ? "Contraseña de administrador incorrecta."
+          : `Debes ingresar la contraseña del trabajador del turno (${worker?.name || 'trabajador'}).`
+      );
       setTimeout(() => setPosError(""), 3000);
       return;
     }
@@ -5101,7 +5111,7 @@ export default function POS() {
                   <button 
                     onClick={handleCancelShift}
                     disabled={isCancellingShift}
-                    className="flex-2 py-4 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-200 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="flex-[2] py-4 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-200 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {isCancellingShift ? "Cancelando..." : "Confirmar Anulación"}
                   </button>
