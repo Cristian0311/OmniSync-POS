@@ -248,6 +248,17 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
       throw e;
     }
 
+    // NCF se asigna en el POS antes de la venta. La RPC de inventario/venta
+    // existente no recibe esos campos, por compatibilidad con clientes anteriores,
+    // así que los persistimos inmediatamente después de confirmar la fila.
+    if (tx.ncf || tx.ncfType) {
+      const { error: ncfError } = await supabase
+        .from('transactions')
+        .update({ ncf: tx.ncf || null, ncf_type: tx.ncfType || null })
+        .eq('id', tx.id);
+      if (ncfError) throw ncfError;
+    }
+
     const persistedItems = Array.isArray(persisted.items) ? persisted.items : [];
     const persistedPayments = Array.isArray(persisted.payments) ? persisted.payments : [];
     // La columna transactions.items conserva el objeto completo del carrito,
