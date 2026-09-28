@@ -617,7 +617,40 @@ export const useStore = create<AppState>()(
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         throw new Error('No se puede importar el respaldo mientras el dispositivo está sin conexión. Conéctate y vuelve a intentarlo.');
       }
-      
+
+      // Conservamos un snapshot local para poder deshacer el reemplazo si la
+      // confirmación remota falla. Sin esto, un import parcialmente rechazado
+      // podía dejar el dispositivo mostrando datos que la nube nunca aceptó.
+      const previousImportState = {
+        categories: get().categories,
+        products: get().products,
+        inventory: get().inventory,
+        branches: get().branches,
+        currencies: get().currencies,
+        customers: get().customers,
+        users: get().users,
+        transactions: get().transactions,
+        returns: get().returns,
+        warranties: get().warranties,
+        cashSessions: get().cashSessions,
+        transfers: get().transfers,
+        suppliers: get().suppliers,
+        supplierOrders: get().supplierOrders,
+        inventoryAudits: get().inventoryAudits,
+        salarySettlements: get().salarySettlements,
+        fiscalConfigs: get().fiscalConfigs,
+        bankCards: get().bankCards,
+        bankTransactions: get().bankTransactions,
+        demandForecasts: get().demandForecasts,
+        quotes: get().quotes,
+        timeShifts: get().timeShifts,
+        pendingOrders: get().pendingOrders,
+        idnSettlementPrices: get().idnSettlementPrices,
+        receiptConfig: get().receiptConfig,
+        catalogConfig: get().catalogConfig,
+        storeConfig: get().storeConfig
+      };
+
       // Update local state
       set({
         categories: d.categories || [],
@@ -653,10 +686,11 @@ export const useStore = create<AppState>()(
       const { pushAllToSupabase } = await import('../services/supabaseSync');
       const syncResult = await pushAllToSupabase(true);
       if (!syncResult.success) {
+        set(previousImportState);
         throw new Error(
           syncResult.errors?.length
-            ? `La importación local se realizó, pero Supabase no confirmó todos los datos: ${syncResult.errors.join(' · ')}`
-            : 'Supabase no confirmó la importación completa.'
+            ? `La importación fue cancelada porque Supabase no confirmó todos los datos: ${syncResult.errors.join(' · ')}`
+            : 'La importación fue cancelada porque Supabase no confirmó la operación completa.'
         );
       }
 
