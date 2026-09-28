@@ -6,10 +6,28 @@ import { InfoTooltip } from "../components/InfoTooltip";
 import { cn } from "../lib/utils";
 
 export default function CashRegister() {
-  const { branches, currentBranchId, setCurrentBranch, getCurrentSession, openSession, closeSession, getBaseCurrency, currencies, currentUser, transactions, users, salarySettlements, updateSalarySettlement } = useStore();
+  const { branches, currentBranchId, setCurrentBranch, getCurrentSession, openSession, closeSession, getBaseCurrency, currencies, currentUser, transactions, users, salarySettlements, updateSalarySettlement, cashSessions } = useStore();
   const session = getCurrentSession(currentBranchId, currentUser?.id || 'u1');
   const baseCurrency = getBaseCurrency();
   const currentBranch = branches.find(b => b.id === currentBranchId);
+
+  // Historial visible: numeración consecutiva global entre todos los turnos no eliminados.
+  const visibleCashSessions = useMemo(() => {
+    const ordered = [...(cashSessions || [])]
+      .filter(s => !s.deletedAt)
+      .sort((a, b) => {
+        const timeA = new Date(a.openedAt || a.closedAt || '').getTime();
+        const timeB = new Date(b.openedAt || b.closedAt || '').getTime();
+        if (timeA !== timeB) return timeB - timeA;
+        return String(b.id).localeCompare(String(a.id));
+      });
+    const numberById = new Map<string, number>();
+    [...ordered].reverse().forEach((s, index) => numberById.set(s.id, index + 1));
+    return ordered
+      .filter(s => s.branchId === currentBranchId)
+      .slice(0, 10)
+      .map(s => ({ session: s, displayTurnNumber: numberById.get(s.id) || 0 }));
+  }, [cashSessions, currentBranchId]);
 
   const pendingSettlement = useMemo(() => 
     salarySettlements.find(s => s.status === 'pending'), 
@@ -622,17 +640,13 @@ export default function CashRegister() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {useStore.getState().cashSessions
-                .filter(s => s.branchId === currentBranchId && !s.deletedAt)
-                .sort((a, b) => (Number(b.turnNumber || 0) - Number(a.turnNumber || 0)) || (new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime()))
-                .slice(0, 10)
-                .map(s => {
+              {visibleCashSessions.map(({ session: s, displayTurnNumber }) => {
                   const finalCash = s.closingBalances?.find(b => b.currencyCode === baseCurrency.code && b.method === 'cash')?.amount || 0;
                   return (
                     <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-5 py-3">
                         <span className="inline-flex items-center px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 text-[9px] font-black uppercase tracking-wider">
-                          {s.turnNumber ? `Turno-${s.turnNumber}` : s.id}
+                          {displayTurnNumber ? `Turno-${displayTurnNumber}` : s.id}
                         </span>
                       </td>
                       <td className="px-5 py-3">
