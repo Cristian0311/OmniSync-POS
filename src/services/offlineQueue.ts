@@ -47,7 +47,7 @@ class PermanentSyncError extends Error {
   permanent = true;
 }
 
-function getDeviceId(): string {
+export function getDeviceId(): string {
   if (typeof window === 'undefined') return 'server';
   const existing = localStorage.getItem(DEVICE_KEY);
   if (existing) return existing;
