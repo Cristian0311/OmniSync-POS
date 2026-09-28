@@ -2509,10 +2509,47 @@ export const useStore = create<AppState>()(
     const actionId = 'bank-transaction:' + transaction.id;
     await enqueueOfflineItem('bank_transaction', transaction, actionId);
 
+    const applyLocalOptimisticBankTransaction = () => {
+      set(state => {
+        const duplicate = (state.bankTransactions || []).some(t =>
+          t.id === transaction.id ||
+          (transaction.transactionId && t.transactionId && t.transactionId === transaction.transactionId) ||
+          (transaction.reference && t.reference && t.reference === transaction.reference && t.cardId === transaction.cardId)
+        );
+        if (duplicate) return state;
+
+        const updatedCards = (state.bankCards || []).map(card => {
+          if (card.id !== transaction.cardId) return card;
+          const delta =
+            (transaction.type === 'deposit' || transaction.type === 'payment_received')
+              ? transaction.amount
+              : (transaction.type === 'withdrawal' || transaction.type === 'supplier_payment')
+                ? -transaction.amount
+                : 0;
+          return { ...card, balance: Math.max(0, card.balance + delta) };
+        });
+
+        return {
+          bankTransactions: [transaction, ...(state.bankTransactions || [])],
+          bankCards: updatedCards
+        };
+      });
+    };
+
     if (typeof navigator !== 'undefined' && navigator.onLine) {
       try {
         const res = await callProcessBankTransactionRPC(transaction);
-        if (!res.success) throw new Error(res.error || 'No se pudo guardar el movimiento bancario');
+        if (!res.success) {
+          const code = String(res.errorCode || '');
+          const permanentCodes = new Set(['P0001','23503','23505','42501','22003','22P02','IDEMPOTENCY_CONFLICT']);
+          if (permanentCodes.has(code)) {
+            await removeFromOfflineQueueByAction('bank_transaction', actionId);
+            await useStore.getState().reconcileBankBalances();
+            get().addNotification(res.error || 'El movimiento bancario fue rechazado por el servidor.', 'error');
+            return false;
+          }
+          throw new Error(res.error || 'No se pudo confirmar el movimiento bancario');
+        }
 
         const queued = getOfflineQueue().find(item => item.type === 'bank_transaction' && item.actionId === actionId);
         if (queued) await removeFromOfflineQueue(queued.id);
@@ -2520,10 +2557,7 @@ export const useStore = create<AppState>()(
         const data = res.data || {};
         const balance = Number(data.balance);
         set(state => ({
-          bankTransactions: [
-            transaction,
-            ...(state.bankTransactions || []).filter(t => t.id !== transaction.id)
-          ],
+          bankTransactions: [transaction, ...(state.bankTransactions || []).filter(t => t.id !== transaction.id)],
           bankCards: (state.bankCards || []).map(card =>
             card.id === transaction.cardId && Number.isFinite(balance)
               ? { ...card, balance }
@@ -2532,35 +2566,22 @@ export const useStore = create<AppState>()(
         }));
         return true;
       } catch (err: any) {
-        get().addNotification(err?.message || 'El movimiento bancario quedó pendiente de sincronización.', 'warning');
-        return false;
+        // Timeout/corte de red después de enviar el movimiento: el servidor
+        // puede haberlo aplicado. Conservamos la misma operación en la cola y
+        // mostramos el estado local como pendiente, para impedir un segundo
+        // movimiento manual con otro ID.
+        applyLocalOptimisticBankTransaction();
+        get().addNotification(
+          'Movimiento bancario guardado localmente y pendiente de confirmación con la nube.',
+          'info',
+          err?.message || 'La respuesta del servidor no pudo confirmarse.'
+        );
+        return true;
       }
     }
 
-    set(state => {
-      const duplicate = (state.bankTransactions || []).some(t =>
-        t.id === transaction.id ||
-        (transaction.transactionId && t.transactionId && t.transactionId === transaction.transactionId) ||
-        (transaction.reference && t.reference && t.reference === transaction.reference && t.cardId === transaction.cardId)
-      );
-      if (duplicate) return state;
-
-      const updatedCards = (state.bankCards || []).map(card => {
-        if (card.id !== transaction.cardId) return card;
-        const delta =
-          (transaction.type === 'deposit' || transaction.type === 'payment_received')
-            ? transaction.amount
-            : (transaction.type === 'withdrawal' || transaction.type === 'supplier_payment')
-              ? -transaction.amount
-              : 0;
-        return { ...card, balance: Math.max(0, card.balance + delta) };
-      });
-
-      return {
-        bankTransactions: [transaction, ...(state.bankTransactions || [])],
-        bankCards: updatedCards
-      };
-    });
+    applyLocalOptimisticBankTransaction();
+    get().addNotification('Movimiento bancario guardado offline; queda pendiente de sincronización.', 'info');
     return true;
   },
 
