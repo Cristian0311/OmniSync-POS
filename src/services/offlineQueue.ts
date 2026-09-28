@@ -234,7 +234,11 @@ queueInitPromise = migrateLegacyQueue();
 
 function emitQueueEvent() {
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('offline_queue_updated', { detail: { count: memoryQueue.length } }));
+    const pending = memoryQueue.filter(item => item.status !== 'conflict').length;
+    const conflicts = memoryQueue.filter(item => item.status === 'conflict').length;
+    window.dispatchEvent(new CustomEvent('offline_queue_updated', {
+      detail: { count: pending, pendingCount: pending, conflictCount: conflicts }
+    }));
   }
 }
 
