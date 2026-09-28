@@ -1180,38 +1180,133 @@ export const useStore = create<AppState>()(
   },
 
   transferProductsBulk: async (fromBranchId, toBranchId, items) => {
-    if (items.length === 0) return { success: true, pending: false };
-    const batchId = crypto.randomUUID();
-    let successCount = 0;
-    let pendingCount = 0;
-    let lastError = "";
+    const validItems = (items || [])
+      .filter(item => item?.productId && Number(item.quantity) > 0)
+      .map(item => ({
+        productId: item.productId,
+        variant: item.variant || '',
+        quantity: Number(item.quantity)
+      }));
+    if (validItems.length === 0) return { success: true, pending: false };
+    if (!fromBranchId || !toBranchId || fromBranchId === toBranchId) {
+      return { success: false, pending: false, error: 'Las sucursales de origen y destino deben ser válidas y diferentes.' };
+    }
 
-    for (const item of items) {
-      const res = await get().transferInventoryBatch(
-        item.productId,
-        fromBranchId,
-        toBranchId,
-        [{ variantLabel: item.variant || '', quantity: item.quantity }],
-        undefined,
-        batchId
-      );
-      if (res.success) {
-        successCount++;
-        if ((res as any).pending) pendingCount++;
-      } else {
-        lastError = res.error || "Error desconocido";
+    // Un único ID de batch y un operationId estable por producto permiten
+    // reanudar exactamente el mismo traslado después de un corte.
+    const batchId = crypto.randomUUID();
+    const userId = (get().currentUser?.id && get().users.some(u => u.id === get().currentUser?.id))
+      ? get().currentUser!.id
+      : 'system';
+
+    const operations = validItems.map(item => ({
+      operationId: crypto.randomUUID(),
+      productId: item.productId,
+      variants: [{ variantLabel: item.variant, quantity: item.quantity }]
+    }));
+    const queueData = {
+      batchId,
+      fromBranchId,
+      toBranchId,
+      userId,
+      items: operations
+    };
+    const actionId = 'transfer-bulk:' + batchId;
+    await enqueueOfflineItem('transfer_bulk', queueData, actionId);
+
+    let canonicalRefreshed = false;
+    let serverConfirmed = false;
+    const online = typeof navigator !== 'undefined' && navigator.onLine;
+
+    if (online) {
+      try {
+        const res = await callTransferInventoryBulkRPC(queueData);
+        if (!res.success) {
+          const code = String(res.errorCode || '');
+          const permanentCodes = new Set(['P0001','23503','23505','42501','22003','22P02','IDEMPOTENCY_CONFLICT']);
+          if (permanentCodes.has(code)) {
+            removeFromOfflineQueueByAction('transfer_bulk', actionId);
+            return { success: false, pending: false, error: res.error || 'El traslado múltiple fue rechazado por el servidor.' };
+          }
+        } else {
+          serverConfirmed = true;
+          canonicalRefreshed = await refreshInventoryBranchesFromSupabase([fromBranchId, toBranchId]);
+          if (canonicalRefreshed) removeFromOfflineQueueByAction('transfer_bulk', actionId);
+        }
+      } catch (err) {
+        console.warn('[transferProductsBulk] La confirmación online no fue concluyente; queda durable:', err);
       }
     }
 
-    if (successCount === items.length) {
-      return { success: true, pending: pendingCount > 0 };
-    } else {
-      return {
-        success: false,
-        pending: pendingCount > 0,
-        error: `Se transfirieron ${successCount} de ${items.length} productos. ${lastError}`
-      };
+    if (!canonicalRefreshed) {
+      // Espejo optimista local: no sustituye al servidor y será reconciliado
+      // desde Supabase tras el replay del batch.
+      set(state => {
+        const nextInventory = [...state.inventory];
+        for (const item of validItems) {
+          const label = item.variant || '';
+          const idx = nextInventory.findIndex(i =>
+            i.productId === item.productId &&
+            i.branchId === fromBranchId &&
+            (i.variantLabel || '') === label
+          );
+          if (idx >= 0) {
+            nextInventory[idx] = { ...nextInventory[idx], quantity: Math.max(0, Number(nextInventory[idx].quantity || 0) - item.quantity) };
+          }
+          const targetIdx = nextInventory.findIndex(i =>
+            i.productId === item.productId &&
+            i.branchId === toBranchId &&
+            (i.variantLabel || '') === label
+          );
+          if (targetIdx >= 0) {
+            nextInventory[targetIdx] = { ...nextInventory[targetIdx], quantity: Number(nextInventory[targetIdx].quantity || 0) + item.quantity };
+          } else {
+            nextInventory.push({
+              id: crypto.randomUUID(),
+              productId: item.productId,
+              branchId: toBranchId,
+              variantLabel: label || undefined,
+              quantity: item.quantity,
+              minQuantity: 5
+            });
+          }
+        }
+        return { inventory: nextInventory };
+      });
     }
+
+    const batchRecords = validItems.map((item, index) => {
+      const op = operations[index];
+      const product = get().products.find(p => p.id === item.productId);
+      const fromBranch = get().branches.find(b => b.id === fromBranchId);
+      const toBranch = get().branches.find(b => b.id === toBranchId);
+      return {
+        id: op.operationId,
+        operationId: op.operationId,
+        productId: item.productId,
+        productName: product?.name || 'Producto',
+        fromBranchId,
+        fromBranchName: fromBranch?.name || 'Sucursal Origen',
+        toBranchId,
+        toBranchName: toBranch?.name || 'Sucursal Destino',
+        quantity: item.quantity,
+        variants: op.variants,
+        date: new Date().toISOString(),
+        userId,
+        status: serverConfirmed && canonicalRefreshed ? 'completed' as const : 'pending' as const,
+        variantLabel: item.variant || 'Producto Base',
+        batchId
+      };
+    });
+
+    set(state => ({
+      transfers: [
+        ...batchRecords,
+        ...(state.transfers || []).filter(existing => !batchRecords.some(r => (r.operationId || r.id) === (existing.operationId || existing.id)))
+      ]
+    }));
+
+    return { success: true, pending: !canonicalRefreshed };
   },
   
   cart: [],
