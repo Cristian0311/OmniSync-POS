@@ -287,7 +287,7 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
     // una actualización en Tablet A no borre lo que agregó Tablet B.
     const { data: remoteSession, error: remoteReadError } = await supabase
       .from('cash_sessions')
-      .select('id,status,opened_at,closed_at,opening_balance,notes,deleted_at,deleted_by,delete_reason,branch_id,user_id,working_employee_ids')
+      .select('id,status,opened_at,closed_at,opening_balance,opening_amount,notes,deleted_at,deleted_by,delete_reason,branch_id,user_id,worker_name,working_employee_ids')
       .eq('id', session.id)
       .maybeSingle();
     if (remoteReadError) throw remoteReadError;
@@ -338,8 +338,8 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
     const row = {
       id: session.id,
       user_id: remoteSession?.user_id || session.userId || null,
-      worker_name: session.workerName || remoteSession?.worker_name || null,
-      branch_id: session.branchId,
+      worker_name: remoteSession?.worker_name || session.workerName || null,
+      branch_id: remoteSession?.branch_id || session.branchId,
       opened_at: remoteSession?.opened_at || session.openedAt,
       closed_at: effectiveStatus === 'open' ? null : (remoteSession?.closed_at || session.closedAt || null),
       opening_balance: remoteSession?.opening_balance ?? session.openingAmount ?? session.openingBalance ?? 0,
