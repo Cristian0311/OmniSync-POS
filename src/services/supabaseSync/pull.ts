@@ -790,7 +790,12 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
       const { data: setRes, error: setErr } = await supabase.from('settings').select('*').eq('id', 'global').maybeSingle();
       if (!setErr && setRes) {
         if (setRes.receipt_config) fetchedData.receiptConfig = setRes.receipt_config;
-        if (setRes.store_config) fetchedData.storeConfig = setRes.store_config;
+        if (setRes.store_config) {
+          fetchedData.storeConfig = setRes.store_config;
+          if (Array.isArray(setRes.store_config.fiscalConfigs)) {
+            fetchedData.fiscalConfigs = setRes.store_config.fiscalConfigs;
+          }
+        }
         if (setRes.catalog_config) fetchedData.catalogConfig = setRes.catalog_config;
         if (setRes.last_turn_number !== undefined) fetchedData.lastTurnNumber = Number(setRes.last_turn_number);
       }
