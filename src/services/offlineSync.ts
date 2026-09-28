@@ -76,7 +76,48 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       if (session.__operation === 'close') {
         const settlement = session.settlement;
         if (!settlement) throw new Error('Cierre offline sin liquidación asociada');
-        const res = await (await import('./supabaseSync')).callCloseSessionRPC(session.id, session.closingBalances || [], session.closedAt || new Date().toISOString(), session.notes || '', settlement);
+
+        // Las ventas offline ya fueron procesadas (o marcadas como conflicto)
+        // antes del cierre por el grafo de dependencias. Recalculamos las
+        // comisiones desde las ventas que realmente existen en Supabase para
+        // que una venta rechazada no termine dentro de la liquidación salarial.
+        const { data: persistedSales, error: salesError } = await supabase
+          .from('transactions')
+          .select('id,status,deleted_at,items')
+          .eq('session_id', session.id);
+        if (salesError) throw salesError;
+
+        let commissions = 0;
+        for (const sale of persistedSales || []) {
+          if (sale.status !== 'completed' || sale.deleted_at) continue;
+          const items = Array.isArray(sale.items) ? sale.items : [];
+          for (const item of items) {
+            const product = item?.product;
+            const commissionValue = Number(
+              product?.commissionValue ??
+              product?.commission_value ??
+              item?.commissionValue ??
+              item?.commission_value ??
+              0
+            ) || 0;
+            commissions += commissionValue * (Number(item?.quantity) || 0);
+          }
+        }
+
+        const discrepancyDeduction = Number(settlement.discrepancyDeduction) || 0;
+        const recalculatedSettlement = {
+          ...settlement,
+          commissions,
+          total: (Number(settlement.baseSalary) || 0) + commissions - discrepancyDeduction
+        };
+
+        const res = await (await import('./supabaseSync')).callCloseSessionRPC(
+          session.id,
+          session.closingBalances || [],
+          session.closedAt || new Date().toISOString(),
+          session.notes || '',
+          recalculatedSettlement
+        );
         if (!res.success) throw new Error(res.error || 'No se pudo cerrar el turno');
         return true;
       }
