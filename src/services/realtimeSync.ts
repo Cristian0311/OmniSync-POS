@@ -15,7 +15,7 @@ let branchRepairIntervalId: any = null;
 let isSyncInProgress = false;
 let debounceTimeout: any = null;
 let bootstrappedBranchId: string | null = null;
-const BRANCH_SCOPED_TABLES = new Set(['inventory','transactions','cash_sessions','inventory_transfers','supplier_orders','inventory_audits','time_shifts']);
+const BRANCH_SCOPED_TABLES = new Set(['inventory','transactions','cash_sessions','supplier_orders','inventory_audits']);
 const REMOTE_SYNC_TABLES = ['settings','cash_movements','currencies','branches','categories','products','users','inventory','customers','cash_sessions','transactions','idn_settlement_prices','inventory_transfers','warranties','returns','quotes','time_shifts','bank_cards','bank_transactions','suppliers','supplier_orders','inventory_audits','salary_settlements','inventory_movements','inventory_audit_items'];
 
 async function reconcileRemoteState(forceBootstrap = false): Promise<void> {
@@ -85,7 +85,19 @@ export function initMultiDeviceRealtimeSync(): () => void {
       }, 500);
       return;
     }
-    if (table === 'bank_cards' || table === 'bank_transactions') {
+    if (table === 'inventory_transfers' || table === 'time_shifts') {
+      if (debounceTimeout) clearTimeout(debounceTimeout);
+      debounceTimeout = setTimeout(() => {
+        if (!navigator.onLine || isSyncInProgress) return;
+        if (getOfflineQueueCount() > 0) {
+          triggerBackgroundSync(false).catch(() => {});
+        } else {
+          useStore.getState().refreshBranchOperationalData().catch(() => {});
+        }
+      }, 500);
+      return;
+    }
+        if (table === 'bank_cards' || table === 'bank_transactions') {
       if (debounceTimeout) clearTimeout(debounceTimeout);
       debounceTimeout = setTimeout(() => {
         if (!navigator.onLine || isSyncInProgress) return;
