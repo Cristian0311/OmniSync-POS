@@ -15,7 +15,7 @@ import { useStore } from "../store/useStore";
 import { Product, Payment, Transaction, CashRegisterSession } from "../types";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { InfoTooltip } from "../components/InfoTooltip";
-import { getOfflineQueueCount } from "../services/offlineQueue";
+import { getOfflineQueueCount, getOfflineConflictCount } from "../services/offlineQueue";
 import { normalizeSemanticText } from "../utils/textUtils";
 import { POSCatalog } from "../components/POSCatalog";
 const CheckoutModal = lazy(() => import("../components/pos/CheckoutModal"));
@@ -81,11 +81,15 @@ export default function POS() {
 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pendingOfflineCount, setPendingOfflineCount] = useState(getOfflineQueueCount());
+  const [offlineConflictCount, setOfflineConflictCount] = useState(getOfflineConflictCount());
   const [isSyncingOffline, setIsSyncingOffline] = useState(false);
   const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false);
 
   useEffect(() => {
-    const updateCount = () => setPendingOfflineCount(getOfflineQueueCount());
+    const updateCount = () => {
+      setPendingOfflineCount(getOfflineQueueCount());
+      setOfflineConflictCount(getOfflineConflictCount());
+    };
     const handleOnline = () => {
       setIsOnline(true);
       updateCount();
@@ -4323,6 +4327,19 @@ export default function POS() {
             {pendingOfflineCount > 0 && (
               <span className="px-1.5 py-0.2 rounded-full text-[8px] font-black bg-amber-500 text-white shrink-0">
                 {pendingOfflineCount}
+              </span>
+            )}
+            {offlineConflictCount > 0 && (
+              <span
+                className="px-1.5 py-0.2 rounded-full text-[8px] font-black bg-rose-600 text-white shrink-0 cursor-pointer"
+                title="Hay operaciones rechazadas que requieren revisión"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPosError(`${offlineConflictCount} operación(es) quedaron en conflicto y no se volverán a sincronizar automáticamente.`);
+                  setTimeout(() => setPosError(""), 5000);
+                }}
+              >
+                !${offlineConflictCount}
               </span>
             )}
           </button>
