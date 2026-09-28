@@ -758,7 +758,20 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       return true;
     }
     case 'receipt_config': { const { error } = await supabase.from('settings').upsert({ id: 'global', receipt_config: data }); if (error) throw error; return true; }
-    case 'store_config': { const { error } = await supabase.from('settings').upsert({ id: 'global', store_config: data }); if (error) throw error; return true; }
+    case 'store_config': {
+      const { data: current, error: readError } = await supabase
+        .from('settings')
+        .select('store_config')
+        .eq('id', 'global')
+        .maybeSingle();
+      if (readError) throw readError;
+      const currentConfig = (current?.store_config && typeof current.store_config === 'object') ? current.store_config : {};
+      const incomingConfig = (data && typeof data === 'object') ? data : {};
+      const mergedConfig = { ...currentConfig, ...incomingConfig };
+      const { error } = await supabase.from('settings').upsert({ id: 'global', store_config: mergedConfig });
+      if (error) throw error;
+      return true;
+    }
     case 'catalog_config': { const { error } = await supabase.from('settings').upsert({ id: 'global', catalog_config: data }); if (error) throw error; return true; }
     default: throw new PermanentSyncError(`Tipo de operación offline no soportado: ${String(type)}`);
   }
