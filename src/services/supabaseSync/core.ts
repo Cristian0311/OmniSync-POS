@@ -170,7 +170,8 @@ export async function safeUpsert(
 export async function safeUpsertMany(
   supabase: any,
   table: string,
-  rows: Record<string, any>[]
+  rows: Record<string, any>[],
+  options?: any
 ): Promise<{ success: boolean; error?: any; errors?: string[]; processed?: number; failed?: number }> {
   if (!rows || rows.length === 0) return { success: true, processed: 0, failed: 0 };
 
@@ -178,7 +179,7 @@ export async function safeUpsertMany(
   // the atomic semantics expected by callers. If PostgREST rejects the batch
   // because of one bad row/schema mismatch, fall back to row-level recovery.
   try {
-    const { error } = await supabase.from(table).upsert(rows);
+    const { error } = await supabase.from(table).upsert(rows, options);
     if (!error) return { success: true, processed: rows.length, failed: 0 };
     console.debug(`[safeUpsertMany] Upsert por lote en '${table}' falló (${error.message}). Reintentando por filas.`);
   } catch (e) {
@@ -190,7 +191,7 @@ export async function safeUpsertMany(
   const chunkSize = 10;
   for (let i = 0; i < rows.length; i += chunkSize) {
     const chunk = rows.slice(i, i + chunkSize);
-    const results = await Promise.all(chunk.map(row => safeUpsert(supabase, table, row)));
+    const results = await Promise.all(chunk.map(row => safeUpsert(supabase, table, row, options)));
     for (const result of results) {
       if (result.error) errors.push(result.error.message || String(result.error));
       else processed++;
