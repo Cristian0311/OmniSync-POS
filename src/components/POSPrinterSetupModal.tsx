@@ -25,7 +25,8 @@ export default function POSPrinterSetupModal({
   onConnectUsb,
   onPrinterConnectedChange,
   onSuccess,
-  onError
+  onError,
+  printerWidth = '58mm'
 }: POSPrinterSetupModalProps) {
   return (
   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
