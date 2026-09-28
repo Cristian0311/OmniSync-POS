@@ -454,10 +454,23 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
           session_id: transaction.sessionId || null, change_given: transaction.changeGiven || 0,
           items: transaction.items || [], payments: transaction.payments || [],
           change_payments: transaction.changePayments || [], seller_employee_ids: transaction.sellerEmployeeIds || [],
+          ncf: transaction.ncf || null, ncf_type: transaction.ncfType || null,
           deleted_at: transaction.deletedAt || null, deleted_by: transaction.deletedBy || null,
           delete_reason: transaction.deleteReason || null
         });
         if (error) throw error;
+        const { data: persistedIdn, error: verifyIdnError } = await supabase
+          .from('transactions')
+          .select('id,status,total,ncf,ncf_type')
+          .eq('id', transaction.id)
+          .maybeSingle();
+        if (verifyIdnError) throw verifyIdnError;
+        if (!persistedIdn || persistedIdn.id !== transaction.id || persistedIdn.status === 'refunded' || persistedIdn.status === 'cancelled') {
+          throw new Error('Supabase no confirmó la liquidación IDN como completada');
+        }
+        if ((transaction.ncf || null) !== (persistedIdn.ncf || null) || (transaction.ncfType || null) !== (persistedIdn.ncf_type || null)) {
+          throw new PermanentSyncError('El NCF de la liquidación IDN no coincide con el registro fiscal de Supabase');
+        }
         return true;
       }
       const res = await callProcessTransactionRPC(transaction);
