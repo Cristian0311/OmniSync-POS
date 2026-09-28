@@ -235,16 +235,31 @@ function persistQueueItem(item: OfflineQueueItem): Promise<void> {
   persistenceChain = persistenceChain.then(async () => {
     if (!queueReady && queueInitPromise) await queueInitPromise;
     if (typeof indexedDB !== 'undefined') {
-      await idbPut(item);
-      return;
+      try {
+        await idbPut(item);
+        return;
+      } catch (idbError) {
+        // IndexedDB puede quedar bloqueado/corrupto en algunos dispositivos.
+        // Antes de aceptar la operación como durable, intentamos el respaldo local.
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue));
+          return;
+        } catch (localError) {
+          throw new Error(
+            `No se pudo persistir la operación offline en IndexedDB ni en localStorage: ${String(localError)}`
+          );
+        }
+      }
     }
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch (e) {
-      console.error('[offlineSync] Error al guardar cola offline:', e);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue));
+    } catch (e) {
+      throw new Error(`No se pudo persistir la operación offline en localStorage: ${String(e)}`);
     }
   }).catch(async e => {
     persistenceError = e instanceof Error ? e : new Error(String(e));
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch { /* se reporta y se conserva en memoria */ }
-    console.error('[offlineSync] Error persistiendo cola:', e);
+    console.error('[offlineSync] Error persistiendo cola durable:', e);
+    throw e;
   });
   return persistenceChain;
 }
@@ -362,8 +377,13 @@ export async function persistOfflineQueueSnapshot(queue: OfflineQueueItem[]): Pr
     }
   }).catch(async e => {
     persistenceError = e instanceof Error ? e : new Error(String(e));
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot)); } catch { /* se conserva en memoria */ }
-    console.error('[offlineSync] Error persistiendo snapshot de cola:', e);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+      return;
+    } catch (localError) {
+      console.error('[offlineSync] Error persistiendo snapshot de cola en ambos storages:', e, localError);
+      throw e;
+    }
   });
   await waitForQueuePersistence();
 }
