@@ -1,6 +1,7 @@
 import React from 'react';
 import { Bluetooth, Printer, Smartphone, Usb, X } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { printThermalReceipt, disconnectPrinter, disconnectBluetoothPrinter } from '../lib/escpos';
 
 interface POSPrinterSetupModalProps {
   connectedPrinterName: string | null;
@@ -62,7 +63,6 @@ export default function POSPrinterSetupModal({
           {connectedPrinterName && (
             <button 
               onClick={async () => {
-                const { disconnectPrinter, disconnectBluetoothPrinter } = await import('../lib/escpos');
                 await disconnectPrinter();
                 await disconnectBluetoothPrinter();
                 onPrinterConnectedChange(null);
@@ -98,7 +98,6 @@ export default function POSPrinterSetupModal({
           <button
             type="button"
             onClick={async () => {
-              const { printThermalReceipt } = await import('../lib/escpos');
               await printThermalReceipt({
                 lines: [
                   "CENTER|BOLD|MARÉ POS",
@@ -141,7 +140,6 @@ export default function POSPrinterSetupModal({
           <button
             type="button"
             onClick={async () => {
-              const { printThermalReceipt } = await import('../lib/escpos');
               const printed = await printThermalReceipt({
                 lines: [
                   "CENTER|BOLD|MARÉ POS",
