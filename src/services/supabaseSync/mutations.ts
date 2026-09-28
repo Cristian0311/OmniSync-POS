@@ -299,21 +299,39 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
     if (remoteReadError) throw remoteReadError;
 
     const extractMeta = (notes: string | null | undefined) => {
-      if (!notes || !notes.includes('__META__:')) return { baseNotes: notes || '', movements: [] as any[] };
-      const [base, rawMeta] = notes.split('__META__:');
+      if (!notes || !notes.includes('__META__:')) {
+        return { baseNotes: notes || '', movements: [] as any[], removedMovementIds: [] as string[] };
+      }
+      const parts = notes.split('__META__:');
+      const base = parts.shift() || '';
       try {
-        const parsed = JSON.parse(rawMeta);
-        return { baseNotes: base.trim(), movements: Array.isArray(parsed?.movements) ? parsed.movements : [] };
+        const parsed = JSON.parse(parts.join('__META__:'));
+        return {
+          baseNotes: base.trim(),
+          movements: Array.isArray(parsed?.movements) ? parsed.movements : [],
+          removedMovementIds: Array.isArray(parsed?.removed_movement_ids)
+            ? parsed.removed_movement_ids.map(String)
+            : []
+        };
       } catch {
-        return { baseNotes: base.trim(), movements: [] as any[] };
+        return { baseNotes: base.trim(), movements: [] as any[], removedMovementIds: [] as string[] };
       }
     };
 
     const localMeta = extractMeta(session.notes);
     const remoteMeta = extractMeta(remoteSession?.notes);
+    const removedMovementIds = Array.from(new Set([
+      ...remoteMeta.removedMovementIds,
+      ...localMeta.removedMovementIds
+    ]));
+    const removedSet = new Set(removedMovementIds);
     const movementMap = new Map<string, any>();
-    for (const m of remoteMeta.movements) if (m?.id) movementMap.set(String(m.id), m);
-    for (const m of localMeta.movements) if (m?.id) movementMap.set(String(m.id), m);
+    for (const movement of remoteMeta.movements) {
+      if (movement?.id && !removedSet.has(String(movement.id))) movementMap.set(String(movement.id), movement);
+    }
+    for (const movement of localMeta.movements) {
+      if (movement?.id && !removedSet.has(String(movement.id))) movementMap.set(String(movement.id), movement);
+    }
     const mergedMovements = Array.from(movementMap.values())
       .sort((a, b) => String(a?.date || '').localeCompare(String(b?.date || '')) || String(a?.id || '').localeCompare(String(b?.id || '')));
 
@@ -337,7 +355,8 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
         } catch { return []; }
       })(),
       closing_date: session.closingDate || remoteSession?.closed_at || null,
-      movements: mergedMovements
+      movements: mergedMovements,
+      removed_movement_ids: removedMovementIds
     };
     extendedNotes = (extendedNotes ? extendedNotes + ' ' : '') + '__META__:' + JSON.stringify(meta);
 
