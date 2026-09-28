@@ -2674,28 +2674,25 @@ export const useStore = create<AppState>()(
         const pendingSessionIds = new Set(getOfflineQueue().filter(i => i.type === 'cash_session').map(i => String(i.data?.id || i.actionId)));
         const pendingTransferIds = new Set(getOfflineQueue().filter(i => i.type === 'transfer').map(i => String(i.data?.id || i.data?.operationId || i.actionId)));
 
-        // Replace only the current branch's operational snapshot. Records from
-        // other branches remain in memory, while deleted remote records for this
-        // branch are removed unless an offline operation is still pending.
+        // Este refresco es deliberadamente parcial (ventas/sesiones/transferencias
+        // recientes). Nunca debe borrar historial local antiguo solo porque no
+        // entró en el límite de la consulta. Los IDs que sí llegan del servidor
+        // reemplazan su versión local; el resto del historial permanece intacto.
         const txMap = new Map<string, Transaction>();
         for (const item of state.transactions || []) {
-          if (item.branchId !== branchId || pendingTxIds.has(String(item.id))) txMap.set(item.id, item);
+          txMap.set(item.id, item);
         }
         for (const item of res.transactions || []) txMap.set(item.id, item);
 
         const sessionMap = new Map<string, CashRegisterSession>();
         for (const item of state.cashSessions || []) {
-          if (item.branchId !== branchId || pendingSessionIds.has(String(item.id))) sessionMap.set(item.id, item);
+          sessionMap.set(item.id, item);
         }
         for (const item of res.cashSessions || []) sessionMap.set(item.id, item);
 
         const transferMap = new Map<string, InventoryTransfer>();
-        const belongsToBranch = (item: any) =>
-          item.branchId === branchId || item.fromBranchId === branchId || item.toBranchId === branchId;
         for (const item of state.transfers || []) {
-          if (!belongsToBranch(item) || pendingTransferIds.has(String(item.id || item.operationId))) {
-            transferMap.set(item.id || item.operationId, item);
-          }
+          transferMap.set(item.id || item.operationId, item);
         }
         for (const item of res.transfers || []) transferMap.set(item.id || item.operationId, item);
 
