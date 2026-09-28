@@ -192,7 +192,8 @@ async function migrateLegacyQueue(): Promise<void> {
     // Never replace IndexedDB with an empty queue when a read itself failed.
     // The old behavior could erase durable pending sales during startup.
     console.error('[offlineSync] No se pudo leer la cola IndexedDB; se conserva sin sobrescribir:', e);
-    memoryQueue = Array.isArray(legacy) ? legacy : [];
+    memoryQueue = (Array.isArray(legacy) ? legacy : [])
+      .filter(item => !tombstones.has(String(item.id)));
     queueReady = true;
     emitQueueEvent();
     return;
@@ -276,9 +277,9 @@ function persistQueueSnapshot(queue: OfflineQueueItem[]): void {
 function persistQueueItem(item: OfflineQueueItem): Promise<void> {
   const operation = persistenceChain.then(async () => {
     if (!queueReady && queueInitPromise) await queueInitPromise;
+    removeQueueTombstone(item.id);
     if (typeof indexedDB !== 'undefined') {
       try {
-        removeQueueTombstone(item.id);
         await idbPut(item);
         persistenceError = null;
         return;
