@@ -161,7 +161,8 @@ export interface AppState {
   
   fiscalConfigs: FiscalConfig[];
   updateFiscalConfig: (id: string, config: Partial<FiscalConfig>) => void;
-  getNextNCF: (type: string) => string | undefined;
+  getNextNCF: (type: string) => Promise<string | undefined>;
+  warmupNcfRange: (type: string) => Promise<boolean>;
 
   demandForecasts: DemandForecast[];
   updateForecasts: (forecasts: DemandForecast[]) => void;
