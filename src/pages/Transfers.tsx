@@ -172,7 +172,12 @@ export default function Transfers() {
     setIsSubmitting(false);
 
     if (result.success) {
-      addNotification("Traslado individual completado exitosamente.", 'success');
+      addNotification(
+        (result as any).pending
+          ? "Traslado guardado offline. Quedó pendiente de confirmación con la nube."
+          : "Traslado individual completado exitosamente.",
+        (result as any).pending ? 'info' : 'success'
+      );
       setShowAddModal(false);
       setFormData({ ...formData, productId: '' });
       setVariantQuantities({});
@@ -349,10 +354,22 @@ export default function Transfers() {
                                 </div>
                               </td>
                               <td className="px-6 py-4 text-center">
-                                <span className="inline-flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                                  <CheckCircle className="w-3 h-3 text-emerald-600" />
-                                  OK
-                                </span>
+                                {first.status === 'pending' ? (
+                                  <span className="inline-flex items-center gap-1 text-[9px] font-black text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200">
+                                    <Clock className="w-3 h-3 text-amber-600" />
+                                    PENDIENTE
+                                  </span>
+                                ) : first.status === 'cancelled' ? (
+                                  <span className="inline-flex items-center gap-1 text-[9px] font-black text-rose-700 bg-rose-50 px-2.5 py-1 rounded-full border border-rose-200">
+                                    <AlertTriangle className="w-3 h-3 text-rose-600" />
+                                    CONFLICTO
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                                    <CheckCircle className="w-3 h-3 text-emerald-600" />
+                                    OK
+                                  </span>
+                                )}
                               </td>
                             </tr>
                           </React.Fragment>
