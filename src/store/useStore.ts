@@ -1341,6 +1341,10 @@ export const useStore = create<AppState>()(
           throw new Error(res.error || 'No se pudo confirmar la venta');
         }
         applyLocalCompletedSale(transaction);
+        const inventoryReconciled = await get().refreshBranchInventory();
+        if (!inventoryReconciled) {
+          throw new Error('Venta confirmada, pero el inventario local aún no pudo reconciliarse con Supabase');
+        }
         removeFromOfflineQueueByTransactionId(transaction.id);
         return true;
       } catch (err) {
@@ -1383,6 +1387,15 @@ export const useStore = create<AppState>()(
       set((current) => ({
         transactions: current.transactions.map(t => t.id === id ? { ...t, deletedAt, deletedBy: userId, deleteReason: finalReason } : t)
       }));
+
+      const inventoryReconciled = await get().refreshBranchInventory();
+      const { pullBankDataFromSupabase } = await import('../services/supabaseSync');
+      const bankRes = await pullBankDataFromSupabase();
+      if (!inventoryReconciled || !bankRes.success) {
+        throw new Error('Venta anulada en servidor, pero el inventario/saldos locales aún no pudieron reconciliarse');
+      }
+      set({ bankCards: bankRes.bankCards, bankTransactions: bankRes.bankTransactions });
+
       removeFromOfflineQueueByAction('void_transaction', 'void:' + id);
       return true;
     } catch (err) {
@@ -1448,6 +1461,15 @@ export const useStore = create<AppState>()(
           ),
           cart: []
         }));
+
+        const inventoryReconciled = await get().refreshBranchInventory();
+        const { pullBankDataFromSupabase } = await import('../services/supabaseSync');
+        const bankRes = await pullBankDataFromSupabase();
+        if (!inventoryReconciled || !bankRes.success) {
+          throw new Error('Turno cancelado en servidor, pero el inventario/saldos locales aún no pudieron reconciliarse');
+        }
+        set({ bankCards: bankRes.bankCards, bankTransactions: bankRes.bankTransactions });
+
         removeFromOfflineQueueByAction('cash_session', 'cash-cancel:' + sessionId);
         return true;
       } catch (err) {
@@ -1500,6 +1522,7 @@ export const useStore = create<AppState>()(
     const returnReq = state.returns.find(r => r.id === id);
     if (!returnReq || returnReq.status !== 'pending') return false;
     const userId = state.currentUser?.id || 'system';
+    let canonicalInventoryRefreshed = false;
 
     if (action === 'complete') {
       await enqueueOfflineItem('return_complete', { id, userId }, 'return:' + id);
@@ -1514,6 +1537,12 @@ export const useStore = create<AppState>()(
 
           const res = await callCompleteReturnRPC(id, userId);
           if (!res.success) throw new Error(res.error || 'No se pudo completar la devolución');
+
+          canonicalInventoryRefreshed = await get().refreshBranchInventory();
+          if (!canonicalInventoryRefreshed) {
+            throw new Error('Devolución confirmada, pero el inventario local aún no pudo reconciliarse con Supabase');
+          }
+
           removeFromOfflineQueueByAction('return_complete', 'return:' + id);
         } catch (err) {
           console.warn('[processReturn] Devolución no confirmada; queda durable para reintento:', err);
@@ -1536,8 +1565,10 @@ export const useStore = create<AppState>()(
       };
 
       if (action === 'complete') {
-        if (req.type === 'refund') adjustLocal(req.productId, req.quantity, req.variantLabel);
-        if (req.type === 'warranty_exchange' && req.replacementProductId) adjustLocal(req.replacementProductId, -(req.replacementQuantity || req.quantity));
+        if (!canonicalInventoryRefreshed) {
+          if (req.type === 'refund') adjustLocal(req.productId, req.quantity, req.variantLabel);
+          if (req.type === 'warranty_exchange' && req.replacementProductId) adjustLocal(req.replacementProductId, -(req.replacementQuantity || req.quantity));
+        }
         const warrantyIdx = updatedWarranties.findIndex(w => w.transactionId === req.transactionId && w.productId === req.productId);
         if (warrantyIdx !== -1) updatedWarranties[warrantyIdx] = { ...updatedWarranties[warrantyIdx], status: req.type === 'warranty_exchange' ? 'exchanged' : 'refunded' };
       }
