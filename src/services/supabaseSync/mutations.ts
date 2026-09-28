@@ -61,10 +61,20 @@ export async function pushProductToSupabase(product: Product) {
 
     const { error } = await safeUpsert(supabase, 'products', row);
     if (error) {
+      const msg = String(error.message || '');
+      if (String(error.code || '') === 'P0001' || msg.includes('PRODUCT_DELETED')) {
+        console.info('[pushProductToSupabase] Producto ya eliminado; se descarta una edición obsoleta.');
+        return;
+      }
       console.warn("Supabase push product warning:", error);
       enqueueOfflineItem('product', product, product.id);
     }
-  } catch (e) {
+  } catch (e: any) {
+    const msg = String(e?.message || e || '');
+    if (String(e?.code || '') === 'P0001' || msg.includes('PRODUCT_DELETED')) {
+      console.info('[pushProductToSupabase] Producto ya eliminado; se descarta una edición obsoleta.');
+      return;
+    }
     console.warn("Supabase push product failed:", e);
     enqueueOfflineItem('product', product, product.id);
   }

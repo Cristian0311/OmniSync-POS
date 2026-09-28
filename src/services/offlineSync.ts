@@ -428,7 +428,14 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     case 'product': {
       const p = data as Product;
       const { error } = await supabase.from('products').upsert({ id: p.id, name: p.name, sku: p.sku || null, barcode: p.barcode || null, cost_price: p.costPrice || 0, price: p.price || 0, margin: p.margin || 0, category_id: p.categoryId || null, color: p.color || null, commission_value: p.commissionValue || 0, unit: p.unit || 'unidad', status: p.status || 'active', min_stock_alert: p.minStockAlert || 5, has_serial: p.hasSerial || false, warranty_days: p.warrantyDays || 0, is_kit: p.isKit || false, kit_items: p.kitItems || [] });
-      if (error) throw error; return true;
+      if (error) {
+        const msg = String(error.message || '');
+        if (String(error.code || '') === 'P0001' || msg.includes('PRODUCT_DELETED')) {
+          throw new PermanentSyncError('El producto ya fue eliminado permanentemente; se descarta la edición pendiente.');
+        }
+        throw error;
+      }
+      return true;
     }
     case 'user': {
       const u = data;
