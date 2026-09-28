@@ -173,19 +173,10 @@ export function printViaRawBT(
   const base64 = getEscPosBase64(textLines, openDrawer, width);
   const rawbtUrl = `rawbt:data:application/octet-stream;base64,${base64}`;
   
-  try {
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = rawbtUrl;
-    document.body.appendChild(iframe);
-    setTimeout(() => {
-      try { document.body.removeChild(iframe); } catch (e) {}
-    }, 2000);
-    return true;
-  } catch (err) {
-    window.location.href = rawbtUrl;
-    return true;
-  }
+  // Android debe recibir la intención directamente desde la acción del usuario.
+  // Esto es más fiable para impresoras Bluetooth clásicas (SPP) que un iframe oculto.
+  window.location.href = rawbtUrl;
+  return true;
 }
 
 /**
@@ -254,10 +245,12 @@ export async function checkBluetoothConnection(): Promise<boolean> {
 }
 
 export async function getConnectedDeviceName(): Promise<string | null> {
-  if (cachedBluetoothDevice && cachedBluetoothDevice.gatt?.connected) {
+  if (cachedBluetoothDevice?.gatt?.connected) {
     return cachedBluetoothDevice.name || 'Impresora Bluetooth 58mm';
   }
-  if (cachedPort) {
+  const restoredBluetooth = await restoreRememberedBluetoothPrinter();
+  if (restoredBluetooth?.name) return restoredBluetooth.name;
+  if (await checkPrinterConnection()) {
     return 'Impresora USB/Serie 58mm';
   }
   return null;
@@ -287,6 +280,7 @@ export function disconnectBluetoothPrinter() {
   } catch (e) {}
   cachedBluetoothDevice = null;
   cachedBluetoothCharacteristic = null;
+  try { window.localStorage.removeItem(BLUETOOTH_PRINTER_STORAGE_KEY); } catch {}
 }
 
 /**
@@ -308,6 +302,37 @@ const THERMAL_PRINTER_SERVICE_UUIDS = [
   '0000fee0-0000-1000-8000-00805f9b34fb',
   '0000fe59-0000-1000-8000-00805f9b34fb',
 ];
+
+const BLUETOOTH_PRINTER_STORAGE_KEY = 'omnisync-pos-thermal-printer';
+
+async function restoreRememberedBluetoothPrinter(): Promise<any | null> {
+  if (typeof window === 'undefined' || !('bluetooth' in navigator)) return null;
+  try {
+    const raw = window.localStorage.getItem(BLUETOOTH_PRINTER_STORAGE_KEY);
+    if (!raw) return null;
+    const remembered = JSON.parse(raw);
+    if (!remembered?.id) return null;
+
+    // getDevices() only returns devices for which this origin already has
+    // permission, so this never opens a new permission prompt.
+    // @ts-ignore
+    const devices = await navigator.bluetooth.getDevices();
+    const device = devices.find((d: any) => d.id === remembered.id);
+    if (!device?.gatt) return null;
+
+    cachedBluetoothDevice = device;
+    const server = device.gatt.connected ? device.gatt : await device.gatt.connect();
+    cachedBluetoothCharacteristic = await findBluetoothWritableCharacteristic(server);
+    if (!cachedBluetoothCharacteristic) {
+      cachedBluetoothDevice = null;
+      cachedBluetoothCharacteristic = null;
+      return null;
+    }
+    return device;
+  } catch (e) {
+    return null;
+  }
+}
 
 /**
  * Connect to Bluetooth Thermal Printer (BLE ESC/POS)
@@ -333,7 +358,18 @@ export async function connectBluetoothPrinter() {
     if (device.gatt) {
       const server = await device.gatt.connect();
       cachedBluetoothCharacteristic = await findBluetoothWritableCharacteristic(server);
+      if (!cachedBluetoothCharacteristic) {
+        cachedBluetoothDevice = null;
+        throw new Error('La impresora fue encontrada, pero no expone un canal GATT de escritura ESC/POS.');
+      }
     }
+
+    try {
+      window.localStorage.setItem(BLUETOOTH_PRINTER_STORAGE_KEY, JSON.stringify({
+        id: device.id,
+        name: device.name || 'Impresora Bluetooth'
+      }));
+    } catch {}
     
     return device;
   } catch (err: any) {
