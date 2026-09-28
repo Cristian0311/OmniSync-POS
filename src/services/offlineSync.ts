@@ -27,6 +27,41 @@ import {
 } from './supabaseSync';
 import { addSyncLog } from '../utils/syncLogger';
 
+async function refreshTransferBranchesCanonical(
+  supabase: any,
+  branchIds: string[]
+): Promise<void> {
+  const ids = Array.from(new Set(branchIds.filter(Boolean)));
+  if (!ids.length) return;
+  const { data, error } = await supabase
+    .from('inventory')
+    .select('*')
+    .in('branch_id', ids);
+  if (error) throw error;
+
+  const freshByKey = new Map<string, any>();
+  for (const row of data || []) {
+    freshByKey.set(
+      `${row.product_id}:${row.branch_id}:${row.variant_label || ''}`,
+      {
+        id: row.id,
+        productId: row.product_id,
+        branchId: row.branch_id,
+        variantLabel: row.variant_label || undefined,
+        quantity: Number(row.quantity) || 0,
+        minQuantity: Number(row.min_quantity) || 0
+      }
+    );
+  }
+
+  useStore.setState(state => {
+    const existing = (state.inventory || []).filter(row => !ids.includes(row.branchId));
+    return {
+      inventory: [...existing, ...Array.from(freshByKey.values())]
+    };
+  });
+}
+
 let isProcessingQueue = false;
 
 class PermanentSyncError extends Error {
@@ -343,7 +378,41 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     }
     case 'void_transaction': { const res = await callVoidTransactionRPC(data.id, data.userId, data.reason || 'Anulación de venta'); if (!res.success) throw new Error(res.error || 'No se pudo anular la venta'); return true; }
     case 'return_complete': { const res = await callCompleteReturnRPC(data.id, data.userId); if (!res.success) throw new Error(res.error || 'No se pudo completar la devolución'); return true; }
-    case 'transfer': { const res = await callTransferInventoryRPC(data); if (!res.success) throw new Error(res.error || 'No se pudo sincronizar la transferencia'); return true; }
+    case 'transfer': {
+      const res = await callTransferInventoryRPC(data);
+      if (!res.success) {
+        // Un traslado que falla por reglas de negocio/stock es un conflicto
+        // permanente para esa operación concreta. Antes de marcarlo como
+        // conflicto, refrescamos origen y destino para quitar el stock
+        // optimista local y mostrar el estado canónico.
+        const code = String(res.errorCode || '');
+        if (['P0001', '23503', '23505', '22003', '22P02'].includes(code)) {
+          try {
+            await refreshTransferBranchesCanonical(supabase, [data.fromBranchId, data.toBranchId]);
+          } catch (refreshError) {
+            console.warn('[transfer] No se pudo refrescar origen/destino tras conflicto:', refreshError);
+          }
+          useStore.setState(state => ({
+            transfers: (state.transfers || []).map(t =>
+              (t.id === data.operationId || t.operationId === data.operationId)
+                ? { ...t, status: 'cancelled' as const }
+                : t
+            )
+          }));
+          throw new PermanentSyncError(res.error || 'Transferencia rechazada por Supabase');
+        }
+        throw new Error(res.error || 'No se pudo sincronizar la transferencia');
+      }
+
+      useStore.setState(state => ({
+        transfers: (state.transfers || []).map(t =>
+          (t.id === data.operationId || t.operationId === data.operationId)
+            ? { ...t, status: 'completed' as const }
+            : t
+        )
+      }));
+      return true;
+    }
     case 'bank_internal_transfer': { const res = await callBankInternalTransferRPC(data); if (!res.success) throw new Error(res.error || 'No se pudo sincronizar la transferencia bancaria'); return true; }
     case 'bank_internal_transfer_delete': { const res = await callDeleteBankInternalTransferRPC(data.operationId); if (!res.success) throw new Error(res.error || 'No se pudo revertir la transferencia bancaria'); return true; }
     case 'bank_transaction_delete': { const res = await callDeleteBankTransactionRPC(data.id); if (!res.success) throw new Error(res.error || 'No se pudo eliminar el movimiento bancario'); return true; }
