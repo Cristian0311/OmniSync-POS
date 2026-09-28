@@ -849,7 +849,7 @@ export const useStore = create<AppState>()(
       transactionId, batchId
     };
     get().addTransfer(transferRecord);
-    return { success: true };
+    return { success: true, pending: !wasOnline };
   },
 
   reconcileProductStock: async (productId, corrections) => {
@@ -988,9 +988,10 @@ export const useStore = create<AppState>()(
   },
 
   transferProductsBulk: async (fromBranchId, toBranchId, items) => {
-    if (items.length === 0) return { success: true };
+    if (items.length === 0) return { success: true, pending: false };
     const batchId = crypto.randomUUID();
     let successCount = 0;
+    let pendingCount = 0;
     let lastError = "";
 
     for (const item of items) {
@@ -1004,17 +1005,19 @@ export const useStore = create<AppState>()(
       );
       if (res.success) {
         successCount++;
+        if ((res as any).pending) pendingCount++;
       } else {
         lastError = res.error || "Error desconocido";
       }
     }
 
     if (successCount === items.length) {
-      return { success: true };
+      return { success: true, pending: pendingCount > 0 };
     } else {
-      return { 
-        success: false, 
-        error: `Se transfirieron ${successCount} de ${items.length} productos. ${lastError}` 
+      return {
+        success: false,
+        pending: pendingCount > 0,
+        error: `Se transfirieron ${successCount} de ${items.length} productos. ${lastError}`
       };
     }
   },
