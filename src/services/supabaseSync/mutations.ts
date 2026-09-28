@@ -21,12 +21,16 @@ export async function pushProductToSupabase(product: Product) {
   try {
     let validCategoryId = product.categoryId || null;
     if (validCategoryId) {
-      try {
-        const { data: catRow } = await supabase.from('categories').select('id').eq('id', validCategoryId).maybeSingle();
-        if (!catRow) {
-          validCategoryId = null;
-        }
-      } catch {
+      const { data: catRow, error: categoryError } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('id', validCategoryId)
+        .maybeSingle();
+      // Un fallo de red no debe convertirse en una relación nula. Si la
+      // dependencia no pudo validarse, la operación completa se reintenta
+      // desde la cola durable en lugar de guardar un producto degradado.
+      if (categoryError) throw categoryError;
+      if (!catRow) {
         validCategoryId = null;
       }
     }
