@@ -66,13 +66,35 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
   const store = useStore.getState();
   const errors: string[] = [];
   
-  // Persistir estado global primero
+  // Persistir la configuración global completa cuando esta función se utiliza
+  // para una importación/respaldo explícito. El JSON de store_config conserva
+  // campos remotos que una versión más antigua del POS todavía no conozca.
   try {
-    await supabase.from('settings').upsert({
+    const { data: remoteSettings, error: settingsReadError } = await supabase
+      .from('settings')
+      .select('store_config')
+      .eq('id', 'global')
+      .maybeSingle();
+    if (settingsReadError) throw settingsReadError;
+
+    const mergedStoreConfig = {
+      ...((remoteSettings?.store_config && typeof remoteSettings.store_config === 'object') ? remoteSettings.store_config : {}),
+      ...((store.storeConfig && typeof store.storeConfig === 'object') ? store.storeConfig : {}),
+      fiscalConfigs: store.fiscalConfigs || []
+    };
+
+    const { error: settingsWriteError } = await supabase.from('settings').upsert({
       id: 'global',
-      last_turn_number: store.lastTurnNumber
+      last_turn_number: store.lastTurnNumber,
+      store_config: mergedStoreConfig,
+      receipt_config: store.receiptConfig || {},
+      catalog_config: store.catalogConfig || {},
+      currencies: store.currencies || []
     });
-  } catch (e) {}
+    if (settingsWriteError) throw settingsWriteError;
+  } catch (e: any) {
+    errors.push('Configuración global: ' + (e?.message || 'fallo de guardado'));
+  }
 
   const pushed: Record<string, number> = {
     branches: store.branches.length,
@@ -188,7 +210,17 @@ export async function pushAllToSupabase(isFull: boolean = false): Promise<{ succ
     }));
     { const r = await safeUpsertMany(supabase, 'customers', custRows); if (!r.success) errors.push(`Clientes: ${r.error?.message || 'fallo de guardado'}`); }
 
-    // 9. Suppliers
+    // 9. Currencies
+    const currencyRows = (store.currencies || []).map(c => ({
+      code: c.code,
+      name: c.name,
+      symbol: c.symbol,
+      rate_to_base: Number(c.rateToBase) || 0,
+      is_base: c.isBase === true
+    }));
+    { const r = await safeUpsertMany(supabase, 'currencies', currencyRows, { onConflict: 'code' }); if (!r.success) errors.push(`Monedas: ${r.error?.message || 'fallo de guardado'}`); }
+
+    // 10. Suppliers
     const supRows = (store.suppliers || []).map(sup => ({
       id: sup.id,
       name: sup.name,
