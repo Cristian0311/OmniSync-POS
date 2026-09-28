@@ -2118,12 +2118,14 @@ export const useStore = create<AppState>()(
       } catch (err: any) {
         console.warn('[createInventoryAudit] Inicio no confirmado; queda durable para reintento:', err);
         set(state => ({ inventoryAudits: [{ ...audit, userId, reviewStatus: 'counting' }, ...state.inventoryAudits.filter(a => a.id !== audit.id)] }));
-        return { success: true };
+        get().addNotification('Auditoría guardada offline; queda pendiente de confirmación con la nube.', 'info');
+        return { success: true, pending: true };
       }
     }
 
     set(state => ({ inventoryAudits: [{ ...audit, userId, reviewStatus: 'counting' }, ...state.inventoryAudits.filter(a => a.id !== audit.id)] }));
-    return { success: true };
+    get().addNotification('Auditoría guardada offline; queda pendiente de confirmación con la nube.', 'info');
+    return { success: true, pending: true };
   },
   completeInventoryAudit: async (id, items, notes) => {
     const audit = get().inventoryAudits.find(a => a.id === id);
@@ -2151,7 +2153,8 @@ export const useStore = create<AppState>()(
             ? { ...a, items, notes: notes || a.notes, submittedAt: new Date().toISOString(), reviewStatus: 'pending_approval' }
             : a)
         }));
-        return { success: true };
+        get().addNotification('Conteo guardado offline; queda pendiente de confirmación con la nube.', 'info');
+        return { success: true, pending: true };
       }
     }
 
@@ -2160,7 +2163,8 @@ export const useStore = create<AppState>()(
         ? { ...a, items, notes: notes || a.notes, submittedAt: new Date().toISOString(), reviewStatus: 'pending_approval' }
         : a)
     }));
-    return { success: true };
+    get().addNotification('Conteo guardado offline; queda pendiente de confirmación con la nube.', 'info');
+    return { success: true, pending: true };
   },
   requestInventoryAuditRecount: async (id, notes) => {
     const audit = get().inventoryAudits.find(a => a.id === id);
