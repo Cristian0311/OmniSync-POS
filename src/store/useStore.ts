@@ -2997,10 +2997,17 @@ export const useStore = create<AppState>()(
             ? mergedCategories.filter(c => !pendingCategoryDeleteIds.has(c.id) && (data.categories.some((sc: any) => sc.id === c.id) || pendingCategoryIds.has(c.id)))
             : mergedCategories.filter(c => !pendingCategoryDeleteIds.has(c.id));
 
+          const pendingUserIds = new Set(getOfflineQueue().filter(i => i.type === 'user').map(i => String(i.data?.id || i.actionId)));
           const mergedUsers = mergeUnique(data.users, state.users || []);
-          // Purge Users (except initial admins)
+          // Conservar también usuarios creados/editados offline hasta que su
+          // operación durable sea confirmada por Supabase.
           const finalUsers = (Array.isArray(data.users) && data.users.length > 0)
-            ? mergedUsers.filter(u => data.users.some((su: any) => su.id === u.id) || u.id.startsWith('admin-') || u.id.startsWith('employee-'))
+            ? mergedUsers.filter(u =>
+                data.users.some((su: any) => su.id === u.id) ||
+                pendingUserIds.has(String(u.id)) ||
+                u.id.startsWith('admin-') ||
+                u.id.startsWith('employee-')
+              )
             : mergedUsers;
 
           const mergedBankCards = replaceRemoteRecords(data.bankCards, state.bankCards || [], new Set(getOfflineQueue().filter(i => i.type === 'bank_card').map(i => String(i.data?.id || i.actionId))));
