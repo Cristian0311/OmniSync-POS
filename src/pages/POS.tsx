@@ -4991,6 +4991,7 @@ export default function POS() {
           onPairBluetooth={handlePairBluetooth}
           onConnectUsb={handleConnectUsb}
           onPrinterConnectedChange={setConnectedPrinterName}
+          printerWidth={(receiptConfig.printerWidth || '58mm') as '58mm' | '80mm'}
           onSuccess={(message) => {
             setPosSuccess(message);
             if (message) setTimeout(() => setPosSuccess(""), 2500);
