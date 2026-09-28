@@ -584,6 +584,32 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       }
       return true;
     }
+    case 'transfer_bulk': {
+      const d = data || {};
+      const res = await callTransferInventoryBulkRPC({
+        batchId: d.batchId,
+        fromBranchId: d.fromBranchId,
+        toBranchId: d.toBranchId,
+        items: Array.isArray(d.items) ? d.items : [],
+        userId: d.userId
+      });
+      if (!res.success) {
+        const code = String(res.errorCode || '');
+        if (['P0001','23503','23505','42501','22003','22P02','IDEMPOTENCY_CONFLICT'].includes(code)) {
+          await reconcileTransferCanonical(d.fromBranchId, d.toBranchId);
+          throw new PermanentSyncError(res.error || 'No se pudo sincronizar el traslado múltiple');
+        }
+        throw new Error(res.error || 'No se pudo sincronizar el traslado múltiple');
+      }
+      await reconcileTransferCanonical(d.fromBranchId, d.toBranchId);
+      useStore.setState(state => ({
+        transfers: (state.transfers || []).map(t => {
+          const op = d.items?.find((x:any) => x.operationId === (t.operationId || t.id));
+          return op ? { ...t, status: 'completed' as const, batchId: d.batchId } : t;
+        })
+      }));
+      return true;
+    }
     case 'transfer': {
       const res = await callTransferInventoryRPC(data);
       if (!res.success) {
@@ -861,6 +887,12 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
       case 'return_complete': add(dep('return', data.id)); break;
       case 'inventory': case 'inventory_adjustment': case 'inventory_reconcile':
         add(dep('branch', data.branchId)); add(dep('product', data.productId)); break;
+      case 'transfer_bulk':
+        add(dep('branch', data.fromBranchId)); add(dep('branch', data.toBranchId)); add(dep('user', data.userId));
+        for (const transferItem of Array.isArray(data.items) ? data.items : []) {
+          add(dep('product', transferItem.productId));
+        }
+        break;
       case 'transfer':
         add(dep('product', data.productId)); add(dep('branch', data.fromBranchId)); add(dep('branch', data.toBranchId)); add(dep('user', data.userId)); break;
       case 'supplier_order': add(dep('supplier', data.supplierId)); add(dep('branch', data.branchId)); break;
@@ -954,7 +986,7 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
       remainingFromRun.push(item);
       errors.push({ type: item.type, actionId: item.actionId, message: item.lastError, retryCount: item.retryCount });
       addSyncLog({ level:'error', source:'offline_queue', title:`Error al procesar item (${item.type})`, details:item.lastError, entityType:item.type, actionId:item.actionId, retryAttempt:item.retryCount, maxRetries:8 });
-      if (!permanent && (item.type === 'transaction' || item.type === 'cash_session' || item.type === 'transfer' || item.type === 'return_complete')) {
+      if (!permanent && (item.type === 'transaction' || item.type === 'cash_session' || item.type === 'transfer' || item.type === 'transfer_bulk' || item.type === 'return_complete')) {
         // Las operaciones críticas mantienen el orden temporal: una dependencia
         // fallida no permite que las posteriores la salten.
         for (let tail = index + 1; tail < sorted.length; tail++) remainingFromRun.push(sorted[tail]);
