@@ -9,6 +9,7 @@ import {
   ReceiptConfig, StoreConfig
 } from '../../types';
 import { fetchAllRows, safeUpsert, safeUpsertMany, SyncResult } from './core';
+import { enqueueOfflineItem } from '../offlineQueue';
 
 export async function pushProductToSupabase(product: Product) {
   const supabase = getSupabase();
@@ -286,7 +287,7 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
     // una actualización en Tablet A no borre lo que agregó Tablet B.
     const { data: remoteSession, error: remoteReadError } = await supabase
       .from('cash_sessions')
-      .select('id,status,opened_at,closed_at,opening_balance,notes,deleted_at,deleted_by,delete_reason,branch_id,user_id,working_employee_ids')
+      .select('id,status,opened_at,closed_at,opening_balance,opening_amount,notes,deleted_at,deleted_by,delete_reason,branch_id,user_id,worker_name,working_employee_ids')
       .eq('id', session.id)
       .maybeSingle();
     if (remoteReadError) throw remoteReadError;
@@ -337,8 +338,8 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
     const row = {
       id: session.id,
       user_id: remoteSession?.user_id || session.userId || null,
-      worker_name: session.workerName || remoteSession?.worker_name || null,
-      branch_id: session.branchId,
+      worker_name: remoteSession?.worker_name || session.workerName || null,
+      branch_id: remoteSession?.branch_id || session.branchId,
       opened_at: remoteSession?.opened_at || session.openedAt,
       closed_at: effectiveStatus === 'open' ? null : (remoteSession?.closed_at || session.closedAt || null),
       opening_balance: remoteSession?.opening_balance ?? session.openingAmount ?? session.openingBalance ?? 0,
@@ -405,28 +406,37 @@ export async function pushBranchToSupabase(branch: Branch) {
   }
 }
 
-export async function deleteBranchFromSupabase(id: string) {
+export async function deleteBranchFromSupabase(id: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    await enqueueOfflineItem('branch_delete', { id }, id);
+    return false;
+  }
   const supabase = getSupabase();
-  if (!supabase) return;
-
+  if (!supabase) {
+    await enqueueOfflineItem('branch_delete', { id }, id);
+    return false;
+  }
   try {
-    // 1. Validar si la sucursal tiene relaciones activas (inventario, transacciones, turnos)
-    const { count: invCount } = await supabase.from('inventory').select('*', { count: 'exact', head: true }).eq('branch_id', id);
-    const { count: txCount } = await supabase.from('transactions').select('*', { count: 'exact', head: true }).eq('branch_id', id);
-    const { count: csCount } = await supabase.from('cash_sessions').select('*', { count: 'exact', head: true }).eq('branch_id', id);
+    const { count: invCount, error: invError } = await supabase.from('inventory').select('*', { count: 'exact', head: true }).eq('branch_id', id);
+    const { count: txCount, error: txError } = await supabase.from('transactions').select('*', { count: 'exact', head: true }).eq('branch_id', id);
+    const { count: csCount, error: csError } = await supabase.from('cash_sessions').select('*', { count: 'exact', head: true }).eq('branch_id', id);
+    if (invError || txError || csError) throw invError || txError || csError;
 
     if ((invCount || 0) > 0 || (txCount || 0) > 0 || (csCount || 0) > 0) {
-      console.warn(`[MARÉ] Bloqueada eliminación física de sucursal ${id} por tener datos históricos (inv: ${invCount}, tx: ${txCount}, turnos: ${csCount}). Se marca como inactiva.`);
-      await supabase.from('branches').update({ is_active: false }).eq('id', id);
-      return;
+      const { error } = await supabase.from('branches').update({ is_active: false }).eq('id', id);
+      if (error) throw error;
+      return true;
     }
 
-    // 2. Desvincular de usuarios
-    await supabase.from('users').update({ branch_id: null, assigned_branch_id: null }).eq('branch_id', id);
-    // 3. Eliminar registro vacío
-    await supabase.from('branches').delete().eq('id', id);
+    const { error: usersError } = await supabase.from('users').update({ branch_id: null, assigned_branch_id: null }).eq('branch_id', id);
+    if (usersError) throw usersError;
+    const { error } = await supabase.from('branches').delete().eq('id', id);
+    if (error) throw error;
+    return true;
   } catch (e) {
-    console.warn("Supabase delete branch failed:", e);
+    console.warn("Supabase delete branch failed, guardando operación durable:", e);
+    await enqueueOfflineItem('branch_delete', { id }, id);
+    return false;
   }
 }
 
@@ -459,14 +469,24 @@ export async function pushCategoryToSupabase(category: Category) {
   }
 }
 
-export async function deleteCategoryFromSupabase(id: string) {
+export async function deleteCategoryFromSupabase(id: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    await enqueueOfflineItem('category_delete', { id }, id);
+    return false;
+  }
   const supabase = getSupabase();
-  if (!supabase) return;
-
+  if (!supabase) {
+    await enqueueOfflineItem('category_delete', { id }, id);
+    return false;
+  }
   try {
-    await supabase.from('categories').delete().eq('id', id);
+    const { error } = await supabase.from('categories').delete().eq('id', id);
+    if (error) throw error;
+    return true;
   } catch (e) {
-    console.warn("Supabase delete category failed:", e);
+    console.warn("Supabase delete category failed, guardando operación durable:", e);
+    await enqueueOfflineItem('category_delete', { id }, id);
+    return false;
   }
 }
 
@@ -674,14 +694,24 @@ export async function pushIDNSettlementPriceToSupabase(price: IDNSettlementPrice
   }
 }
 
-export async function deleteIDNSettlementPriceFromSupabase(id: string) {
+export async function deleteIDNSettlementPriceFromSupabase(id: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    await enqueueOfflineItem('idn_settlement_price_delete', { id }, id);
+    return false;
+  }
   const supabase = getSupabase();
-  if (!supabase) return;
-
+  if (!supabase) {
+    await enqueueOfflineItem('idn_settlement_price_delete', { id }, id);
+    return false;
+  }
   try {
-    await supabase.from('idn_settlement_prices').delete().eq('id', id);
+    const { error } = await supabase.from('idn_settlement_prices').delete().eq('id', id);
+    if (error) throw error;
+    return true;
   } catch (e) {
-    console.warn("Supabase delete settlement price failed:", e);
+    console.warn("Supabase delete settlement price failed, guardando operación durable:", e);
+    await enqueueOfflineItem('idn_settlement_price_delete', { id }, id);
+    return false;
   }
 }
 
@@ -1102,13 +1132,24 @@ export async function pushSupplierToSupabase(supplier: Supplier) {
   }
 }
 
-export async function deleteSupplierFromSupabase(id: string) {
+export async function deleteSupplierFromSupabase(id: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    await enqueueOfflineItem('supplier_delete', { id }, id);
+    return false;
+  }
   const supabase = getSupabase();
-  if (!supabase) return;
+  if (!supabase) {
+    await enqueueOfflineItem('supplier_delete', { id }, id);
+    return false;
+  }
   try {
-    await supabase.from('suppliers').delete().eq('id', id);
+    const { error } = await supabase.from('suppliers').delete().eq('id', id);
+    if (error) throw error;
+    return true;
   } catch (e) {
-    console.warn("Supabase delete supplier failed:", e);
+    console.warn("Supabase delete supplier failed, guardando operación durable:", e);
+    await enqueueOfflineItem('supplier_delete', { id }, id);
+    return false;
   }
 }
 

@@ -233,7 +233,7 @@ export async function pullGlobalCatalogDataFromSupabase(): Promise<{ success: bo
     return {
       success: true,
       data: {
-        branches: (branchesRes.data || []).map((b:any) => ({ id:b.id, name:b.name, address:b.address, phone:b.phone, isMain:b.is_main })),
+        branches: (branchesRes.data || []).map((b:any) => ({ id:b.id, name:b.name, address:b.address, phone:b.phone, isMain:b.is_main, isActive:b.is_active !== false })),
         categories: (categoriesRes.data || []).map((c:any) => ({ id:c.id, name:c.name, department:c.department || '', color:c.color })),
         products: (productsRes.data || []).map((p:any) => ({
           id:p.id,name:p.name,sku:p.sku||'',barcode:p.barcode||'',
@@ -301,7 +301,7 @@ export async function pullPosBootstrapFromSupabase(branchId?: string): Promise<{
     const mapTx = (t:any): Transaction => ({ id:t.id,date:t.date,total:Number(t.total)||0,tax:Number(t.tax)||0,discount:Number(t.discount)||0,branchId:t.branch_id,customerId:t.customer_id,userId:t.user_id,status:t.status||'completed',notes:t.notes||'',paymentMethod:t.payment_method||'cash',sessionId:t.session_id,changeGiven:Number(t.change_given)||0,items:normalizeTransactionItems(t.items, mappedProducts),payments:Array.isArray(t.payments)?t.payments:[],changePayments:Array.isArray(t.change_payments)?t.change_payments:[],sellerEmployeeIds:Array.isArray(t.seller_employee_ids)?t.seller_employee_ids:[],deletedAt:t.deleted_at||undefined,deletedBy:t.deleted_by||undefined,deleteReason:t.delete_reason||undefined });
     const mapSession = (s:any): CashRegisterSession => ({ id:s.id,turnNumber:Number(s.turn_number)||undefined,userId:s.user_id,workerName:s.worker_name,branchId:s.branch_id,openedAt:s.opened_at,closedAt:s.closed_at,openingBalance:Number(s.opening_balance??s.opening_amount)||0,openingAmount:Number(s.opening_amount??s.opening_balance)||0,closingBalances:Array.isArray(s.closing_balances)?s.closing_balances:[],status:s.status||'open',notes:s.notes||'',closingDate:s.closing_date||undefined,workingEmployeeIds:Array.isArray(s.working_employee_ids)?s.working_employee_ids:[],movements:Array.isArray(s.movements)?s.movements:[] });
     return { success:true, data:{
-      branches:(branchesRes.data||[]).map((b:any)=>({id:b.id,name:b.name,address:b.address,phone:b.phone,isMain:b.is_main})),
+      branches:(branchesRes.data||[]).map((b:any)=>({id:b.id,name:b.name,address:b.address,phone:b.phone,isMain:b.is_main,isActive:b.is_active !== false})),
       categories:(categoriesRes.data||[]).map((c:any)=>({id:c.id,name:c.name,department:c.department||'',color:c.color})),
       products:(productsRes.data||[]).map(mapProduct), inventory:(inventoryRes.data||[]).map(mapInventory), users:(usersRes.data||[]).map(mapUser),
       customers:(customersRes.data||[]).map(mapCustomer), currencies:(currenciesRes.data||[]).map((c:any)=>({code:c.code,name:c.name||c.code,symbol:c.symbol||c.code,rateToBase:Number(c.rate_to_base)||1,isBase:Boolean(c.is_base)})),
