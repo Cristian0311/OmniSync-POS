@@ -507,17 +507,83 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       // la confirmación nunca puede dejar una venta perdida y una cola vacía.
       const { data: persisted, error: verifyError } = await supabase
         .from('transactions')
-        .select('id,status,total')
+        .select('id,status,total,branch_id')
         .eq('id', transaction.id)
         .maybeSingle();
       if (verifyError) throw verifyError;
-      if (!persisted || persisted.id !== transaction.id) {
-        throw new Error('Supabase no confirmó la venta después de procesarla');
+      if (!persisted || persisted.id !== transaction.id || persisted.status === 'refunded' || persisted.status === 'cancelled') {
+        throw new Error('Supabase no confirmó la venta como completada después de procesarla');
+      }
+
+      // Al reintentar tras una caída, la RPC puede haber confirmado la venta
+      // antes de que la tablet muriera. El replay debe restaurar el inventario
+      // local desde el servidor y no volver a confiar en el snapshot offline.
+      const branchId = persisted.branch_id || transaction.branchId;
+      if (branchId) {
+        const inventoryRes = await pullBranchInventoryFromSupabase(branchId);
+        if (!inventoryRes.success) {
+          throw new Error(inventoryRes.message || 'No se pudo reconciliar el inventario de la venta');
+        }
+        useStore.setState(state => ({
+          inventory: [
+            ...(state.inventory || []).filter(item => item.branchId !== branchId),
+            ...inventoryRes.inventory
+          ]
+        }));
       }
       return true;
     }
-    case 'void_transaction': { const res = await callVoidTransactionRPC(data.id, data.userId, data.reason || 'Anulación de venta'); if (!res.success) throw new Error(res.error || 'No se pudo anular la venta'); return true; }
-    case 'return_complete': { const res = await callCompleteReturnRPC(data.id, data.userId); if (!res.success) throw new Error(res.error || 'No se pudo completar la devolución'); return true; }
+    case 'void_transaction': {
+      const res = await callVoidTransactionRPC(data.id, data.userId, data.reason || 'Anulación de venta');
+      if (!res.success) throw new Error(res.error || 'No se pudo anular la venta');
+
+      const { data: persistedVoid, error: voidReadError } = await supabase
+        .from('transactions')
+        .select('id,status,branch_id')
+        .eq('id', data.id)
+        .maybeSingle();
+      if (voidReadError) throw voidReadError;
+      if (!persistedVoid || persistedVoid.status !== 'refunded') {
+        throw new Error('Supabase no confirmó la anulación de la venta');
+      }
+      if (persistedVoid.branch_id) {
+        const inventoryRes = await pullBranchInventoryFromSupabase(persistedVoid.branch_id);
+        if (!inventoryRes.success) throw new Error(inventoryRes.message || 'No se pudo reconciliar el inventario de la anulación');
+        useStore.setState(state => ({
+          inventory: [
+            ...(state.inventory || []).filter(item => item.branchId !== persistedVoid.branch_id),
+            ...inventoryRes.inventory
+          ]
+        }));
+      }
+      await reconcileBankCanonical();
+      return true;
+    }
+    case 'return_complete': {
+      const res = await callCompleteReturnRPC(data.id, data.userId);
+      if (!res.success) throw new Error(res.error || 'No se pudo completar la devolución');
+
+      const { data: persistedReturn, error: returnReadError } = await supabase
+        .from('returns')
+        .select('id,status,branch_id')
+        .eq('id', data.id)
+        .maybeSingle();
+      if (returnReadError) throw returnReadError;
+      if (!persistedReturn || persistedReturn.status !== 'completed') {
+        throw new Error('Supabase no confirmó la devolución como completada');
+      }
+      if (persistedReturn.branch_id) {
+        const inventoryRes = await pullBranchInventoryFromSupabase(persistedReturn.branch_id);
+        if (!inventoryRes.success) throw new Error(inventoryRes.message || 'No se pudo reconciliar el inventario de la devolución');
+        useStore.setState(state => ({
+          inventory: [
+            ...(state.inventory || []).filter(item => item.branchId !== persistedReturn.branch_id),
+            ...inventoryRes.inventory
+          ]
+        }));
+      }
+      return true;
+    }
     case 'transfer': {
       const res = await callTransferInventoryRPC(data);
       if (!res.success) {
