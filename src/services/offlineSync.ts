@@ -548,7 +548,13 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     }
     case 'void_transaction': {
       const res = await callVoidTransactionRPC(data.id, data.userId, data.reason || 'Anulación de venta');
-      if (!res.success) throw new Error(res.error || 'No se pudo anular la venta');
+      if (!res.success) {
+        const code = String(res.errorCode || '');
+        if (['P0001','23503','23505','42501','22003','22P02','IDEMPOTENCY_CONFLICT'].includes(code)) {
+          throw new PermanentSyncError(res.error || 'La anulación de la venta fue rechazada permanentemente.');
+        }
+        throw new Error(res.error || 'No se pudo anular la venta');
+      }
 
       const { data: persistedVoid, error: voidReadError } = await supabase
         .from('transactions')
@@ -574,7 +580,13 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     }
     case 'return_complete': {
       const res = await callCompleteReturnRPC(data.id, data.userId);
-      if (!res.success) throw new Error(res.error || 'No se pudo completar la devolución');
+      if (!res.success) {
+        const code = String(res.errorCode || '');
+        if (['P0001','23503','23505','42501','22003','22P02','IDEMPOTENCY_CONFLICT'].includes(code)) {
+          throw new PermanentSyncError(res.error || 'La devolución fue rechazada permanentemente.');
+        }
+        throw new Error(res.error || 'No se pudo completar la devolución');
+      }
 
       const { data: persistedReturn, error: returnReadError } = await supabase
         .from('returns')
@@ -730,12 +742,13 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       const res = await callReceiveSupplierOrderRPC(data.id, data.userId);
       if (!res.success) {
         const code = String(res.errorCode || '');
-        if (['P0001','23503','23505','42501','22003','22P02'].includes(code)) {
+        if (['P0001','23503','23505','42501','22003','22P02','IDEMPOTENCY_CONFLICT'].includes(code)) {
           await reconcileSupplierReceiveCanonical(supabase, data.id);
           throw new PermanentSyncError(res.error || 'No se pudo recibir la orden');
         }
         throw new Error(res.error || 'No se pudo recibir la orden');
       }
+      await reconcileSupplierReceiveCanonical(supabase, data.id);
       return true;
     }
     case 'audit_complete': { const res = await callSaveInventoryAuditCountRPC(data.id, data.userId, data.items || [], data.notes); if (!res.success) throw new Error(res.error || 'No se pudo guardar el conteo'); return true; }
@@ -746,7 +759,20 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       const { data: current, error: readError } = await supabase.from('inventory').select('quantity').eq('product_id', data.productId).eq('branch_id', data.branchId).eq('variant_label', data.variantLabel || '').maybeSingle();
       if (readError) throw readError;
       if (current && Number(current.quantity) !== Number(data.quantity)) {
-        throw new Error('Conflicto de inventario legado: el stock remoto cambió antes de sincronizar.');
+        try {
+          const refreshed = await pullBranchInventoryFromSupabase(data.branchId);
+          if (refreshed.success) {
+            useStore.setState(state => ({
+              inventory: [
+                ...(state.inventory || []).filter(item => item.branchId !== data.branchId),
+                ...refreshed.inventory
+              ]
+            }));
+          }
+        } catch (refreshError) {
+          console.warn('[inventory legado] No se pudo refrescar el stock canónico tras conflicto:', refreshError);
+        }
+        throw new PermanentSyncError('Conflicto de inventario legado: el stock remoto cambió antes de sincronizar.');
       }
       return true;
     }
