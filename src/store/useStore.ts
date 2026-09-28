@@ -16,7 +16,7 @@ import {
 import { getSupabaseCredentials } from '../lib/supabase';
 import { getOfflineQueue, enqueueOfflineItem, removeFromOfflineQueue } from '../services/offlineQueue';
 import { normalizeSemanticText, areSemanticallyEqual } from '../utils/textUtils';
-import { localStateStorage, clearLocalStateStorage } from '../services/localStateStorage';
+import { localStateStorage, clearLocalStateStorage, flushLocalStateStorage } from '../services/localStateStorage';
 import type { AppState } from './storeTypes';
 
 import {
@@ -527,8 +527,9 @@ export const useStore = create<AppState>()(
     patch.cart = []; patch.currentCustomerId = undefined; patch.activeSessionId = null;
     set(patch);
 
-    // Persist the resulting selective state immediately.
-    try { await localStateStorage.setItem('pos-store-storage', JSON.stringify({ state: get(), version: 0 })); } catch {}
+    // Forzar la escritura diferida antes de devolver el control. Esto evita
+    // que una recarga inmediata restaure el snapshot anterior desde IndexedDB.
+    try { await flushLocalStateStorage(); } catch {}
     return remote;
   },
   clearReportsHistory: async () => {
