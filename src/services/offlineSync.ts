@@ -109,6 +109,51 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       if (!res.success) throw new Error(res.error || 'No se pudo aprobar la auditoría');
       return true;
     }
+    case 'branch_delete': {
+      const id = String(data?.id || '');
+      if (!id) throw new PermanentSyncError('Eliminación de sucursal sin ID');
+      const { count: invCount, error: invError } = await supabase.from('inventory').select('*', { count: 'exact', head: true }).eq('branch_id', id);
+      const { count: txCount, error: txError } = await supabase.from('transactions').select('*', { count: 'exact', head: true }).eq('branch_id', id);
+      const { count: csCount, error: csError } = await supabase.from('cash_sessions').select('*', { count: 'exact', head: true }).eq('branch_id', id);
+      if (invError || txError || csError) throw invError || txError || csError;
+      if ((invCount || 0) > 0 || (txCount || 0) > 0 || (csCount || 0) > 0) {
+        const { error } = await supabase.from('branches').update({ is_active: false }).eq('id', id);
+        if (error) throw error;
+      } else {
+        const { error: usersError } = await supabase.from('users').update({ branch_id: null, assigned_branch_id: null }).eq('branch_id', id);
+        if (usersError) throw usersError;
+        const { error } = await supabase.from('branches').delete().eq('id', id);
+        if (error) throw error;
+      }
+      return true;
+    }
+    case 'category_delete': {
+      const id = String(data?.id || '');
+      if (!id) throw new PermanentSyncError('Eliminación de categoría sin ID');
+      const { error } = await supabase.from('categories').delete().eq('id', id);
+      if (error) {
+        if (error.code === '23503') throw new PermanentSyncError(error.message || 'La categoría está siendo utilizada por otro registro.');
+        throw error;
+      }
+      return true;
+    }
+    case 'idn_settlement_price_delete': {
+      const id = String(data?.id || '');
+      if (!id) throw new PermanentSyncError('Eliminación de precio IDN sin ID');
+      const { error } = await supabase.from('idn_settlement_prices').delete().eq('id', id);
+      if (error) throw error;
+      return true;
+    }
+    case 'supplier_delete': {
+      const id = String(data?.id || '');
+      if (!id) throw new PermanentSyncError('Eliminación de proveedor sin ID');
+      const { error } = await supabase.from('suppliers').delete().eq('id', id);
+      if (error) {
+        if (error.code === '23503') throw new PermanentSyncError(error.message || 'El proveedor tiene datos relacionados y no puede eliminarse.');
+        throw error;
+      }
+      return true;
+    }
     case 'salary_settlement': {
       const settlement = data;
       const { error } = await supabase.from('salary_settlements').upsert({
@@ -461,7 +506,31 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
       case 'supplier_order': add(dep('supplier', data.supplierId)); add(dep('branch', data.branchId)); break;
       case 'supplier_receive': add(dep('supplier_order', data.id)); break;
       case 'inventory_audit': add(dep('branch', data.branchId)); add(dep('user', data.userId)); break;
-      case 'audit_complete': add(dep('inventory_audit', data.id)); break;
+      case 'audit_start':
+        add(dep('branch', data.branchId)); add(dep('user', data.userId)); break;
+      case 'audit_complete':
+        add(dep('audit_start', 'audit-start:' + data.id));
+        add(dep('branch', data.branchId)); add(dep('user', data.userId)); break;
+      case 'audit_recount':
+        add(dep('audit_start', 'audit-start:' + data.id));
+        add(dep('audit_complete', 'audit:' + data.id));
+        for (const candidate of queueAtStart) {
+          if (candidate.type === 'audit_recount' && candidate.id !== item.id && candidate.data?.id === data.id) add(candidate);
+        }
+        break;
+      case 'audit_approve':
+        add(dep('audit_start', 'audit-start:' + data.id));
+        add(dep('audit_complete', 'audit:' + data.id));
+        for (const candidate of queueAtStart) {
+          if (candidate.type === 'audit_recount' && candidate.data?.id === data.id) add(candidate);
+        }
+        break;
+      case 'branch_delete':
+      case 'category_delete':
+      case 'idn_settlement_price_delete':
+      case 'supplier_delete':
+        break;
+      case 'audit_complete': add(dep('audit_start', 'audit-start:' + data.id)); break;
       case 'salary_settlement': add(cashOp(data.sessionId, 'close')); break;
       case 'bank_transaction': add(dep('bank_card', data.cardId)); add(dep('transaction', data.transactionId)); break;
       case 'bank_card_balance': add(dep('bank_card', data.id)); break;
