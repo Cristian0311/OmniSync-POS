@@ -1041,6 +1041,12 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
           }
         } else {
           add(cashOp(data.id, 'open'));
+          // Las actualizaciones administrativas/auditorías deben ejecutarse
+          // después de un cierre pendiente para que el cierre no pueda
+          // sobrescribir de nuevo el estado de auditoría.
+          if (String(item.actionId).startsWith('cash-snapshot:')) {
+            add(cashOp(data.id, 'close'));
+          }
         }
         break;
       case 'transaction':
