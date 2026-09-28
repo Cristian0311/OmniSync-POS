@@ -1874,7 +1874,8 @@ export const useStore = create<AppState>()(
 
     const sessionTxs = (get().transactions || []).filter(t =>
       t.sessionId === session.id ||
-      (t.branchId === session.branchId &&
+      (t.sessionId == null &&
+        t.branchId === session.branchId &&
         new Date(t.date).getTime() >= new Date(session.openedAt).getTime() &&
         new Date(t.date).getTime() <= new Date(finalClosingDate).getTime())
     );
@@ -1975,6 +1976,12 @@ export const useStore = create<AppState>()(
           const res = await callReceiveSupplierOrderRPC(id, userId);
           if (!res.success) throw new Error(res.error || 'No se pudo recibir la orden');
           removeFromOfflineQueueByAction('supplier_receive', actionId);
+          set(state => {
+            const updated = state.supplierOrders.map(x => x.id === id ? { ...x, ...o, status: 'received' as const } : x);
+            return { supplierOrders: updated };
+          });
+          await get().refreshBranchInventory();
+          return { success: true };
         } catch (err) {
           console.warn('[updateSupplierOrder] Recepción no confirmada; queda durable para reintento:', err);
           return;
@@ -2023,6 +2030,14 @@ export const useStore = create<AppState>()(
           audit.id, audit.branchId, userId, audit.mode || 'cycle_count', audit.blindCount === true, audit.notes
         );
         if (!res.success) throw new Error(res.error || 'No se pudo iniciar la auditoría');
+        if (res.data?.already_exists && res.data?.audit_id && res.data.audit_id !== audit.id) {
+          removeFromOfflineQueueByAction('audit_start', actionId);
+          set(state => ({
+            inventoryAudits: state.inventoryAudits.filter(a => a.id !== audit.id)
+          }));
+          get().addNotification('Ya existe una auditoría abierta para esta sucursal.', 'warning');
+          return { success: false, error: 'Ya existe una auditoría abierta para esta sucursal.' };
+        }
         removeFromOfflineQueueByAction('audit_start', actionId);
         const serverItems = Array.isArray(res.data?.items) ? res.data.items : audit.items;
         set(state => ({
@@ -2620,17 +2635,21 @@ export const useStore = create<AppState>()(
           for (const item of remote) map.set(item.id, item);
           return Array.from(map.values());
         };
-        const pendingProductIds = new Set(getOfflineQueue().filter(i => i.type === 'product').map(i => i.data?.id).filter(Boolean));
-        const pendingCategoryIds = new Set(getOfflineQueue().filter(i => i.type === 'category').map(i => i.data?.id).filter(Boolean));
+        const queue = getOfflineQueue();
+        const pendingProductIds = new Set(queue.filter(i => i.type === 'product').map(i => i.data?.id).filter(Boolean));
+        const pendingCategoryIds = new Set(queue.filter(i => i.type === 'category').map(i => i.data?.id).filter(Boolean));
+        const pendingCategoryDeleteIds = new Set(queue.filter(i => i.type === 'category_delete').map(i => i.data?.id).filter(Boolean));
+        const pendingBranchDeleteIds = new Set(queue.filter(i => i.type === 'branch_delete').map(i => i.data?.id).filter(Boolean));
+        const pendingIdnDeleteIds = new Set(queue.filter(i => i.type === 'idn_settlement_price_delete').map(i => i.data?.id).filter(Boolean));
         const validProductIds = new Set((d.products || []).map((p: any) => p.id));
         const validCategoryIds = new Set((d.categories || []).map((x: any) => x.id));
         return {
-          branches: mergeById(d.branches || [], state.branches || []),
-          categories: mergeById(d.categories || [], state.categories || []).filter(x => validCategoryIds.has(x.id) || pendingCategoryIds.has(x.id)),
+          branches: mergeById(d.branches || [], state.branches || []).filter(x => !pendingBranchDeleteIds.has(x.id)),
+          categories: mergeById(d.categories || [], state.categories || []).filter(x => !pendingCategoryDeleteIds.has(x.id) && (validCategoryIds.has(x.id) || pendingCategoryIds.has(x.id))),
           products: mergeById(d.products || [], state.products || []).filter(x => validProductIds.has(x.id) || pendingProductIds.has(x.id)),
           users: mergeById(d.users || [], state.users || []),
           currencies: d.currencies?.length ? d.currencies : state.currencies,
-          idnSettlementPrices: mergeById(d.idnSettlementPrices || [], state.idnSettlementPrices || []),
+          idnSettlementPrices: mergeById(d.idnSettlementPrices || [], state.idnSettlementPrices || []).filter(x => !pendingIdnDeleteIds.has(x.id)),
           receiptConfig: d.settings?.receipt_config ? { ...state.receiptConfig, ...d.settings.receipt_config } : state.receiptConfig,
           storeConfig: d.settings?.store_config ? { ...state.storeConfig, ...d.settings.store_config } : state.storeConfig,
           catalogConfig: d.settings?.catalog_config ? { ...state.catalogConfig, ...d.settings.catalog_config } : state.catalogConfig
@@ -2848,18 +2867,21 @@ export const useStore = create<AppState>()(
           };
 
           // --- 1. Sucursales ---
-          const offlineQueuedBranchItems = getOfflineQueue().filter(i => i.type === 'branch');
+          const offlineQueueSnapshot = getOfflineQueue();
+          const offlineQueuedBranchItems = offlineQueueSnapshot.filter(i => i.type === 'branch');
           const offlineQueuedBranchIds = new Set(offlineQueuedBranchItems.map(i => i.data.id));
+          const offlineDeletedBranchIds = new Set(offlineQueueSnapshot.filter(i => i.type === 'branch_delete').map(i => i.data?.id).filter(Boolean));
           
           const mergedBranches = mergeUnique(data.branches, state.branches || [], { offlineIds: offlineQueuedBranchIds });
           
           // Purge: Si recibimos datos de Supabase, eliminar locales que no estén en Supabase Y no estén en la cola offline
           const finalBranches = (data.branches && data.branches.length > 0)
-            ? mergedBranches.filter(b => 
-                data.branches.some((sb: any) => sb.id === b.id) || 
-                offlineQueuedBranchIds.has(b.id)
+            ? mergedBranches.filter(b =>
+                !offlineDeletedBranchIds.has(b.id) &&
+                (data.branches.some((sb: any) => sb.id === b.id) ||
+                offlineQueuedBranchIds.has(b.id))
               )
-            : mergedBranches;
+            : mergedBranches.filter(b => !offlineDeletedBranchIds.has(b.id));
 
           const validBranchIds = new Set(finalBranches.map(b => b.id));
 
@@ -2969,8 +2991,8 @@ export const useStore = create<AppState>()(
 
           const mergedCategories = mergeUnique(data.categories, state.categories || []);
           const finalCategories = (Array.isArray(data.categories) && data.categories.length > 0)
-            ? mergedCategories.filter(c => data.categories.some((sc: any) => sc.id === c.id) || pendingCategoryIds.has(c.id))
-            : mergedCategories;
+            ? mergedCategories.filter(c => !pendingCategoryDeleteIds.has(c.id) && (data.categories.some((sc: any) => sc.id === c.id) || pendingCategoryIds.has(c.id)))
+            : mergedCategories.filter(c => !pendingCategoryDeleteIds.has(c.id));
 
           const mergedUsers = mergeUnique(data.users, state.users || []);
           // Purge Users (except initial admins)
@@ -2980,7 +3002,11 @@ export const useStore = create<AppState>()(
 
           const mergedBankCards = replaceRemoteRecords(data.bankCards, state.bankCards || [], new Set(getOfflineQueue().filter(i => i.type === 'bank_card').map(i => String(i.data?.id || i.actionId))));
           const mergedBankTransactions = replaceRemoteRecords(data.bankTransactions, state.bankTransactions || [], new Set(getOfflineQueue().filter(i => i.type === 'bank_transaction' || i.type === 'bank_transaction_delete' || i.type === 'bank_internal_transfer_delete').map(i => String(i.data?.id || i.data?.operationId || i.actionId))));
-          const mergedSuppliers = replaceRemoteRecords(data.suppliers, state.suppliers || [], new Set(getOfflineQueue().filter(i => i.type === 'supplier').map(i => String(i.data?.id || i.actionId))));
+          const supplierQueue = getOfflineQueue();
+          const pendingSupplierIds = new Set(supplierQueue.filter(i => i.type === 'supplier').map(i => String(i.data?.id || i.actionId)));
+          const deletedSupplierIds = new Set(supplierQueue.filter(i => i.type === 'supplier_delete').map(i => String(i.data?.id || i.actionId)));
+          const mergedSuppliers = replaceRemoteRecords(data.suppliers, state.suppliers || [], new Set([...pendingSupplierIds, ...deletedSupplierIds]));
+          const filteredSuppliers = mergedSuppliers.filter(s => !deletedSupplierIds.has(String(s.id)));
           const mergedSupplierOrders = replaceRemoteRecords(data.supplierOrders, state.supplierOrders || [], new Set(getOfflineQueue().filter(i => i.type === 'supplier_order').map(i => String(i.data?.id || i.actionId))));
           const mergedCurrencies = mergeUnique(data.currencies, state.currencies || [], { idKey: 'code' });
           const mergedTransfers = replaceRemoteRecords(data.transfers, state.transfers || [], new Set(getOfflineQueue().filter(i => i.type === 'transfer').map(i => String(i.data?.id || i.data?.operationId || i.actionId))));
@@ -2988,7 +3014,8 @@ export const useStore = create<AppState>()(
           const mergedQuotes = replaceRemoteRecords(data.quotes, state.quotes || [], new Set(getOfflineQueue().filter(i => i.type === 'quote').map(i => String(i.data?.id || i.actionId))));
           const mergedTimeShifts = replaceRemoteRecords(data.timeShifts, state.timeShifts || [], new Set(getOfflineQueue().filter(i => i.type === 'time_shift').map(i => String(i.data?.id || i.actionId))));
           const mergedSalarySettlements = replaceRemoteRecords(data.salarySettlements, state.salarySettlements || [], new Set(getOfflineQueue().filter(i => i.type === 'salary_settlement').map(i => String(i.data?.id || i.actionId))));
-          const mergedIdnSettlementPrices = mergeUnique(data.idnSettlementPrices, state.idnSettlementPrices || []);
+          const deletedIdnSettlementIds = new Set(getOfflineQueue().filter(i => i.type === 'idn_settlement_price_delete').map(i => String(i.data?.id || i.actionId)));
+          const mergedIdnSettlementPrices = mergeUnique(data.idnSettlementPrices, state.idnSettlementPrices || []).filter(p => !deletedIdnSettlementIds.has(String(p.id)));
 
           const updatedCurrentUser = state.currentUser
             ? (finalUsers.find((u: any) => u.id === state.currentUser?.id) || state.currentUser)
@@ -3005,7 +3032,7 @@ export const useStore = create<AppState>()(
             bankCards: mergedBankCards,
             bankTransactions: mergedBankTransactions,
             customers: mergedCustomers,
-            suppliers: mergedSuppliers,
+            suppliers: filteredSuppliers,
             supplierOrders: mergedSupplierOrders,
             currencies: mergedCurrencies,
             transactions: mergedTransactions,
