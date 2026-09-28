@@ -644,9 +644,11 @@ export const useStore = create<AppState>()(
   },
   deleteBranch: (id) => {
     // Validar integridad referencial antes de permitir eliminación
-    const hasInventory = (get().inventory || []).some(l => l.branchId === id && l.quantity > 0);
-    const hasTx = (get().transactions || []).some(t => t.branchId === id && !t.deletedAt);
-    const hasSessions = (get().cashSessions || []).some(s => s.branchId === id && !s.deletedAt);
+    // Mantener la misma regla que aplica la operación remota: cualquier
+    // registro histórico relacionado impide una eliminación física.
+    const hasInventory = (get().inventory || []).some(l => l.branchId === id);
+    const hasTx = (get().transactions || []).some(t => t.branchId === id);
+    const hasSessions = (get().cashSessions || []).some(s => s.branchId === id);
     if (hasInventory || hasTx || hasSessions) {
       console.warn(`[MARÉ] Bloqueada eliminación de sucursal ${id} porque tiene relaciones activas (inventario, ventas o turnos).`);
       return;
