@@ -232,17 +232,17 @@ function persistQueueSnapshot(queue: OfflineQueueItem[]): void {
 }
 
 function persistQueueItem(item: OfflineQueueItem): Promise<void> {
-  persistenceChain = persistenceChain.then(async () => {
+  const operation = persistenceChain.then(async () => {
     if (!queueReady && queueInitPromise) await queueInitPromise;
     if (typeof indexedDB !== 'undefined') {
       try {
         await idbPut(item);
+        persistenceError = null;
         return;
       } catch (idbError) {
-        // IndexedDB puede quedar bloqueado/corrupto en algunos dispositivos.
-        // Antes de aceptar la operación como durable, intentamos el respaldo local.
         try {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue));
+          persistenceError = null;
           return;
         } catch (localError) {
           throw new Error(
@@ -251,17 +251,22 @@ function persistQueueItem(item: OfflineQueueItem): Promise<void> {
         }
       }
     }
+
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue));
+      persistenceError = null;
     } catch (e) {
       throw new Error(`No se pudo persistir la operación offline en localStorage: ${String(e)}`);
     }
-  }).catch(async e => {
+  });
+
+  // La cadena interna se recupera para permitir que una nueva operación pueda
+  // intentarse después de un fallo, pero la promesa de ESTA operación sí rechaza.
+  persistenceChain = operation.catch(e => {
     persistenceError = e instanceof Error ? e : new Error(String(e));
     console.error('[offlineSync] Error persistiendo cola durable:', e);
-    throw e;
   });
-  return persistenceChain;
+  return operation;
 }
 
 function persistQueueDelete(id: string): Promise<void> {
