@@ -3030,7 +3030,7 @@ export default function POS() {
                                           )}
                                         >
                                           <div className="min-w-0">
-                                            <span className="block text-[10px] sm:text-[11px] font-black uppercase tracking-tight leading-tight truncate">
+                                            <span className="block text-[10px] sm:text-[11px] font-black uppercase tracking-tight leading-tight whitespace-normal break-words">
                                               {u.name || 'Trabajador'}
                                             </span>
                                             <span className={cn(
