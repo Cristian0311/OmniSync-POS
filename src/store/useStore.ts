@@ -3374,7 +3374,16 @@ export const useStore = create<AppState>()(
           return Array.from(map.values());
         })(),
         transfers: (() => {
-          const pending = new Set(getOfflineQueue().filter(i => i.type === 'transfer').map(i => String(i.data?.id || i.data?.operationId || i.actionId)));
+          const pending = new Set<string>();
+          for (const q of getOfflineQueue()) {
+            if (q.type === 'transfer') {
+              pending.add(String(q.data?.id || q.data?.operationId || q.actionId));
+            } else if (q.type === 'transfer_bulk') {
+              for (const op of Array.isArray(q.data?.items) ? q.data.items : []) {
+                if (op?.operationId) pending.add(String(op.operationId));
+              }
+            }
+          }
           const map = new Map<string, InventoryTransfer>();
           const belongsToBranch = (item: any) => item.branchId === branchId || item.fromBranchId === branchId || item.toBranchId === branchId;
           for (const item of state.transfers || []) {
@@ -3544,21 +3553,68 @@ export const useStore = create<AppState>()(
           // durante el merge para evitar que un snapshot remoto anterior la revierta.
           const pendingInventoryKeys = new Set<string>();
           getOfflineQueue().forEach(i => {
+            const d = i.data || {};
+
             if (i.type === 'inventory_adjustment' || i.type === 'inventory_reconcile' || i.type === 'inventory') {
-              pendingInventoryKeys.add(`${i.data?.productId}_${i.data?.branchId}_${i.data?.variantLabel || ''}`);
+              pendingInventoryKeys.add(`${d.productId}_${d.branchId}_${d.variantLabel || ''}`);
               return;
             }
-            if (i.type === 'transfer') {
-              const d = i.data || {};
-              for (const v of Array.isArray(d.variants) ? d.variants : []) {
-                const label = v?.variantLabel || '';
-                pendingInventoryKeys.add(`${d.productId}_${d.fromBranchId}_${label}`);
-                pendingInventoryKeys.add(`${d.productId}_${d.toBranchId}_${label}`);
+
+            if (i.type === 'transaction') {
+              const branchId = d.branchId;
+              for (const saleItem of Array.isArray(d.items) ? d.items : []) {
+                const product = typeof saleItem?.product === 'string' ? saleItem.product : saleItem?.product?.id;
+                if (!product || !branchId) continue;
+                const label = saleItem?.variantLabel || saleItem?.variant_label || '';
+                pendingInventoryKeys.add(`${product}_${branchId}_${label}`);
+                const components = typeof saleItem?.product === 'object'
+                  ? (saleItem.product?.kitComponents || saleItem.product?.kitItems || [])
+                  : [];
+                for (const component of Array.isArray(components) ? components : []) {
+                  if (component?.productId) {
+                    pendingInventoryKeys.add(`${component.productId}_${branchId}_`);
+                  }
+                }
               }
               return;
             }
+
+            if (i.type === 'transfer' || i.type === 'transfer_bulk') {
+              const operations = i.type === 'transfer'
+                ? [{ productId: d.productId, variants: d.variants }]
+                : (Array.isArray(d.items) ? d.items : []);
+              for (const op of operations) {
+                const productId = op?.productId;
+                for (const v of Array.isArray(op?.variants) ? op.variants : []) {
+                  const label = v?.variantLabel ?? v?.variant_label ?? '';
+                  if (!productId) continue;
+                  pendingInventoryKeys.add(`${productId}_${d.fromBranchId}_${label}`);
+                  pendingInventoryKeys.add(`${productId}_${d.toBranchId}_${label}`);
+                }
+              }
+              return;
+            }
+
+            if (i.type === 'return' || i.type === 'return_complete') {
+              const req = i.type === 'return'
+                ? d
+                : (state.returns || []).find((r: any) => r.id === d.id);
+              if (!req) return;
+              const originalTx = (state.transactions || []).find((tx: any) => tx.id === req.transactionId);
+              const branchId = req.branchId || originalTx?.branchId;
+              if (!branchId) return;
+              const label = req.variantLabel || '';
+              if (req.type === 'refund') {
+                pendingInventoryKeys.add(`${req.productId}_${branchId}_${label}`);
+              }
+              if (req.type === 'warranty_exchange' && req.replacementProductId) {
+                pendingInventoryKeys.add(`${req.replacementProductId}_${branchId}_`);
+              }
+              return;
+            }
+
             if (i.type === 'supplier_receive') {
-              const order = (state.supplierOrders || []).find((o: any) => o.id === i.data?.id);
+              const order = (state.supplierOrders || []).find((o: any) => o.id === d.id);
               for (const item of Array.isArray(order?.items) ? order.items : []) {
                 pendingInventoryKeys.add(`${item.productId}_${order.branchId}_${item.variantLabel || ''}`);
               }
@@ -3618,7 +3674,21 @@ export const useStore = create<AppState>()(
           const filteredSuppliers = mergedSuppliers.filter(s => !deletedSupplierIds.has(String(s.id)));
           const mergedSupplierOrders = replaceRemoteRecords(data.supplierOrders, state.supplierOrders || [], new Set(getOfflineQueue().filter(i => i.type === 'supplier_order').map(i => String(i.data?.id || i.actionId))));
           const mergedCurrencies = mergeUnique(data.currencies, state.currencies || [], { idKey: 'code' });
-          const mergedTransfers = replaceRemoteRecords(data.transfers, state.transfers || [], new Set(getOfflineQueue().filter(i => i.type === 'transfer').map(i => String(i.data?.id || i.data?.operationId || i.actionId))));
+          const pendingTransferIds = new Set<string>();
+          for (const q of getOfflineQueue()) {
+            if (q.type === 'transfer') {
+              pendingTransferIds.add(String(q.data?.id || q.data?.operationId || q.actionId));
+            } else if (q.type === 'transfer_bulk') {
+              for (const op of Array.isArray(q.data?.items) ? q.data.items : []) {
+                if (op?.operationId) pendingTransferIds.add(String(op.operationId));
+              }
+            }
+          }
+          const mergedTransfers = replaceRemoteRecords(
+            data.transfers,
+            state.transfers || [],
+            pendingTransferIds
+          );
           const mergedWarranties = replaceRemoteRecords(data.warranties, state.warranties || [], new Set(getOfflineQueue().filter(i => i.type === 'warranty').map(i => String(i.data?.id || i.actionId))));
           const mergedQuotes = replaceRemoteRecords(data.quotes, state.quotes || [], new Set(getOfflineQueue().filter(i => i.type === 'quote').map(i => String(i.data?.id || i.actionId))));
           const mergedTimeShifts = replaceRemoteRecords(data.timeShifts, state.timeShifts || [], new Set(getOfflineQueue().filter(i => i.type === 'time_shift').map(i => String(i.data?.id || i.actionId))));
