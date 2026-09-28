@@ -356,6 +356,35 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         // conexión debe volver a intentarse aunque incluya metadata de error.
         const permanentCodes = new Set(['P0001','23503','23505','22P02','22003','22007','IDEMPOTENCY_CONFLICT']);
         if (res.errorCode && permanentCodes.has(String(res.errorCode))) {
+          // La venta existía localmente por modo offline, pero Supabase la rechazó
+          // definitivamente. No debe seguir apareciendo como completada ni dejar
+          // garantías asociadas que puedan sincronizarse solas.
+          useStore.setState(state => ({
+            transactions: (state.transactions || []).filter(t => t.id !== transaction.id),
+            warranties: (state.warranties || []).filter(w => w.transactionId !== transaction.id)
+          }));
+
+          // Cualquier garantía dependiente queda invalidada junto con la venta.
+          for (const queued of getOfflineQueue()) {
+            if (queued.type === 'warranty' && queued.data?.transactionId === transaction.id) {
+              removeFromOfflineQueue(queued.id);
+            }
+          }
+
+          // Recuperar el inventario real de la sucursal elimina el descuento
+          // optimista que se aplicó mientras el dispositivo estaba offline.
+          try {
+            await useStore.getState().refreshBranchInventory();
+            await useStore.getState().refreshBranchOperationalData();
+          } catch (refreshError) {
+            console.warn('[transaction] No se pudo reconciliar el estado local tras rechazo definitivo:', refreshError);
+          }
+
+          useStore.getState().addNotification(
+            'Una venta realizada sin conexión fue rechazada por el servidor y no se confirmó.',
+            'error',
+            res.error || 'Revisa inventario, datos del producto o las reglas de la venta.'
+          );
           throw new PermanentSyncError(res.error || 'La venta fue rechazada por Supabase');
         }
         throw new Error(res.error || 'No se pudo sincronizar la venta');
