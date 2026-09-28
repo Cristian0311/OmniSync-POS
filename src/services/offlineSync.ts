@@ -19,7 +19,7 @@ import {
 } from './offlineQueue';
 import {
   callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCancelSessionRPC,
-  callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC,
+  callCompleteReturnRPC, callTransferInventoryRPC, callTransferInventoryBulkRPC, callReceiveSupplierOrderRPC,
   callStartInventoryAuditRPC, callSaveInventoryAuditCountRPC, callRequestInventoryAuditRecountRPC, callApproveInventoryAuditRPC,
   callBankInternalTransferRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC,
   setBankCardBalanceToSupabase, pullBranchInventoryFromSupabase,
@@ -596,12 +596,12 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       if (!res.success) {
         const code = String(res.errorCode || '');
         if (['P0001','23503','23505','42501','22003','22P02','IDEMPOTENCY_CONFLICT'].includes(code)) {
-          await reconcileTransferCanonical(d.fromBranchId, d.toBranchId);
+          await refreshTransferBranchesCanonical(supabase, [d.fromBranchId, d.toBranchId]);
           throw new PermanentSyncError(res.error || 'No se pudo sincronizar el traslado múltiple');
         }
         throw new Error(res.error || 'No se pudo sincronizar el traslado múltiple');
       }
-      await reconcileTransferCanonical(d.fromBranchId, d.toBranchId);
+      await refreshTransferBranchesCanonical(supabase, [d.fromBranchId, d.toBranchId]);
       useStore.setState(state => ({
         transfers: (state.transfers || []).map(t => {
           const op = d.items?.find((x:any) => x.operationId === (t.operationId || t.id));
