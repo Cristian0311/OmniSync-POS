@@ -27,6 +27,52 @@ import {
 } from './supabaseSync';
 import { addSyncLog } from '../utils/syncLogger';
 
+async function reconcileBankCanonical(): Promise<void> {
+  try {
+    const { pullBankDataFromSupabase } = await import('./supabaseSync');
+    const remote = await pullBankDataFromSupabase();
+    if (remote.success) {
+      useStore.setState({
+        bankCards: remote.bankCards,
+        bankTransactions: remote.bankTransactions
+      });
+    }
+  } catch (e) {
+    console.warn('[bank] No se pudo reconciliar el estado bancario canónico:', e);
+  }
+}
+
+async function reconcileSupplierReceiveCanonical(supabase: any, orderId: string): Promise<void> {
+  try {
+    const { data: remoteOrder, error } = await supabase
+      .from('supplier_orders')
+      .select('*')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (error) throw error;
+
+    if (remoteOrder) {
+      useStore.setState(state => ({
+        supplierOrders: (state.supplierOrders || []).map(order =>
+          order.id === orderId
+            ? { ...order, status: remoteOrder.status || order.status }
+            : order
+        )
+      }));
+    }
+
+    // El inventario local puede haber sido incrementado de forma optimista
+    // mientras estaba offline; refrescamos la sucursal para devolverlo al
+    // estado que realmente existe en Supabase.
+    const branchId = remoteOrder?.branch_id;
+    if (branchId) {
+      await useStore.getState().refreshBranchInventory();
+    }
+  } catch (e) {
+    console.warn('[supplier_receive] No se pudo reconciliar la orden/stock canónico:', e);
+  }
+}
+
 async function refreshTransferBranchesCanonical(
   supabase: any,
   branchIds: string[]
@@ -340,14 +386,24 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         Number(d.expectedBalance) || 0,
         Math.max(0, Number(d.newBalance) || 0)
       );
-      if (!synced) throw new PermanentSyncError('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
+      if (!synced) {
+        await reconcileBankCanonical();
+        throw new PermanentSyncError('Conflicto de saldo bancario: otro movimiento cambió el saldo antes del ajuste.');
+      }
       return true;
     }
     case 'bank_transaction': {
       const d = data;
       if (d.__operation === 'delete') {
         const res = await callDeleteBankTransactionRPC(d.id);
-        if (!res.success) throw new Error(res.error || 'No se pudo eliminar el movimiento bancario');
+        if (!res.success) {
+          const code = String(res.errorCode || '');
+          if (['P0001','23503','23505','42501','22003','22P02'].includes(code)) {
+            await reconcileBankCanonical();
+            throw new PermanentSyncError(res.error || 'No se pudo eliminar el movimiento bancario');
+          }
+          throw new Error(res.error || 'No se pudo eliminar el movimiento bancario');
+        }
         return true;
       }
       // Un ingreso generado por una venta nunca se procesa solo. Aunque su
@@ -365,7 +421,14 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         }
       }
       const res = await callProcessBankTransactionRPC(d);
-      if (!res.success) throw new Error(res.error || 'No se pudo sincronizar el movimiento bancario');
+      if (!res.success) {
+        const code = String(res.errorCode || '');
+        if (['P0001','23503','23505','42501','22003','22P02'].includes(code)) {
+          await reconcileBankCanonical();
+          throw new PermanentSyncError(res.error || 'No se pudo sincronizar el movimiento bancario');
+        }
+        throw new Error(res.error || 'No se pudo sincronizar el movimiento bancario');
+      }
       return true;
     }
     case 'supplier': { const d=data; const {error}=await supabase.from('suppliers').upsert({id:d.id,name:d.name,phone:d.phone||'',address:d.address||'',email:d.email||'',rating:d.rating||5,type_of_merchandise:d.typeOfMerchandise||''}); if(error) throw error; return true; }
@@ -483,11 +546,66 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       }));
       return true;
     }
-    case 'bank_internal_transfer': { const res = await callBankInternalTransferRPC(data); if (!res.success) throw new Error(res.error || 'No se pudo sincronizar la transferencia bancaria'); return true; }
-    case 'bank_internal_transfer_delete': { const res = await callDeleteBankInternalTransferRPC(data.operationId); if (!res.success) throw new Error(res.error || 'No se pudo revertir la transferencia bancaria'); return true; }
-    case 'bank_transaction_delete': { const res = await callDeleteBankTransactionRPC(data.id); if (!res.success) throw new Error(res.error || 'No se pudo eliminar el movimiento bancario'); return true; }
-    case 'bank_card_delete': { const res = await callDeleteBankCardRPC(data.id); if (!res.success) throw new Error(res.error || 'No se pudo eliminar la cuenta bancaria'); return true; }
-    case 'supplier_receive': { const res = await callReceiveSupplierOrderRPC(data.id, data.userId || 'system'); if (!res.success) throw new Error(res.error || 'No se pudo recibir la orden'); return true; }
+    case 'bank_internal_transfer': {
+      const res = await callBankInternalTransferRPC(data);
+      if (!res.success) {
+        const code = String(res.errorCode || '');
+        if (['P0001','23503','23505','42501','22003','22P02'].includes(code)) {
+          await reconcileBankCanonical();
+          throw new PermanentSyncError(res.error || 'No se pudo sincronizar la transferencia bancaria');
+        }
+        throw new Error(res.error || 'No se pudo sincronizar la transferencia bancaria');
+      }
+      return true;
+    }
+    case 'bank_internal_transfer_delete': {
+      const res = await callDeleteBankInternalTransferRPC(data.operationId);
+      if (!res.success) {
+        const code = String(res.errorCode || '');
+        if (['P0001','23503','23505','42501','22003','22P02'].includes(code)) {
+          await reconcileBankCanonical();
+          throw new PermanentSyncError(res.error || 'No se pudo revertir la transferencia bancaria');
+        }
+        throw new Error(res.error || 'No se pudo revertir la transferencia bancaria');
+      }
+      return true;
+    }
+    case 'bank_transaction_delete': {
+      const res = await callDeleteBankTransactionRPC(data.id);
+      if (!res.success) {
+        const code = String(res.errorCode || '');
+        if (['P0001','23503','23505','42501','22003','22P02'].includes(code)) {
+          await reconcileBankCanonical();
+          throw new PermanentSyncError(res.error || 'No se pudo eliminar el movimiento bancario');
+        }
+        throw new Error(res.error || 'No se pudo eliminar el movimiento bancario');
+      }
+      return true;
+    }
+    case 'bank_card_delete': {
+      const res = await callDeleteBankCardRPC(data.id);
+      if (!res.success) {
+        const code = String(res.errorCode || '');
+        if (['P0001','23503','23505','42501','22003','22P02'].includes(code)) {
+          await reconcileBankCanonical();
+          throw new PermanentSyncError(res.error || 'No se pudo eliminar la cuenta bancaria');
+        }
+        throw new Error(res.error || 'No se pudo eliminar la cuenta bancaria');
+      }
+      return true;
+    }
+    case 'supplier_receive': {
+      const res = await callReceiveSupplierOrderRPC(data.id, data.userId || 'system');
+      if (!res.success) {
+        const code = String(res.errorCode || '');
+        if (['P0001','23503','23505','42501','22003','22P02'].includes(code)) {
+          await reconcileSupplierReceiveCanonical(supabase, data.id);
+          throw new PermanentSyncError(res.error || 'No se pudo recibir la orden');
+        }
+        throw new Error(res.error || 'No se pudo recibir la orden');
+      }
+      return true;
+    }
     case 'audit_complete': { const res = await callSaveInventoryAuditCountRPC(data.id, data.userId, data.items || [], data.notes); if (!res.success) throw new Error(res.error || 'No se pudo guardar el conteo'); return true; }
     case 'inventory': {
       // Compatibilidad con colas antiguas que guardaban un stock absoluto.
