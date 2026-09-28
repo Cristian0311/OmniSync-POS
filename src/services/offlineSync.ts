@@ -603,7 +603,7 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   }
 
   isProcessingQueue = false;
-  return { processed, failed, remaining: finalQueue.length, errors };
+  return { processed, failed, remaining: finalQueue.filter(item => item.status !== 'conflict').length, errors };
 }
 
 function isManualOfflineSyncEnabled(): boolean {
