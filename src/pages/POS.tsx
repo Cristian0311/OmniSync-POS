@@ -4,6 +4,13 @@ import { Search, Wifi, WifiOff, RefreshCw, Plus, Minus, CreditCard, Receipt, Tra
 import type { Html5QrcodeScanner } from "html5-qrcode";
 import { useNavigate } from "react-router-dom";
 import { cn, generateId } from "../lib/utils";
+import {
+  connectBluetoothPrinter,
+  connectPrinter,
+  getConnectedDeviceName,
+  isPrinterConnected,
+  printThermalReceipt
+} from "../lib/escpos";
 import { useStore } from "../store/useStore";
 import { Product, Payment, Transaction, CashRegisterSession } from "../types";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
@@ -507,7 +514,6 @@ export default function POS() {
       lines.push("---");
       lines.push("CENTER|CUADRE REALIZADO CON EXITO");
 
-      const { printThermalReceipt } = await import('../lib/escpos');
       await printThermalReceipt({ lines,
         width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm', preferRawBT: options?.preferRawBT });
       setPosSuccess("Enviado a imprimir vale térmico...");
@@ -1455,7 +1461,6 @@ export default function POS() {
     setIsConnectingPrinter(true);
     setPrinterStatusMsg("Buscando impresora Bluetooth...");
     try {
-      const { connectBluetoothPrinter } = await import('../lib/escpos');
       const device = await connectBluetoothPrinter();
       setConnectedPrinterName(device.name || "Impresora Bluetooth 58mm");
       setPosSuccess(`Impresora "${device.name || 'Bluetooth'}" conectada`);
@@ -1475,7 +1480,6 @@ export default function POS() {
     setIsConnectingPrinter(true);
     setPrinterStatusMsg("Buscando impresora USB...");
     try {
-      const { connectPrinter } = await import('../lib/escpos');
       await connectPrinter();
       setConnectedPrinterName("Impresora USB (Serie)");
       setPosSuccess("Impresora USB conectada correctamente");
@@ -1727,7 +1731,6 @@ export default function POS() {
 
   const handleThermalPrint = async (tx: import("../types").Transaction, options?: { preferRawBT?: boolean; silent?: boolean }) => {
     try {
-      const { printThermalReceipt, isPrinterConnected } = await import('../lib/escpos');
       const lines = getTransactionReceiptLines(tx);
       const isConnected = await isPrinterConnected();
 
@@ -1789,7 +1792,6 @@ export default function POS() {
   const handlePrintClosureThermal = async (session: CashRegisterSession | null, options?: { preferRawBT?: boolean }) => {
     if (!session) return;
     try {
-      const { printThermalReceipt, isPrinterConnected } = await import('../lib/escpos');
       const lines = getClosureReceiptLines(session);
       const isConnected = await isPrinterConnected();
 
