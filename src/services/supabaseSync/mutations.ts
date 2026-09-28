@@ -507,17 +507,20 @@ export async function deleteProductFromSupabase(id: string) {
   }
 }
 
-export async function clearSupabaseData(confirmToken?: string) {
+export async function clearSupabaseData(confirmToken?: string): Promise<{ success: boolean; failed: string[] }> {
   if (confirmToken !== 'ELIMINAR') {
     throw new Error('Limpieza total bloqueada: requiere confirmación explícita ELIMINAR.');
   }
   const supabase = getSupabase();
-  if (!supabase) return;
+  if (!supabase) return { success: false, failed: ['Supabase no configurado'] };
 
   console.debug("[clearSupabaseData] Iniciando limpieza total de Supabase...");
 
-  // List of tables to clear, in order to respect FK constraints (dependents first)
+  // Dependencias primero. Incluimos tablas de movimientos que antes podían
+  // quedar intactas aunque se borrara el historial principal.
   const tables = [
+    'inventory_movements',
+    'cash_movements',
     'inventory',
     'transactions',
     'cash_sessions',
@@ -540,26 +543,30 @@ export async function clearSupabaseData(confirmToken?: string) {
     'suppliers'
   ];
 
-  // Realizar 2 pasadas para asegurar que las restricciones de llave foránea no bloqueen todo
-  for (let pass = 1; pass <= 2; pass++) {
-    console.debug(`[clearSupabaseData] Pasada de eliminación #${pass}`);
-    for (const table of tables) {
-      try {
-        // Intentar borrar usando diferentes filtros comunes
-        await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        await supabase.from(table).delete().not('id', 'is', null);
-        
-        // Para tablas sin 'id' (si hubiera) o como respaldo
-        if (table === 'inventory') {
-          await supabase.from(table).delete().neq('quantity', -999999);
-        }
-      } catch (e) {
-        console.debug(`[clearSupabaseData] Error en pasada ${pass} tabla ${table}:`, e);
-      }
+  const failed: string[] = [];
+
+  for (const table of tables) {
+    try {
+      const { error } = await supabase
+        .from(table)
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+      if (error) throw error;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'error desconocido';
+      failed.push(`${table}: ${message}`);
+      console.error(`[clearSupabaseData] No se pudo limpiar ${table}:`, e);
     }
   }
-  console.debug("[clearSupabaseData] Limpieza completada.");
+
+  if (failed.length > 0) {
+    return { success: false, failed };
+  }
+
+  console.debug("[clearSupabaseData] Limpieza total confirmada.");
+  return { success: true, failed: [] };
 }
+
 
 
 export type ResetSection =
