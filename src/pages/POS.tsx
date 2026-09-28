@@ -8,7 +8,6 @@ import {
   connectBluetoothPrinter,
   connectPrinter,
   getConnectedDeviceName,
-  isPrinterConnected,
   printThermalReceipt
 } from "../lib/escpos";
 import { useStore } from "../store/useStore";
