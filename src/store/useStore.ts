@@ -813,18 +813,32 @@ export const useStore = create<AppState>()(
 
     await enqueueOfflineItem('transfer', serverPayload, actionId);
 
-    if (navigator.onLine) {
+    let wasOnline = typeof navigator !== 'undefined' && navigator.onLine;
+    if (wasOnline) {
       try {
         const res = await callTransferInventoryRPC(serverPayload);
-        if (!res.success) throw new Error(res.error || 'No se pudo realizar la transferencia');
-        removeFromOfflineQueueByAction('transfer', actionId);
+        if (!res.success) {
+          const code = String((res as any).errorCode || '');
+          const permanentCodes = new Set(['P0001','23503','23505','42501','22003','22P02','IDEMPOTENCY_CONFLICT']);
+          if (permanentCodes.has(code)) {
+            removeFromOfflineQueueByAction('transfer', actionId);
+            return { success: false, error: res.error || 'La transferencia fue rechazada por el servidor' };
+          }
+
+          // Timeout/5xx/corte de red: el servidor pudo haber aplicado el
+          // traslado. Conservamos EXACTAMENTE la operación original en la cola,
+          // la mostramos como pendiente y aplicamos el mismo espejo local que
+          // usamos offline. Así el cajero no la repite manualmente.
+          wasOnline = false;
+        } else {
+          removeFromOfflineQueueByAction('transfer', actionId);
+        }
       } catch (err: any) {
-        console.warn('[transferInventoryBatch] Transferencia no confirmada; queda durable para reintento:', err);
-        return { success: false, error: err?.message || 'No se pudo confirmar la transferencia' };
+        console.warn('[transferInventoryBatch] Fallo de transporte; operación durable queda pendiente:', err);
+        wasOnline = false;
       }
     }
 
-    const wasOnline = typeof navigator !== 'undefined' && navigator.onLine;
     const newInventory = [...get().inventory];
     let totalQuantity = 0;
     for (const v of activeVariants) {
