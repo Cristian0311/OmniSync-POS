@@ -22,7 +22,7 @@ import {
   callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC,
   callStartInventoryAuditRPC, callSaveInventoryAuditCountRPC, callRequestInventoryAuditRecountRPC, callApproveInventoryAuditRPC,
   callBankInternalTransferRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC,
-  setBankCardBalanceToSupabase,
+  setBankCardBalanceToSupabase, pullBranchInventoryFromSupabase,
   pushCashSessionToSupabase
 } from './supabaseSync';
 import { addSyncLog } from '../utils/syncLogger';
@@ -66,7 +66,14 @@ async function reconcileSupplierReceiveCanonical(supabase: any, orderId: string)
     // estado que realmente existe en Supabase.
     const branchId = remoteOrder?.branch_id;
     if (branchId) {
-      await useStore.getState().refreshBranchInventory();
+      const inventoryRes = await pullBranchInventoryFromSupabase(branchId);
+      if (!inventoryRes.success) {
+        throw new Error(inventoryRes.message || 'No se pudo reconciliar el inventario de la recepción.');
+      }
+      useStore.setState(state => {
+        const otherBranches = (state.inventory || []).filter(item => item.branchId !== branchId);
+        return { inventory: [...otherBranches, ...inventoryRes.inventory] };
+      });
     }
   } catch (e) {
     console.warn('[supplier_receive] No se pudo reconciliar la orden/stock canónico:', e);
@@ -536,6 +543,21 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         }
         throw new Error(res.error || 'No se pudo sincronizar la transferencia');
       }
+
+      // La RPC debe confirmarse tanto a nivel de respuesta como de
+      // persistencia de la operación. Así nunca retiramos de IndexedDB una
+      // transferencia que haya quedado solo parcialmente confirmada.
+      const { data: persistedTransfer, error: verifyError } = await supabase
+        .from('inventory_transfers')
+        .select('id,operation_id,status,product_id,from_branch_id,to_branch_id,quantity,variants')
+        .eq('operation_id', data.operationId)
+        .maybeSingle();
+      if (verifyError) throw verifyError;
+      if (!persistedTransfer) {
+        throw new Error('Supabase no confirmó la transferencia en inventory_transfers.');
+      }
+
+      await refreshTransferBranchesCanonical(supabase, [data.fromBranchId, data.toBranchId]);
 
       useStore.setState(state => ({
         transfers: (state.transfers || []).map(t =>
