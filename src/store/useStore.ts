@@ -2048,14 +2048,35 @@ export const useStore = create<AppState>()(
   },
   updateCashSession: (id, updates) => {
     set((state) => ({
-      cashSessions: (state.cashSessions || []).map(s => 
+      cashSessions: (state.cashSessions || []).map(s =>
         s.id === id ? { ...s, ...updates } : s
       )
     }));
     const updated = get().cashSessions.find(s => s.id === id);
-    if (updated) {
-      pushCashSessionToSupabase(updated).catch(() => {});
-    }
+    if (!updated) return;
+
+    // Los cambios administrativos del turno (incluida la auditoría de
+    // descuadres) también deben ser durables cuando el dispositivo está
+    // offline o el push online falla. Usamos una operación snapshot separada
+    // para no pisar una operación pendiente de cierre/cancelación.
+    const actionId = `cash-snapshot:${id}`;
+    void enqueueOfflineItem('cash_session', { ...updated, __operation: 'snapshot' }, actionId)
+      .then(async () => {
+        try {
+          const synced = await pushCashSessionToSupabase(updated);
+          if (!synced) return;
+
+          const queued = getOfflineQueue().find(
+            item => item.type === 'cash_session' && item.actionId === actionId
+          );
+          if (queued) removeFromOfflineQueue(queued.id);
+        } catch (error) {
+          console.warn('[CashSession] La actualización quedó en cola para reintento:', error);
+        }
+      })
+      .catch(error => {
+        console.warn('[CashSession] No se pudo persistir el cambio administrativo en la cola offline:', error);
+      });
   },
   updateCashSessionDateCascade: async (sessionId, newDateYMD) => {
     const state = get();
