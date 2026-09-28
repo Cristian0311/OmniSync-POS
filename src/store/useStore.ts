@@ -598,8 +598,9 @@ export const useStore = create<AppState>()(
   storeConfig: { storeName: 'Mi Tienda POS', address: 'Calle Principal 123', phone: '+53 51234567', receiptNotes: '¡Gracias por su compra!', darkMode: false, manualOfflineSync: false },
   
   updateStoreConfig: (config) => {
-    set({ storeConfig: config });
-    pushStoreConfigToSupabase(config).catch(() => {});
+    const nextStoreConfig = { ...config, fiscalConfigs: get().fiscalConfigs };
+    set({ storeConfig: nextStoreConfig as any });
+    pushStoreConfigToSupabase(nextStoreConfig as any).catch(() => {});
   },
 
 
@@ -2185,7 +2186,12 @@ export const useStore = create<AppState>()(
   },
 
   fiscalConfigs: INITIAL_FISCAL_CONFIGS,
-  updateFiscalConfig: (id, c) => set(state => ({ fiscalConfigs: state.fiscalConfigs.map(x => x.id === id ? { ...x, ...c } : x) })),
+  updateFiscalConfig: (id, c) => {
+    const nextFiscalConfigs = get().fiscalConfigs.map(x => x.id === id ? { ...x, ...c } : x);
+    const nextStoreConfig = { ...get().storeConfig, fiscalConfigs: nextFiscalConfigs };
+    set({ fiscalConfigs: nextFiscalConfigs, storeConfig: nextStoreConfig as any });
+    pushStoreConfigToSupabase(nextStoreConfig as any).catch(() => {});
+  },
   getNextNCF: (type) => {
     const config = get().fiscalConfigs.find(c => c.type === type && c.active);
     if (!config) return undefined;
