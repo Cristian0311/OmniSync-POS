@@ -462,6 +462,32 @@ export async function callReserveNCFRangeRPC(params: {
   }
 }
 
+export async function callTransferInventoryBulkRPC(params: {
+  batchId: string;
+  fromBranchId: string;
+  toBranchId: string;
+  items: { operationId: string; productId: string; variants: { variantLabel: string; quantity: number }[] }[];
+  userId: string;
+}): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: 'Supabase no configurado' };
+  try {
+    const { data, error } = await supabase.rpc('process_inventory_transfer_bulk_v2', {
+      p_batch_id: params.batchId,
+      p_from_branch_id: params.fromBranchId,
+      p_to_branch_id: params.toBranchId,
+      p_items: params.items,
+      p_user_id: params.userId
+    });
+    if (error) throw error;
+    assertRpcSuccess(data, 'process_inventory_transfer_bulk_v2');
+    return { success: true, data };
+  } catch (e: any) {
+    console.error('[RPC] process_inventory_transfer_bulk_v2 failed:', e);
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
+  }
+}
+
 export async function callTransferInventoryRPC(params: {
   operationId: string; batchId?: string; productId: string; fromBranchId: string; toBranchId: string;
   variants: { variantLabel: string; quantity: number }[]; userId: string;
