@@ -14,7 +14,7 @@ export type OfflineActionType =
   | 'customer' | 'customer_delete' | 'return' | 'bank_transaction'
   | 'branch' | 'product' | 'category' | 'receipt_config' | 'store_config' | 'catalog_config' | 'salary_settlement'
   | 'user' | 'currency' | 'idn_settlement_price' | 'warranty' | 'time_shift' | 'quote' | 'bank_internal_transfer' | 'bank_internal_transfer_delete' | 'bank_transaction_delete' | 'bank_card_delete'
-  | 'bank_card' | 'bank_card_balance' | 'supplier' | 'supplier_order' | 'inventory_audit';
+  | 'bank_card' | 'bank_card_balance' | 'supplier' | 'supplier_order' | 'inventory_audit'\n  | 'audit_start' | 'audit_recount' | 'audit_approve'\n  | 'branch_delete' | 'category_delete' | 'idn_settlement_price_delete' | 'supplier_delete';
 
 export interface OfflineQueueItem {
   id: string;
