@@ -811,6 +811,7 @@ export const useStore = create<AppState>()(
       }
     }
 
+    const wasOnline = typeof navigator !== 'undefined' && navigator.onLine;
     const newInventory = [...get().inventory];
     let totalQuantity = 0;
     for (const v of activeVariants) {
@@ -831,7 +832,7 @@ export const useStore = create<AppState>()(
       fromBranchId, fromBranchName: fromBranch?.name || 'Sucursal Origen',
       toBranchId, toBranchName: toBranch?.name || 'Sucursal Destino',
       quantity: totalQuantity, variants: activeVariants, date: new Date().toISOString(),
-      userId, status: 'completed', variantLabel: activeVariants.length === 1 ? (activeVariants[0].variantLabel || 'Producto Base') : activeVariants.map(v => v.variantLabel || 'Base').join(', '),
+      userId, status: wasOnline ? 'completed' : 'pending', variantLabel: activeVariants.length === 1 ? (activeVariants[0].variantLabel || 'Producto Base') : activeVariants.map(v => v.variantLabel || 'Base').join(', '),
       transactionId, batchId
     };
     get().addTransfer(transferRecord);
