@@ -57,28 +57,10 @@ export async function logAuditEvent(entry: {
   }
 }
 
-export async function callOpenSessionRPC(session: CashRegisterSession): Promise<{ success: boolean; data?: any; error?: string }> {
-  const supabase = getSupabase();
-  if (!supabase) return { success: false, error: "Supabase no configurado" };
-
-  try {
-    const { data, error } = await supabase.rpc('open_cash_session_v2', {
-      p_user_id: session.userId,
-      p_worker_name: session.workerName,
-      p_branch_id: session.branchId,
-      p_opening_amount: session.openingAmount,
-      p_opened_at: session.openedAt,
-      p_working_employee_ids: session.workingEmployeeIds || [],
-      p_notes: session.notes || ''
-    });
-
-    if (error) throw error;
-    assertRpcSuccess(data, 'open_cash_session_v2');
-    return { success: true, data };
-  } catch (e: any) {
-    console.error("[RPC] open_cash_session_v2 failed:", e);
-    return { success: false, error: formatSupabaseError(e) };
-  }
+export async function callOpenSessionRPC(session: CashRegisterSession): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  // Compatibilidad para callers antiguos: toda apertura usa el flujo estable
+  // con ID de sesión y numeración atómica del servidor. Nunca volver a v2.
+  return callOpenSessionRPCWithId(session);
 }
 
 export async function callOpenSessionRPCWithId(session: CashRegisterSession): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
