@@ -92,6 +92,42 @@ function removeFromOfflineQueueByTransactionId(transactionId: string) {
   if (queued) removeFromOfflineQueue(queued.id);
 }
 
+function validateLocalTransferStock(
+  requirements: { productId: string; branchId: string; variantLabel?: string; quantity: number }[]
+): { ok: boolean; message?: string } {
+  const inventory = useStore.getState().inventory || [];
+  const needed = new Map<string, { productId: string; branchId: string; variantLabel: string; quantity: number }>();
+
+  for (const req of requirements) {
+    const quantity = Number(req.quantity);
+    if (!req.productId || !req.branchId || !Number.isInteger(quantity) || quantity <= 0) {
+      return { ok: false, message: 'La cantidad de traslado debe ser un número entero mayor que 0.' };
+    }
+    const variantLabel = req.variantLabel || '';
+    const key = req.productId + ':' + req.branchId + ':' + variantLabel;
+    const previous = needed.get(key);
+    if (previous) previous.quantity += quantity;
+    else needed.set(key, { productId: req.productId, branchId: req.branchId, variantLabel, quantity });
+  }
+
+  for (const req of needed.values()) {
+    const current = inventory.find(item =>
+      item.productId === req.productId &&
+      item.branchId === req.branchId &&
+      (item.variantLabel || '') === req.variantLabel
+    );
+    const available = Number(current?.quantity || 0);
+    if (available < req.quantity) {
+      const label = req.variantLabel ? ' (' + req.variantLabel + ')' : '';
+      return {
+        ok: false,
+        message: 'Stock insuficiente en la sucursal de origen para ' + req.productId + label + ': disponible ' + available + ', requerido ' + req.quantity + '.'
+      };
+    }
+  }
+
+  return { ok: true };
+}
 async function refreshInventoryBranchesFromSupabase(branchIds: string[]): Promise<boolean> {
   const ids = Array.from(new Set(branchIds.filter(Boolean)));
   if (!ids.length) return true;
@@ -905,11 +941,30 @@ export const useStore = create<AppState>()(
   transferInventoryBatch: async (productId, fromBranchId, toBranchId, variants, transactionId, batchId) => {
     if (!productId || !fromBranchId || !toBranchId) return { success: false, error: 'Información incompleta para realizar la transferencia.' };
     if (fromBranchId === toBranchId) return { success: false, error: 'La sucursal de origen y destino no pueden ser la misma.' };
-    const activeVariants = variants.filter(v => v.quantity > 0).map(v => ({ variantLabel: v.variantLabel || '', quantity: v.quantity }));
-    if (activeVariants.length === 0) return { success: false, error: 'Debes indicar una cantidad mayor a 0 para transferir.' };
+
+    const activeVariants = (variants || [])
+      .map(v => ({ variantLabel: String(v?.variantLabel || '').trim(), quantity: Number(v?.quantity) }))
+      .filter(v => Number.isInteger(v.quantity) && v.quantity > 0);
+
+    if (activeVariants.length === 0) return { success: false, error: 'Debes indicar una cantidad entera mayor a 0 para transferir.' };
+
+    const currentUserId = get().currentUser?.id;
+    if (!currentUserId || !get().users.some(u => u.id === currentUserId)) {
+      return { success: false, error: 'No hay un trabajador válido autenticado para realizar el traslado.' };
+    }
+
+    const stockCheck = validateLocalTransferStock(
+      activeVariants.map(v => ({
+        productId,
+        branchId: fromBranchId,
+        variantLabel: v.variantLabel,
+        quantity: v.quantity
+      }))
+    );
+    if (!stockCheck.ok) return { success: false, error: stockCheck.message };
 
     const operationId = transactionId || crypto.randomUUID();
-    const userId = (get().currentUser?.id && get().users.some(u => u.id === get().currentUser?.id)) ? get().currentUser!.id : 'system';
+    const userId = currentUserId;
     const serverPayload = { operationId, batchId: batchId || undefined, productId, fromBranchId, toBranchId, variants: activeVariants, userId };
     const actionId = 'transfer:' + operationId;
 
@@ -929,28 +984,13 @@ export const useStore = create<AppState>()(
             removeFromOfflineQueueByAction('transfer', actionId);
             return { success: false, error: res.error || 'La transferencia fue rechazada por el servidor' };
           }
-
-          // Timeout/5xx/corte de red: el servidor pudo haber aplicado el
-          // traslado. Conservamos EXACTAMENTE la operación original en la cola
-          // para replay idempotente y no la marcamos como completada.
           wasOnline = false;
         } else {
           serverConfirmed = true;
-
-          // La RPC ya cambió el stock canónico. No debemos volver a calcular el
-          // stock desde un snapshot local que puede estar atrasado respecto a
-          // otra tablet. Solo retiramos la operación de la cola cuando podemos
-          // refrescar origen y destino desde Supabase.
-          canonicalRefreshed = await refreshInventoryBranchesFromSupabase([
-            fromBranchId,
-            toBranchId
-          ]);
+          canonicalRefreshed = await refreshInventoryBranchesFromSupabase([fromBranchId, toBranchId]);
           if (canonicalRefreshed) {
             removeFromOfflineQueueByAction('transfer', actionId);
           } else {
-            // El servidor confirmó, pero el refresh local no llegó. Se conserva
-            // en la cola para que el siguiente replay vuelva a verificar por
-            // operation_id y termine de reconciliar el espejo local.
             wasOnline = false;
           }
         }
@@ -960,12 +1000,7 @@ export const useStore = create<AppState>()(
       }
     }
 
-    // Solo hacemos espejo optimista cuando la operación todavía necesita
-    // sincronizarse o cuando Supabase confirmó el traslado pero el refresh
-    // canónico no estuvo disponible. Un éxito online completamente reconciliado
-    // no toca el stock local con cálculos basados en un snapshot potencialmente
-    // obsoleto.
-    if (!canonicalRefreshed) {
+    if (!canonicalRefreshed && !serverConfirmed) {
       const newInventory = [...get().inventory];
       for (const v of activeVariants) {
         const sourceIdx = newInventory.findIndex(i =>
@@ -976,7 +1011,7 @@ export const useStore = create<AppState>()(
         if (sourceIdx !== -1) {
           newInventory[sourceIdx] = {
             ...newInventory[sourceIdx],
-            quantity: Math.max(0, newInventory[sourceIdx].quantity - v.quantity)
+            quantity: Math.max(0, Number(newInventory[sourceIdx].quantity) - v.quantity)
           };
         }
 
@@ -988,7 +1023,7 @@ export const useStore = create<AppState>()(
         if (targetIdx !== -1) {
           newInventory[targetIdx] = {
             ...newInventory[targetIdx],
-            quantity: newInventory[targetIdx].quantity + v.quantity
+            quantity: Number(newInventory[targetIdx].quantity) + v.quantity
           };
         } else {
           newInventory.push({
@@ -1013,11 +1048,12 @@ export const useStore = create<AppState>()(
       fromBranchId, fromBranchName: fromBranch?.name || 'Sucursal Origen',
       toBranchId, toBranchName: toBranch?.name || 'Sucursal Destino',
       quantity: totalQuantity, variants: activeVariants, date: new Date().toISOString(),
-      userId, status: serverConfirmed && canonicalRefreshed ? 'completed' : 'pending', variantLabel: activeVariants.length === 1 ? (activeVariants[0].variantLabel || 'Producto Base') : activeVariants.map(v => v.variantLabel || 'Base').join(', '),
+      userId, status: serverConfirmed && canonicalRefreshed ? 'completed' : 'pending',
+      variantLabel: activeVariants.length === 1 ? (activeVariants[0].variantLabel || 'Producto Base') : activeVariants.map(v => v.variantLabel || 'Base').join(', '),
       transactionId, batchId
     };
     get().addTransfer(transferRecord);
-    return { success: true, pending: !wasOnline };
+    return { success: true, pending: !canonicalRefreshed };
   },
 
   reconcileProductStock: async (productId, corrections) => {
@@ -1181,24 +1217,35 @@ export const useStore = create<AppState>()(
 
   transferProductsBulk: async (fromBranchId, toBranchId, items) => {
     const validItems = (items || [])
-      .filter(item => item?.productId && Number(item.quantity) > 0)
       .map(item => ({
-        productId: item.productId,
-        variant: item.variant || '',
-        quantity: Number(item.quantity)
-      }));
+        productId: item?.productId,
+        variant: String(item?.variant || '').trim(),
+        quantity: Number(item?.quantity)
+      }))
+      .filter(item => item.productId && Number.isInteger(item.quantity) && item.quantity > 0);
+
     if (validItems.length === 0) return { success: true, pending: false };
     if (!fromBranchId || !toBranchId || fromBranchId === toBranchId) {
       return { success: false, pending: false, error: 'Las sucursales de origen y destino deben ser válidas y diferentes.' };
     }
 
-    // Un único ID de batch y un operationId estable por producto permiten
-    // reanudar exactamente el mismo traslado después de un corte.
-    const batchId = crypto.randomUUID();
-    const userId = (get().currentUser?.id && get().users.some(u => u.id === get().currentUser?.id))
-      ? get().currentUser!.id
-      : 'system';
+    const currentUserId = get().currentUser?.id;
+    if (!currentUserId || !get().users.some(u => u.id === currentUserId)) {
+      return { success: false, pending: false, error: 'No hay un trabajador válido autenticado para realizar el traslado.' };
+    }
 
+    const stockCheck = validateLocalTransferStock(
+      validItems.map(item => ({
+        productId: item.productId,
+        branchId: fromBranchId,
+        variantLabel: item.variant,
+        quantity: item.quantity
+      }))
+    );
+    if (!stockCheck.ok) return { success: false, pending: false, error: stockCheck.message };
+
+    const batchId = crypto.randomUUID();
+    const userId = currentUserId;
     const operations = validItems.map(item => ({
       operationId: crypto.randomUUID(),
       productId: item.productId,
@@ -1238,9 +1285,7 @@ export const useStore = create<AppState>()(
       }
     }
 
-    if (!canonicalRefreshed) {
-      // Espejo optimista local: no sustituye al servidor y será reconciliado
-      // desde Supabase tras el replay del batch.
+    if (!canonicalRefreshed && !serverConfirmed) {
       set(state => {
         const nextInventory = [...state.inventory];
         for (const item of validItems) {
@@ -1307,8 +1352,7 @@ export const useStore = create<AppState>()(
     }));
 
     return { success: true, pending: !canonicalRefreshed };
-  },
-  
+  },  
   cart: [],
   currentCustomerId: undefined,
   setCartCustomer: (customerId) => set({ currentCustomerId: customerId }),
