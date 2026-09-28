@@ -276,15 +276,28 @@ export const useStore = create<AppState>()(
       return;
     }
 
-    // 1. Clear Supabase (with timeout/error handling to prevent blocking)
+    // 1. Clear Supabase first. Nunca limpiamos el dispositivo si la nube no
+    // confirmó TODAS las tablas, porque eso produciría divergencia irrecuperable.
+    let remoteReset: any;
     try {
-      // Give supabase 10 seconds max, but don't block the UI forever
-      await Promise.race([
+      remoteReset = await Promise.race([
         clearSupabaseData('ELIMINAR'),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout Supabase')), 12000))
-      ]).catch(err => console.warn("Supabase clear warning (continuing locally):", err));
-    } catch (err) {
-      console.warn("Supabase clear failed (continuing locally):", err);
+      ]);
+    } catch (err: any) {
+      const message = err?.message || 'Error de conexión con Supabase';
+      get().addNotification('No se realizó el borrado total local.', 'error', message);
+      console.error('[clearAllData] Supabase clear failed; local state preserved:', err);
+      return;
+    }
+
+    if (!remoteReset?.success) {
+      const details = Array.isArray(remoteReset?.failed) && remoteReset.failed.length
+        ? remoteReset.failed.join(' · ')
+        : 'Supabase no confirmó el borrado total.';
+      get().addNotification('No se realizó el borrado total local.', 'error', details);
+      console.error('[clearAllData] Remote reset incomplete; local state preserved:', remoteReset);
+      return;
     }
 
     // Clear local storage/IndexedDB cache.
