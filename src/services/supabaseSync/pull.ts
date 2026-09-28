@@ -299,7 +299,7 @@ export async function pullPosBootstrapFromSupabase(branchId?: string): Promise<{
     const mapInventory = (i:any): InventoryLevel => ({ id:i.id,productId:i.product_id,branchId:i.branch_id,variantLabel:i.variant_label||undefined,quantity:Number(i.quantity)||0,minQuantity:Number(i.min_quantity)||0 });
     const mapUser = (u:any): User => ({ id:u.id,name:u.name,email:u.email||'',password:u.password||'',role:u.role||'employee',commissionRate:Number(u.commission_rate)||0,baseSalary:Number(u.base_salary)||0,salesGoal:Number(u.sales_goal)||0,branchId:u.branch_id||undefined,allowedBranches:Array.isArray(u.allowed_branches)?u.allowed_branches:undefined,permissions:Array.isArray(u.permissions)?u.permissions:undefined,isActive:u.is_active!==false,isIndependent:u.is_independent===true,assignedBranchId:u.assigned_branch_id||undefined });
     const mapCustomer = (c:any): Customer => ({ id:c.id,name:c.name,email:c.email||'',phone:c.phone||'',taxId:c.tax_id||'' });
-    const mapTx = (t:any): Transaction => ({ id:t.id,date:t.date,total:Number(t.total)||0,tax:Number(t.tax)||0,discount:Number(t.discount)||0,branchId:t.branch_id,customerId:t.customer_id,userId:t.user_id,status:t.status||'completed',notes:t.notes||'',paymentMethod:t.payment_method||'cash',sessionId:t.session_id,changeGiven:Number(t.change_given)||0,items:normalizeTransactionItems(t.items, mappedProducts),payments:Array.isArray(t.payments)?t.payments:[],changePayments:Array.isArray(t.change_payments)?t.change_payments:[],sellerEmployeeIds:Array.isArray(t.seller_employee_ids)?t.seller_employee_ids:[],deletedAt:t.deleted_at||undefined,deletedBy:t.deleted_by||undefined,deleteReason:t.delete_reason||undefined });
+    const mapTx = (t:any): Transaction => ({ id:t.id,date:t.date,total:Number(t.total)||0,tax:Number(t.tax)||0,discount:Number(t.discount)||0,branchId:t.branch_id,customerId:t.customer_id,userId:t.user_id,status:t.status||'completed',ncf:t.ncf||undefined,ncfType:t.ncf_type||undefined,notes:t.notes||'',paymentMethod:t.payment_method||'cash',sessionId:t.session_id,changeGiven:Number(t.change_given)||0,items:normalizeTransactionItems(t.items, mappedProducts),payments:Array.isArray(t.payments)?t.payments:[],changePayments:Array.isArray(t.change_payments)?t.change_payments:[],sellerEmployeeIds:Array.isArray(t.seller_employee_ids)?t.seller_employee_ids:[],deletedAt:t.deleted_at||undefined,deletedBy:t.deleted_by||undefined,deleteReason:t.delete_reason||undefined });
     const mapSession = (s:any): CashRegisterSession => ({ id:s.id,turnNumber:Number(s.turn_number)||undefined,userId:s.user_id,workerName:s.worker_name,branchId:s.branch_id,openedAt:s.opened_at,closedAt:s.closed_at,openingBalance:Number(s.opening_balance??s.opening_amount)||0,openingAmount:Number(s.opening_amount??s.opening_balance)||0,closingBalances:Array.isArray(s.closing_balances)?s.closing_balances:[],status:s.status||'open',notes:s.notes||'',closingDate:s.closing_date||undefined,workingEmployeeIds:Array.isArray(s.working_employee_ids)?s.working_employee_ids:[],movements:Array.isArray(s.movements)?s.movements:[] });
     return { success:true, data:{
       branches:(branchesRes.data||[]).map((b:any)=>({id:b.id,name:b.name,address:b.address,phone:b.phone,isMain:b.is_main,isActive:b.is_active !== false})),
@@ -790,7 +790,12 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
       const { data: setRes, error: setErr } = await supabase.from('settings').select('*').eq('id', 'global').maybeSingle();
       if (!setErr && setRes) {
         if (setRes.receipt_config) fetchedData.receiptConfig = setRes.receipt_config;
-        if (setRes.store_config) fetchedData.storeConfig = setRes.store_config;
+        if (setRes.store_config) {
+          fetchedData.storeConfig = setRes.store_config;
+          if (Array.isArray(setRes.store_config.fiscalConfigs)) {
+            fetchedData.fiscalConfigs = setRes.store_config.fiscalConfigs;
+          }
+        }
         if (setRes.catalog_config) fetchedData.catalogConfig = setRes.catalog_config;
         if (setRes.last_turn_number !== undefined) fetchedData.lastTurnNumber = Number(setRes.last_turn_number);
       }
