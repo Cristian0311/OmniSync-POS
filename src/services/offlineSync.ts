@@ -761,7 +761,7 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       if (result?.conflict) throw new PermanentSyncError(result.message || 'Conflicto de inventario: el stock cambió mientras la operación estaba pendiente.');
       return true;
     }
-    case 'inventory_reconcile':
+    case 'inventory_reconcile': {
       const { data: result, error } = await supabase.rpc('reconcile_inventory_v2', {
         p_operation_id: item.actionId, p_product_id: data.productId, p_branch_id: data.branchId,
         p_variant_label: data.variantLabel || '', p_expected_quantity: Number(data.expectedQuantity),
