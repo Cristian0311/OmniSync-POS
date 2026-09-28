@@ -1963,7 +1963,7 @@ export default function POS() {
     };
 
     // Generate NCF if customer is selected or if config requires it
-    const nextNcf = useStore.getState().getNextNCF('B01'); // Default to Factura de Crédito Fiscal if needed, or B02
+    const nextNcf = await useStore.getState().getNextNCF('B01'); // Default to Factura de Crédito Fiscal if needed, or B02
     if (nextNcf) {
       tx.ncf = nextNcf;
       tx.ncfType = 'B01';

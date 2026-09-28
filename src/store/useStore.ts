@@ -10,7 +10,7 @@ import {
   pushCurrencyToSupabase, clearSupabaseData, pushBankCardToSupabase, updateBankCardMetadataToSupabase, setBankCardBalanceToSupabase, deleteBankCardFromSupabase, pushBankTransactionToSupabase, pushAllToSupabase,
   pushSupplierToSupabase, deleteSupplierFromSupabase, pushSupplierOrderToSupabase, pushCustomerToSupabase,
   applyInventoryAdjustmentToSupabase, reconcileInventoryToSupabase,
-  pushReceiptConfigToSupabase, pushStoreConfigToSupabase, pushCatalogConfigToSupabase, deleteTransactionFromSupabase, deleteCustomerFromSupabase,
+  pushReceiptConfigToSupabase, pushStoreConfigToSupabase, pushCatalogConfigToSupabase, deleteTransactionFromSupabase, deleteCustomerFromSupabase, callReserveNCFRangeRPC,
   deleteBankTransactionFromSupabase, clearSelectedDataFromSupabase, callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC, callCompleteInventoryAuditRPC, callCloseSessionRPC, callCancelSessionRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC
 } from '../services/supabaseSync';
 import { getSupabaseCredentials } from '../lib/supabase';
@@ -26,6 +26,62 @@ import {
 } from './storeInitialData';
 
 // --- Definición del Store ---
+const NCF_RANGE_STORAGE_KEY = 'omnisync-pos-ncf-ranges-v2';
+type LocalNcfRange = {
+  rangeId: string;
+  fiscalType: string;
+  prefix: string;
+  next: number;
+  end: number;
+};
+
+let ncfRangesMemory: Record<string, LocalNcfRange> = {};
+
+function getNcfDeviceId(): string {
+  if (typeof window === 'undefined') return 'server';
+  try {
+    const key = 'omnisync-pos-device-id';
+    const existing = window.localStorage.getItem(key);
+    if (existing) return existing;
+    const created = crypto.randomUUID();
+    window.localStorage.setItem(key, created);
+    return created;
+  } catch {
+    if (!(ncfRangesMemory as any).__deviceId) (ncfRangesMemory as any).__deviceId = crypto.randomUUID();
+    return (ncfRangesMemory as any).__deviceId;
+  }
+}
+
+function loadNcfRanges(): Record<string, LocalNcfRange> {
+  try {
+    const raw = typeof window !== 'undefined' ? window.localStorage.getItem(NCF_RANGE_STORAGE_KEY) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') ncfRangesMemory = parsed;
+    }
+  } catch {}
+  return ncfRangesMemory;
+}
+
+function saveNcfRanges(ranges: Record<string, LocalNcfRange>): void {
+  ncfRangesMemory = ranges;
+  try {
+    if (typeof window !== 'undefined') window.localStorage.setItem(NCF_RANGE_STORAGE_KEY, JSON.stringify(ranges));
+  } catch {}
+}
+
+function invalidateNcfRange(fiscalType: string): void {
+  const ranges = { ...loadNcfRanges() };
+  delete ranges[fiscalType];
+  saveNcfRanges(ranges);
+}
+
+async function withNcfLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== 'undefined' ? (navigator as any).locks : null;
+  if (locks?.request) return locks.request('omnisync-ncf-allocation', { mode: 'exclusive' }, fn);
+  return fn();
+}
+
 function removeFromOfflineQueueByAction(type: string, actionId: string) {
   const queued = getOfflineQueue().find(item => item.type === type && item.actionId === actionId);
   if (queued) removeFromOfflineQueue(queued.id);
@@ -2388,19 +2444,107 @@ export const useStore = create<AppState>()(
 
   fiscalConfigs: INITIAL_FISCAL_CONFIGS,
   updateFiscalConfig: (id, c) => {
+    const current = get().fiscalConfigs.find(x => x.id === id);
     const nextFiscalConfigs = get().fiscalConfigs.map(x => x.id === id ? { ...x, ...c } : x);
     const nextStoreConfig = { ...get().storeConfig, fiscalConfigs: nextFiscalConfigs };
     set({ fiscalConfigs: nextFiscalConfigs, storeConfig: nextStoreConfig as any });
+    if (current && (
+      c.type !== undefined || c.prefix !== undefined || c.limit !== undefined ||
+      c.active !== undefined || c.current !== undefined
+    )) {
+      invalidateNcfRange(current.type);
+    }
     pushStoreConfigToSupabase(nextStoreConfig as any).catch(() => {});
   },
-  getNextNCF: (type) => {
-    const config = get().fiscalConfigs.find(c => c.type === type && c.active);
-    if (!config) return undefined;
-    if (config.current > config.limit) return undefined;
-    
-    const ncf = `${config.prefix}${config.current.toString().padStart(8, '0')}`;
-    get().updateFiscalConfig(config.id, { current: config.current + 1 });
-    return ncf;
+  getNextNCF: async (type) => {
+    return withNcfLock(async () => {
+      const config = get().fiscalConfigs.find(c => c.type === type && c.active);
+      if (!config) return undefined;
+
+      const ranges = loadNcfRanges();
+      const local = ranges[type];
+      if (
+        local &&
+        local.fiscalType === type &&
+        local.prefix === config.prefix &&
+        Number.isFinite(local.next) &&
+        Number.isFinite(local.end) &&
+        local.next <= local.end &&
+        local.next <= Number(config.limit)
+      ) {
+        const number = local.next;
+        saveNcfRanges({
+          ...ranges,
+          [type]: { ...local, next: number + 1 }
+        });
+        set(state => {
+          const nextFiscalConfigs = state.fiscalConfigs.map(c =>
+            c.id === config.id
+              ? { ...c, current: Math.max(Number(c.current) || 1, number + 1) }
+              : c
+          );
+          return {
+            fiscalConfigs: nextFiscalConfigs,
+            storeConfig: { ...state.storeConfig, fiscalConfigs: nextFiscalConfigs } as any
+          };
+        });
+        return `${local.prefix}${number.toString().padStart(8, '0')}`;
+      }
+
+      // Sin un rango reservado no inventamos folios localmente. Una tablet que
+      // entra offline con su rango agotado simplemente esperará a tener red;
+      // esto evita duplicados fiscales entre terminales.
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return undefined;
+
+      const userId = get().currentUser?.id;
+      if (!userId) return undefined;
+
+      const reservation = await callReserveNCFRangeRPC({
+        fiscalType: type,
+        deviceId: getNcfDeviceId(),
+        blockSize: 100,
+        userId
+      });
+      if (!reservation.success || !reservation.data) {
+        useStore.getState().addNotification(
+          'No se pudo reservar un rango fiscal para la venta.',
+          'warning',
+          reservation.error || 'Intente de nuevo con conexión disponible.'
+        );
+        return undefined;
+      }
+
+      const data = reservation.data;
+      const start = Number(data.start_number);
+      const end = Number(data.end_number);
+      const prefix = String(data.prefix || config.prefix || '');
+      if (!prefix || !Number.isFinite(start) || !Number.isFinite(end) || start > end) return undefined;
+
+      saveNcfRanges({
+        ...loadNcfRanges(),
+        [type]: {
+          rangeId: String(data.range_id || crypto.randomUUID()),
+          fiscalType: type,
+          prefix,
+          next: start + 1,
+          end
+        }
+      });
+
+      set(state => {
+        const nextFiscalConfigs = state.fiscalConfigs.map(c =>
+          c.id === config.id
+            ? { ...c, prefix, current: Math.max(Number(c.current) || 1, end + 1), limit: Math.max(Number(c.limit) || end, end) }
+            : c
+        );
+        return {
+          fiscalConfigs: nextFiscalConfigs,
+          storeConfig: { ...state.storeConfig, fiscalConfigs: nextFiscalConfigs } as any
+        };
+      });
+
+      return `${prefix}${start.toString().padStart(8, '0')}`;
+    });
   },
 
   demandForecasts: [],
