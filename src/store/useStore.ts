@@ -2670,10 +2670,6 @@ export const useStore = create<AppState>()(
       const res = await pullBranchOperationalDataFromSupabase(branchId);
       if (!res.success) return false;
       set((state) => {
-        const pendingTxIds = new Set(getOfflineQueue().filter(i => i.type === 'transaction' || i.type === 'void_transaction').map(i => String(i.data?.id || i.actionId)));
-        const pendingSessionIds = new Set(getOfflineQueue().filter(i => i.type === 'cash_session').map(i => String(i.data?.id || i.actionId)));
-        const pendingTransferIds = new Set(getOfflineQueue().filter(i => i.type === 'transfer').map(i => String(i.data?.id || i.data?.operationId || i.actionId)));
-
         // Este refresco es deliberadamente parcial (ventas/sesiones/transferencias
         // recientes). Nunca debe borrar historial local antiguo solo porque no
         // entró en el límite de la consulta. Los IDs que sí llegan del servidor
