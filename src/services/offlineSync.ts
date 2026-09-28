@@ -95,6 +95,13 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         d.id, d.branchId, d.userId, d.mode || 'cycle_count', d.blindCount === true, d.notes || ''
       );
       if (!res.success) throw new Error(res.error || 'No se pudo iniciar la auditoría');
+      if (res.data?.already_exists && res.data?.audit_id && res.data.audit_id !== d.id) {
+        useStore.setState(state => ({
+          inventoryAudits: state.inventoryAudits.filter(a => a.id !== d.id)
+        }));
+        useStore.getState().addNotification('La auditoría offline no pudo abrirse porque ya existe otra auditoría activa en esta sucursal.', 'warning');
+        throw new PermanentSyncError('Ya existe otra auditoría activa para esta sucursal.');
+      }
       return true;
     }
     case 'audit_recount': {
