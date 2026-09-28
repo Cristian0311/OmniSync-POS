@@ -1520,6 +1520,7 @@ export const useStore = create<AppState>()(
       // entre "el cajero confirmó" y "la RPC terminó": si la pestaña muere o la
       // red cae durante el request, el ticket ya existe en IndexedDB para replay.
       await enqueueOfflineItem('transaction', transaction, transaction.id);
+      let localSaleApplied = false;
       try {
         const res = await callProcessTransactionRPC(transaction);
         if (!res.success) {
@@ -1535,7 +1536,12 @@ export const useStore = create<AppState>()(
           }
           throw new Error(res.error || 'No se pudo confirmar la venta');
         }
+
+        // El espejo local se aplica como máximo una vez. Si después falla la
+        // reconciliación remota, la misma venta NO puede volver a descontar stock.
         applyLocalCompletedSale(transaction);
+        localSaleApplied = true;
+
         const inventoryReconciled = await get().refreshBranchInventory();
         if (!inventoryReconciled) {
           throw new Error('Venta confirmada, pero el inventario local aún no pudo reconciliarse con Supabase');
@@ -1544,7 +1550,7 @@ export const useStore = create<AppState>()(
         return true;
       } catch (err) {
         console.warn('[processTransaction] No hubo confirmación definitiva del servidor; venta preservada localmente y encolada para replay idempotente:', err);
-        applyLocalCompletedSale(transaction);
+        if (!localSaleApplied) applyLocalCompletedSale(transaction);
         return true;
       }
     }
@@ -2391,12 +2397,18 @@ export const useStore = create<AppState>()(
         try {
           const res = await callReceiveSupplierOrderRPC(id, userId);
           if (!res.success) throw new Error(res.error || 'No se pudo recibir la orden');
-          removeFromOfflineQueueByAction('supplier_receive', actionId);
+
           set(state => {
             const updated = state.supplierOrders.map(x => x.id === id ? { ...x, ...o, status: 'received' as const } : x);
             return { supplierOrders: updated };
           });
-          await get().refreshBranchInventory();
+
+          const inventoryReconciled = await get().refreshBranchInventory();
+          if (!inventoryReconciled) {
+            throw new Error('Recepción confirmada, pero el inventario local aún no pudo reconciliarse con Supabase');
+          }
+
+          removeFromOfflineQueueByAction('supplier_receive', actionId);
           return { success: true };
         } catch (err) {
           console.warn('[updateSupplierOrder] Recepción no confirmada; queda durable para reintento:', err);
