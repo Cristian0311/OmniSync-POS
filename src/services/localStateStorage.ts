@@ -71,6 +71,18 @@ async function writeNow(value: string): Promise<void> {
   await operation;
 }
 
+export async function flushLocalStateStorage(): Promise<void> {
+  if (writeTimer) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+    const next = pendingValue;
+    pendingValue = null;
+    if (next != null) await writeNow(next);
+    return;
+  }
+  try { await writeChain; } catch {}
+}
+
 export const localStateStorage: StateStorage = {
   getItem: async () => {
     const value = await read();
