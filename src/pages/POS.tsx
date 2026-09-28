@@ -5111,7 +5111,7 @@ export default function POS() {
                   <button 
                     onClick={handleCancelShift}
                     disabled={isCancellingShift}
-                    className="flex-2 py-4 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-200 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="flex-[2] py-4 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-200 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {isCancellingShift ? "Cancelando..." : "Confirmar Anulación"}
                   </button>
