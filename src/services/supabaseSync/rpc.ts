@@ -498,7 +498,11 @@ export async function callTransferInventoryRPC(params: {
     const { data, error } = await supabase.rpc('process_inventory_transfer_v2', {
       p_operation_id: params.operationId, p_batch_id: params.batchId || null, p_product_id: params.productId,
       p_from_branch_id: params.fromBranchId, p_to_branch_id: params.toBranchId,
-      p_variants: params.variants, p_user_id: params.userId
+      p_variants: (params.variants || []).map((v: any) => ({
+        variant_label: String(v?.variantLabel ?? v?.variant_label ?? '').trim(),
+        quantity: Number(v?.quantity)
+      })),
+      p_user_id: params.userId
     });
     if (error) throw error;
     assertRpcSuccess(data, 'process_inventory_transfer_v2');
