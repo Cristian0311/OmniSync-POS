@@ -15,6 +15,8 @@ function mapCashSessionFromRemote(s: any): CashRegisterSession {
   let closingBalances = Array.isArray(s.closing_balances) ? s.closing_balances : [];
   let closingDate = s.closing_date || undefined;
   let movements = Array.isArray(s.movements) ? s.movements : [];
+  let auditStatus: CashRegisterSession['auditStatus'] | undefined = s.audit_status || undefined;
+  let auditNotes: string | undefined = s.audit_notes || undefined;
 
   if (notes.includes('__META__:')) {
     const parts = notes.split('__META__:');
@@ -23,6 +25,10 @@ function mapCashSessionFromRemote(s: any): CashRegisterSession {
       const meta = JSON.parse(parts.join('__META__:'));
       if (Array.isArray(meta?.closing_balances)) closingBalances = meta.closing_balances;
       if (meta?.closing_date) closingDate = meta.closing_date;
+      if (meta?.audit_status === 'pending_review' || meta?.audit_status === 'reviewed' || meta?.audit_status === 'resolved') {
+        auditStatus = meta.audit_status;
+      }
+      if (typeof meta?.audit_notes === 'string') auditNotes = meta.audit_notes;
       const removedMovementIds = new Set(
         Array.isArray(meta?.removed_movement_ids) ? meta.removed_movement_ids.map(String) : []
       );
@@ -49,7 +55,9 @@ function mapCashSessionFromRemote(s: any): CashRegisterSession {
     notes,
     closingDate,
     workingEmployeeIds:Array.isArray(s.working_employee_ids)?s.working_employee_ids:[],
-    movements
+    movements,
+    auditStatus,
+    auditNotes
   };
 }
 function normalizeTransactionItems(items: any[], products: Product[]): any[] {
@@ -621,6 +629,8 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
           let closingBalances = Array.isArray(s.closing_balances) ? s.closing_balances : [];
           let closingDate = s.closing_date || undefined;
           let movements = Array.isArray(s.movements) ? s.movements : [];
+          let auditStatus: CashRegisterSession['auditStatus'] | undefined = s.audit_status || undefined;
+          let auditNotes: string | undefined = s.audit_notes || undefined;
 
           if (notes && notes.includes('__META__:')) {
             const parts = notes.split('__META__:');
@@ -629,6 +639,10 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
               const meta = JSON.parse(parts[1]);
               if (meta.closing_balances && meta.closing_balances.length > 0) closingBalances = meta.closing_balances;
               if (meta.closing_date) closingDate = meta.closing_date;
+              if (meta.audit_status === 'pending_review' || meta.audit_status === 'reviewed' || meta.audit_status === 'resolved') {
+                auditStatus = meta.audit_status;
+              }
+              if (typeof meta.audit_notes === 'string') auditNotes = meta.audit_notes;
               if (meta.movements && meta.movements.length > 0) movements = meta.movements;
             } catch (e) {
               // ignore
@@ -651,6 +665,8 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
             closingDate,
             workingEmployeeIds: Array.isArray(s.working_employee_ids) ? s.working_employee_ids : [],
             movements,
+            auditStatus,
+            auditNotes,
             deletedAt: s.deleted_at || undefined,
             deletedBy: s.deleted_by || undefined,
             deleteReason: s.delete_reason || undefined
