@@ -35,7 +35,7 @@ export default function POSPrinterSetupModal({
           </div>
           <div>
             <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Impresora Térmica 58mm</h3>
-            <p className="text-[10px] font-bold text-slate-400">Conexión directa Bluetooth, USB y RawBT</p>
+            <p className="text-[10px] font-bold text-slate-400">Bluetooth BLE, USB/Serie y Bluetooth clásico con RawBT</p>
           </div>
         </div>
         <button 
@@ -90,9 +90,9 @@ export default function POSPrinterSetupModal({
           >
             <div className="flex items-center gap-2.5">
               <Bluetooth className="w-4 h-4 text-indigo-200" />
-              <span>1. Vincular por Bluetooth</span>
+              <span>1. Vincular Bluetooth BLE</span>
             </div>
-            <span className="text-[9px] bg-indigo-500/50 px-2 py-0.5 rounded-md text-indigo-100">BLE / Inalámbrico</span>
+            <span className="text-[9px] bg-indigo-500/50 px-2 py-0.5 rounded-md text-indigo-100">BLE / Directo</span>
           </button>
 
           <button
@@ -117,9 +117,9 @@ export default function POSPrinterSetupModal({
           >
             <div className="flex items-center gap-2.5">
               <Smartphone className="w-4 h-4 text-emerald-200" />
-              <span>2. Imprimir con App RawBT</span>
+              <span>2. Impresora Bluetooth / USB con RawBT</span>
             </div>
-            <span className="text-[9px] bg-emerald-500/50 px-2 py-0.5 rounded-md text-emerald-100">Android</span>
+            <span className="text-[9px] bg-emerald-500/50 px-2 py-0.5 rounded-md text-emerald-100">Bluetooth clásico / Android</span>
           </button>
 
           <button
