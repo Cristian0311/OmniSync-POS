@@ -3048,30 +3048,43 @@ export const useStore = create<AppState>()(
       if (!res.success || !res.data) return false;
       const d = res.data;
       set((state) => {
-        const mergeById = <T extends { id: string }>(remote: T[], local: T[]) => {
-          const map = new Map(local.map(x => [x.id, x]));
-          for (const item of remote) map.set(item.id, item);
+        const queue = getOfflineQueue();
+        const mergeById = <T extends { id: string }>(
+          remote: T[],
+          local: T[],
+          protectedIds: Set<string | number> = new Set()
+        ) => {
+          const localMap = new Map(local.map(x => [x.id, x]));
+          const map = new Map(remote.map(x => [x.id, x]));
+          for (const [id, item] of localMap) {
+            if (!map.has(id) || protectedIds.has(id)) map.set(id, item);
+          }
           return Array.from(map.values());
         };
-        const queue = getOfflineQueue();
         const pendingStoreConfig = [...queue]
           .filter(i => i.type === 'store_config' && i.data && typeof i.data === 'object')
           .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
           .at(-1)?.data;
+        const pendingBranchIds = new Set(queue.filter(i => i.type === 'branch').map(i => i.data?.id).filter(Boolean));
         const pendingProductIds = new Set(queue.filter(i => i.type === 'product').map(i => i.data?.id).filter(Boolean));
         const pendingCategoryIds = new Set(queue.filter(i => i.type === 'category').map(i => i.data?.id).filter(Boolean));
         const pendingCategoryDeleteIds = new Set(queue.filter(i => i.type === 'category_delete').map(i => i.data?.id).filter(Boolean));
         const pendingBranchDeleteIds = new Set(queue.filter(i => i.type === 'branch_delete').map(i => i.data?.id).filter(Boolean));
+        const pendingIdnIds = new Set(queue.filter(i => i.type === 'idn_settlement_price').map(i => i.data?.id).filter(Boolean));
         const pendingIdnDeleteIds = new Set(queue.filter(i => i.type === 'idn_settlement_price_delete').map(i => i.data?.id).filter(Boolean));
+        const pendingUserIds = new Set(queue.filter(i => i.type === 'user').map(i => i.data?.id).filter(Boolean));
+        const pendingCurrencyCodes = new Set(queue.filter(i => i.type === 'currency').map(i => i.data?.code).filter(Boolean));
         const validProductIds = new Set((d.products || []).map((p: any) => p.id));
         const validCategoryIds = new Set((d.categories || []).map((x: any) => x.id));
         return {
-          branches: mergeById(d.branches || [], state.branches || []).filter(x => !pendingBranchDeleteIds.has(x.id)),
-          categories: mergeById(d.categories || [], state.categories || []).filter(x => !pendingCategoryDeleteIds.has(x.id) && (validCategoryIds.has(x.id) || pendingCategoryIds.has(x.id))),
-          products: mergeById(d.products || [], state.products || []).filter(x => validProductIds.has(x.id) || pendingProductIds.has(x.id)),
-          users: mergeById(d.users || [], state.users || []),
-          currencies: d.currencies?.length ? d.currencies : state.currencies,
-          idnSettlementPrices: mergeById(d.idnSettlementPrices || [], state.idnSettlementPrices || []).filter(x => !pendingIdnDeleteIds.has(x.id)),
+          branches: mergeById(d.branches || [], state.branches || [], pendingBranchIds).filter(x => !pendingBranchDeleteIds.has(x.id)),
+          categories: mergeById(d.categories || [], state.categories || [], pendingCategoryIds).filter(x => !pendingCategoryDeleteIds.has(x.id) && (validCategoryIds.has(x.id) || pendingCategoryIds.has(x.id))),
+          products: mergeById(d.products || [], state.products || [], pendingProductIds).filter(x => validProductIds.has(x.id) || pendingProductIds.has(x.id)),
+          users: mergeById(d.users || [], state.users || [], pendingUserIds),
+          currencies: d.currencies?.length
+            ? mergeById(d.currencies || [], state.currencies || [], pendingCurrencyCodes)
+            : state.currencies,
+          idnSettlementPrices: mergeById(d.idnSettlementPrices || [], state.idnSettlementPrices || [], pendingIdnIds).filter(x => !pendingIdnDeleteIds.has(x.id)),
           fiscalConfigs: Array.isArray(pendingStoreConfig?.fiscalConfigs)
             ? pendingStoreConfig.fiscalConfigs
             : (Array.isArray(d.settings?.store_config?.fiscalConfigs)
