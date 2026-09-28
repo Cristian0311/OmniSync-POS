@@ -140,7 +140,43 @@ export default function Banks() {
       if (navigator.onLine) {
         try {
           const result = await callBankInternalTransferRPC(payload);
-          if (!result.success) throw new Error(result.error || 'No se pudo completar la transferencia bancaria');
+          if (!result.success) {
+            const code = String((result as any).errorCode || '');
+            const permanentCodes = new Set(['P0001','23503','23505','42501','22003','22P02','IDEMPOTENCY_CONFLICT']);
+            if (permanentCodes.has(code)) {
+              const queued = getOfflineQueue().find(item => item.type === 'bank_internal_transfer' && item.actionId === actionId);
+              if (queued) await removeFromOfflineQueue(queued.id);
+              throw new Error(result.error || 'La transferencia bancaria fue rechazada por el servidor');
+            }
+
+            // La petición pudo haber sido aplicada y solo se perdió la respuesta.
+            // Conservamos la operación original, reflejamos el movimiento como
+            // pendiente y evitamos que el usuario lo repita con otro operationId.
+            useStore.setState(state => ({
+              bankTransactions: [
+                {
+                  id: ref + ':IN', cardId: toCard.id, type: 'deposit',
+                  amount: targetAmount, date, reference: ref, transactionId: ref,
+                  description: `Transferencia desde ${fromCard.bank} (****${fromCard.lastFour}): ${transferData.reason}`
+                },
+                {
+                  id: ref + ':OUT', cardId: fromCard.id, type: 'withdrawal',
+                  amount: transferData.amount, date, reference: ref, transactionId: ref,
+                  description: `Transferencia a ${toCard.bank} (****${toCard.lastFour}): ${transferData.reason}`
+                },
+                ...(state.bankTransactions || []).filter(t => t.reference !== ref)
+              ],
+              bankCards: (state.bankCards || []).map(card => {
+                if (card.id === fromCard.id) return { ...card, balance: card.balance - transferData.amount };
+                if (card.id === toCard.id) return { ...card, balance: card.balance + targetAmount };
+                return card;
+              })
+            }));
+            addNotification('Transferencia bancaria guardada localmente y pendiente de confirmación con la nube.', 'info');
+            setShowTransferModal(false);
+            setTransferData({ fromCardId: "", toCardId: "", toExternalCard: "", toExternalName: "", isExternal: false, amount: 0, reason: "" });
+            return;
+          }
 
           const queued = getOfflineQueue().find(item => item.type === 'bank_internal_transfer' && item.actionId === actionId);
           if (queued) await removeFromOfflineQueue(queued.id);
@@ -176,7 +212,36 @@ export default function Banks() {
           }));
           addNotification(`Transferencia interna de ${transferData.amount} completada.`, 'success');
         } catch (err: any) {
-          addNotification(err?.message || 'La transferencia quedó pendiente de sincronización.', 'warning');
+          // Error de transporte: la operación ya está en la cola. El servidor
+          // pudo haberla aplicado; reflejamos el mismo estado pendiente que en
+          // una caída offline para que el usuario no genere una segunda operación.
+          if (!(err?.message || '').includes('rechazada por el servidor')) {
+            useStore.setState(state => ({
+              bankTransactions: [
+                {
+                  id: ref + ':IN', cardId: toCard.id, type: 'deposit',
+                  amount: targetAmount, date, reference: ref, transactionId: ref,
+                  description: `Transferencia desde ${fromCard.bank} (****${fromCard.lastFour}): ${transferData.reason}`
+                },
+                {
+                  id: ref + ':OUT', cardId: fromCard.id, type: 'withdrawal',
+                  amount: transferData.amount, date, reference: ref, transactionId: ref,
+                  description: `Transferencia a ${toCard.bank} (****${toCard.lastFour}): ${transferData.reason}`
+                },
+                ...(state.bankTransactions || []).filter(t => t.reference !== ref)
+              ],
+              bankCards: (state.bankCards || []).map(card => {
+                if (card.id === fromCard.id) return { ...card, balance: card.balance - transferData.amount };
+                if (card.id === toCard.id) return { ...card, balance: card.balance + targetAmount };
+                return card;
+              })
+            }));
+            addNotification('No se pudo confirmar la respuesta. La transferencia quedó pendiente y no debes repetirla.', 'info');
+            setShowTransferModal(false);
+            setTransferData({ fromCardId: "", toCardId: "", toExternalCard: "", toExternalName: "", isExternal: false, amount: 0, reason: "" });
+            return;
+          }
+          addNotification(err?.message || 'La transferencia quedó pendiente de sincronización.', 'error');
           return;
         }
       } else {
