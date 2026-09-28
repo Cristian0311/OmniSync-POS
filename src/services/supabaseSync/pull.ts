@@ -153,7 +153,10 @@ export async function pullTransferHistoryFromSupabase(): Promise<{ success: bool
         toBranchName: t.to_branch_name || 'Sucursal Destino',
         variantLabel: t.variant_label || 'Producto Base',
         quantity: Number(t.quantity) || 0,
-        variants: Array.isArray(t.variants) ? t.variants : [],
+        variants: Array.isArray(t.variants) ? t.variants.map((v: any) => ({
+          variantLabel: String(v?.variantLabel ?? v?.variant_label ?? '').trim(),
+          quantity: Number(v?.quantity) || 0
+        })) : [],
         date: t.date,
         userId: t.user_id,
         status: t.status || 'completed',
