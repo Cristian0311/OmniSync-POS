@@ -2908,10 +2908,21 @@ export const useStore = create<AppState>()(
             : mergedCashSessionsRaw;
 
           // --- 4. Clientes ---
+          const customerQueue = getOfflineQueue();
           const offlineQueuedCustomerIds = new Set(
-            getOfflineQueue().filter(i => i.type === 'customer').map(i => i.data.id)
+            customerQueue
+              .filter(i => i.type === 'customer' || i.type === 'customer_delete')
+              .map(i => i.data?.id)
+              .filter(Boolean)
           );
-          const mergedCustomers = replaceRemoteRecords(data.customers, state.customers || [], offlineQueuedCustomerIds);
+          const offlineDeletedCustomerIds = new Set(
+            customerQueue
+              .filter(i => i.type === 'customer_delete')
+              .map(i => String(i.data?.id || ''))
+              .filter(Boolean)
+          );
+          const mergedCustomers = replaceRemoteRecords(data.customers, state.customers || [], offlineQueuedCustomerIds)
+            .filter(customer => !offlineDeletedCustomerIds.has(String(customer.id)));
 
           // --- 5. Devoluciones ---
           const offlineQueuedReturnIds = new Set(
