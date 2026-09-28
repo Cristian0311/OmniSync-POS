@@ -847,21 +847,21 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
   }
 }
 
-export async function processOfflineQueue(): Promise<{ processed: number; failed: number; remaining: number; errors: Array<{ type: string; actionId: string; message: string; retryCount?: number }> }> {
+export async function processOfflineQueue(): Promise<{ processed: number; failed: number; remaining: number; conflicts: number; errors: Array<{ type: string; actionId: string; message: string; retryCount?: number }> }> {
   // Nunca inspeccionar una cola todavía no hidratada desde IndexedDB.
   await waitForOfflineQueueReady();
   if (isProcessingQueue || (typeof navigator !== 'undefined' && !navigator.onLine)) {
-    return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), errors: [] };
+    return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), conflicts: getOfflineConflictCount(), errors: [] };
   }
   const supabase = getSupabase();
-  if (!supabase) return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), errors: [{ type: 'system', actionId: 'supabase', message: 'Supabase no está disponible en esta sesión.' }] };
+  if (!supabase) return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), conflicts: getOfflineConflictCount(), errors: [{ type: 'system', actionId: 'supabase', message: 'Supabase no está disponible en esta sesión.' }] };
   const reachability = await checkSupabaseReachability();
   if (!reachability.ok) {
-    return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), errors: [{ type: 'network', actionId: 'connectivity', message: reachability.message || 'Supabase no está accesible todavía.' }] };
+    return { processed: 0, failed: 0, remaining: getOfflineQueueCount(), conflicts: getOfflineConflictCount(), errors: [{ type: 'network', actionId: 'connectivity', message: reachability.message || 'Supabase no está accesible todavía.' }] };
   }
   const allQueueAtStart = getOfflineQueue();
   const queueAtStart = allQueueAtStart.filter(item => item.status !== 'conflict');
-  if (!queueAtStart.length) return { processed: 0, failed: 0, remaining: 0, errors: [] };
+  if (!queueAtStart.length) return { processed: 0, failed: 0, remaining: 0, conflicts: getOfflineConflictCount(), errors: [] };
 
   isProcessingQueue = true;
   // Procesamos una instantánea estable. Las operaciones que entren mientras
@@ -1100,11 +1100,11 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
     const persistenceMessage = persistenceError?.message || 'Error de IndexedDB/localStorage. Las operaciones se conservaron para reintento.';
     errors.push({ type: 'offline_queue', actionId: 'persistence', message: persistenceMessage });
     addSyncLog({ level:'error', source:'offline_queue', title:'Cola local no pudo persistirse', details:persistenceMessage, entityType:'offline_queue' });
-    return { processed, failed, remaining: getOfflineQueue().length, errors };
+    return { processed, failed, remaining: getOfflineQueueCount(), conflicts: getOfflineConflictCount(), errors };
   }
 
   isProcessingQueue = false;
-  return { processed, failed, remaining: finalQueue.filter(item => item.status !== 'conflict').length, errors };
+  return { processed, failed, remaining: finalQueue.filter(item => item.status !== 'conflict').length, conflicts: finalQueue.filter(item => item.status === 'conflict').length, errors };
 }
 
 function isManualOfflineSyncEnabled(): boolean {
@@ -1132,8 +1132,16 @@ export function initOfflineSyncWatcher(): () => void {
     useStore.getState().addNotification(`Conexión detectada. Sincronizando ${count} operaciones pendientes...`, 'info');
     try {
       const res = await processOfflineQueue();
-      if (res.remaining > 0) {
-        useStore.getState().addNotification(`Sincronización incompleta: ${res.processed} procesadas; ${res.remaining} siguen pendientes.`, 'warning', res.errors?.length ? res.errors.map(e => `${e.type} · ${e.actionId}: ${e.message}`).join('\n') : undefined);
+      if (res.remaining > 0 || res.conflicts > 0) {
+        const details = [
+          res.errors?.length ? res.errors.map(e => `${e.type} · ${e.actionId}: ${e.message}`).join('\n') : '',
+          res.conflicts > 0 ? `${res.conflicts} operación(es) quedaron en conflicto y no se volverán a reintentar hasta resolverlas.` : ''
+        ].filter(Boolean).join('\n');
+        useStore.getState().addNotification(
+          `Sincronización parcial: ${res.processed} procesadas; ${res.remaining} pendientes; ${res.conflicts} en conflicto.`,
+          res.conflicts > 0 ? 'warning' : 'warning',
+          details || undefined
+        );
       } else if (res.processed > 0) {
         useStore.getState().addNotification(`Sincronización completada: ${res.processed} operaciones confirmadas.`, 'success');
       }
