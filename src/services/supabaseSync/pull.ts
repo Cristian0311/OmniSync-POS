@@ -24,7 +24,12 @@ function mapCashSessionFromRemote(s: any): CashRegisterSession {
       const meta = JSON.parse(parts.join('__META__:'));
       if (Array.isArray(meta?.closing_balances)) closingBalances = meta.closing_balances;
       if (meta?.closing_date) closingDate = meta.closing_date;
-      if (Array.isArray(meta?.movements)) movements = meta.movements;
+      const removedMovementIds = new Set(
+        Array.isArray(meta?.removed_movement_ids) ? meta.removed_movement_ids.map(String) : []
+      );
+      if (Array.isArray(meta?.movements)) {
+        movements = meta.movements.filter((movement: any) => movement?.id && !removedMovementIds.has(String(movement.id)));
+      }
     } catch {
       // Conservamos las notas base si la metadata estuviera dañada.
     }
