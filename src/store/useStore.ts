@@ -3668,6 +3668,19 @@ export const useStore = create<AppState>()(
             }
           });
 
+          // Si una operación todavía está pendiente, su snapshot local ya
+          // incluye el movimiento optimista. No basta con conservar la fila:
+          // debemos conservar también SU CANTIDAD para que un pull remoto
+          // retrasado no haga retroceder visualmente el inventario.
+          const localInventoryByKey = new Map<string, InventoryLevel>();
+          for (const localInv of state.inventory || []) {
+            const key = `${localInv.productId}_${localInv.branchId}_${localInv.variantLabel || ''}`;
+            if (pendingInventoryKeys.has(key)) localInventoryByKey.set(key, localInv);
+          }
+          for (const [key, localInv] of localInventoryByKey) {
+            invMap.set(key, localInv);
+          }
+
           let mergedInventory = Array.from(invMap.values()).filter(inv =>
             !inv.branchId || validBranchIds.has(inv.branchId)
           );
