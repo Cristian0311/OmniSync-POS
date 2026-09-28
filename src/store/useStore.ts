@@ -459,6 +459,13 @@ export const useStore = create<AppState>()(
       }
 
       const d = backup.data;
+
+      // Una importación de respaldo reemplaza el estado completo. No debe
+      // ejecutarse como si estuviera confirmada cuando el dispositivo está
+      // offline, porque pushAllToSupabase no es una operación transaccional.
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        throw new Error('No se puede importar el respaldo mientras el dispositivo está sin conexión. Conéctate y vuelve a intentarlo.');
+      }
       
       // Update local state
       set({
@@ -493,7 +500,14 @@ export const useStore = create<AppState>()(
 
       // After local update, sync everything to Supabase
       const { pushAllToSupabase } = await import('../services/supabaseSync');
-      await pushAllToSupabase(true);
+      const syncResult = await pushAllToSupabase(true);
+      if (!syncResult.success) {
+        throw new Error(
+          syncResult.errors?.length
+            ? `La importación local se realizó, pero Supabase no confirmó todos los datos: ${syncResult.errors.join(' · ')}`
+            : 'Supabase no confirmó la importación completa.'
+        );
+      }
 
       return { success: true };
     } catch (err: any) {
