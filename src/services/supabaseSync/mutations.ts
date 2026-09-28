@@ -515,14 +515,28 @@ export async function deleteCategoryFromSupabase(id: string): Promise<boolean> {
   }
 }
 
-export async function deleteProductFromSupabase(id: string) {
+export async function deleteProductFromSupabase(id: string): Promise<boolean> {
   const supabase = getSupabase();
-  if (!supabase) return;
+  if (!supabase) return false;
+  const productId = String(id || '').trim();
+  if (!productId) return false;
 
   try {
-    await supabase.from('products').delete().eq('id', id);
+    const { data, error } = await supabase.rpc('delete_product_v2', { p_product_id: productId });
+    if (error) throw error;
+    if (data && data.success !== true) throw new Error('Supabase no confirmó el borrado del producto');
+
+    const { data: remaining, error: verifyError } = await supabase
+      .from('products')
+      .select('id')
+      .eq('id', productId)
+      .maybeSingle();
+    if (verifyError) throw verifyError;
+    if (remaining) throw new Error('El producto todavía existe en Supabase después del borrado');
+    return true;
   } catch (e) {
     console.warn("Supabase delete product failed:", e);
+    return false;
   }
 }
 

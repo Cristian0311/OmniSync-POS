@@ -23,7 +23,7 @@ import {
   callStartInventoryAuditRPC, callSaveInventoryAuditCountRPC, callRequestInventoryAuditRecountRPC, callApproveInventoryAuditRPC,
   callBankInternalTransferRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC,
   setBankCardBalanceToSupabase, pullBranchInventoryFromSupabase,
-  pushCashSessionToSupabase
+  pushCashSessionToSupabase, deleteProductFromSupabase
 } from './supabaseSync';
 import { addSyncLog } from '../utils/syncLogger';
 
@@ -417,6 +417,13 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       const c = data as Category;
       const { error } = await supabase.from('categories').upsert({ id: c.id, name: c.name, department: c.department || 'General', description: c.description || null, color: c.color || null, image: c.image || null });
       if (error) throw error; return true;
+    }
+    case 'product_delete': {
+      const productId = String(data?.id || '');
+      if (!productId) throw new PermanentSyncError('Eliminación de producto sin ID');
+      const ok = await deleteProductFromSupabase(productId);
+      if (!ok) throw new Error('No se pudo confirmar la eliminación del producto en Supabase');
+      return true;
     }
     case 'product': {
       const p = data as Product;
@@ -990,6 +997,24 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
     const data = item.data || {};
     const add = (x?: OfflineQueueItem) => { if (x && x.id !== item.id) d.push(x); };
     switch (item.type) {
+      case 'product_delete': {
+        const productId = String(data?.id || '');
+        for (const queued of allQueued.values()) {
+          if (queued.id === item.id) continue;
+          const qd = queued.data || {};
+          const matchesProduct =
+            (queued.type === 'product' && String(qd.id || '') === productId) ||
+            (queued.type === 'transaction' && Array.isArray(qd.items) && qd.items.some((line: any) => {
+              const id = typeof line?.product === 'string' ? line.product : line?.product?.id || line?.productId || line?.product_id;
+              return String(id || '') === productId;
+            })) ||
+            ((queued.type === 'transfer' || queued.type === 'inventory_adjustment' || queued.type === 'inventory_reconcile' || queued.type === 'return_complete') && String(qd.productId || '') === productId) ||
+            (queued.type === 'transfer_bulk' && Array.isArray(qd.items) && qd.items.some((op: any) => String(op?.productId || '') === productId)) ||
+            (queued.type === 'supplier_receive' && Array.isArray((useStore.getState().supplierOrders || []).find((o: any) => o.id === qd.id)?.items) && (useStore.getState().supplierOrders || []).find((o: any) => o.id === qd.id).items.some((line: any) => String(line?.productId || '') === productId));
+          if (matchesProduct) add(queued);
+        }
+        break;
+      }
       case 'cash_session':
         if (data.__operation === 'open' || String(item.actionId).startsWith('cash-open:')) {
           add(dep('branch', data.branchId)); add(dep('user', data.userId));

@@ -956,11 +956,35 @@ export const useStore = create<AppState>()(
     if (updated) pushProductToSupabase(updated);
   },
   deleteProduct: (id) => {
+    const productId = String(id || '').trim();
+    if (!productId) return;
+
+    // El borrado es físico: desaparece del catálogo y del stock local de inmediato.
     set((state) => ({
-      products: state.products.map(p => p.id === id ? { ...p, status: 'discontinued' } : p)
+      products: (state.products || []).filter(p => p.id !== productId),
+      inventory: (state.inventory || []).filter(i => i.productId !== productId)
     }));
-    const updated = get().products.find(p => p.id === id);
-    if (updated) pushProductToSupabase(updated);
+
+    // Una eliminación siempre tiene precedencia sobre una edición del mismo producto.
+    removeFromOfflineQueueByAction('product', productId);
+    const deleteActionId = 'product-delete:' + productId;
+
+    const deleteRemotely = async () => {
+      const ok = await deleteProductFromSupabase(productId);
+      if (!ok) {
+        await enqueueOfflineItem('product_delete', { id: productId }, deleteActionId);
+      } else {
+        removeFromOfflineQueueByAction('product_delete', deleteActionId);
+      }
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      deleteRemotely().catch(async () => {
+        await enqueueOfflineItem('product_delete', { id: productId }, deleteActionId);
+      });
+    } else {
+      enqueueOfflineItem('product_delete', { id: productId }, deleteActionId).catch(() => {});
+    }
   },
   transferInventory: async (productId, fromBranchId, toBranchId, quantity, variantLabel, transactionId) => {
     const res = await get().transferInventoryBatch(
@@ -1149,13 +1173,24 @@ export const useStore = create<AppState>()(
     return { repaired: repairedCount, message: `Se repararon ${repairedCount} registros huérfanos.` };
   },
   batchDeleteProducts: (ids) => {
+    const productIds = Array.from(new Set((ids || []).map(String).map(x => x.trim()).filter(Boolean)));
+    if (!productIds.length) return;
     set((state) => ({
-      products: state.products.map(p => ids.includes(p.id) ? { ...p, status: 'discontinued' } : p)
+      products: (state.products || []).filter(p => !productIds.includes(p.id)),
+      inventory: (state.inventory || []).filter(i => !productIds.includes(i.productId))
     }));
-    ids.forEach(id => {
-      const updated = get().products.find(p => p.id === id);
-      if (updated) pushProductToSupabase(updated);
-    });
+    for (const productId of productIds) {
+      removeFromOfflineQueueByAction('product', productId);
+      const actionId = 'product-delete:' + productId;
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        deleteProductFromSupabase(productId).then(ok => {
+          if (ok) removeFromOfflineQueueByAction('product_delete', actionId);
+          else enqueueOfflineItem('product_delete', { id: productId }, actionId).catch(() => {});
+        }).catch(() => enqueueOfflineItem('product_delete', { id: productId }, actionId).catch(() => {}));
+      } else {
+        enqueueOfflineItem('product_delete', { id: productId }, actionId).catch(() => {});
+      }
+    }
   },
   batchUpdateProducts: (ids, updates) => {
     set((state) => ({
@@ -3253,6 +3288,7 @@ export const useStore = create<AppState>()(
           .at(-1)?.data;
         const pendingBranchIds = new Set(queue.filter(i => i.type === 'branch').map(i => i.data?.id).filter(Boolean));
         const pendingProductIds = new Set(queue.filter(i => i.type === 'product').map(i => i.data?.id).filter(Boolean));
+         const pendingProductDeleteIds = new Set(queue.filter(i => i.type === 'product_delete').map(i => i.data?.id).filter(Boolean));
         const pendingCategoryIds = new Set(queue.filter(i => i.type === 'category').map(i => i.data?.id).filter(Boolean));
         const pendingCategoryDeleteIds = new Set(queue.filter(i => i.type === 'category_delete').map(i => i.data?.id).filter(Boolean));
         const pendingBranchDeleteIds = new Set(queue.filter(i => i.type === 'branch_delete').map(i => i.data?.id).filter(Boolean));
@@ -3265,7 +3301,7 @@ export const useStore = create<AppState>()(
         return {
           branches: mergeById(d.branches || [], state.branches || [], pendingBranchIds).filter(x => !pendingBranchDeleteIds.has(x.id)),
           categories: mergeById(d.categories || [], state.categories || [], pendingCategoryIds).filter(x => !pendingCategoryDeleteIds.has(x.id) && (validCategoryIds.has(x.id) || pendingCategoryIds.has(x.id))),
-          products: mergeById(d.products || [], state.products || [], pendingProductIds).filter(x => validProductIds.has(x.id) || pendingProductIds.has(x.id)),
+          products: mergeById(d.products || [], state.products || [], pendingProductIds).filter(x => !pendingProductDeleteIds.has(x.id) && (validProductIds.has(x.id) || pendingProductIds.has(x.id))),
           users: mergeById(d.users || [], state.users || [], pendingUserIds),
           currencies: d.currencies?.length
             ? mergeById(d.currencies || [], state.currencies || [], pendingCurrencyCodes)
@@ -3384,7 +3420,7 @@ export const useStore = create<AppState>()(
       return {
         branches: mergeById(d.branches, state.branches || []),
         categories: mergeById(d.categories, state.categories || []),
-        products: mergeById(d.products, state.products || []),
+        products: mergeById(d.products, state.products || []).filter((p: any) => !new Set(getOfflineQueue().filter(i => i.type === 'product_delete').map(i => i.data?.id).filter(Boolean)).has(p.id)),
         inventory: Array.from(invMap.values()),
         users: mergeById(d.users, state.users || []),
         customers: mergeById(d.customers, state.customers || []),
@@ -3698,13 +3734,14 @@ export const useStore = create<AppState>()(
 
           // --- 7. Otros (Deduplicación simple por ID o clave única) ---
           const pendingProductIds = new Set(getOfflineQueue().filter(i => i.type === 'product').map(i => i.data?.id).filter(Boolean));
+           const pendingProductDeleteIds = new Set(getOfflineQueue().filter(i => i.type === 'product_delete').map(i => i.data?.id).filter(Boolean));
           const pendingCategoryIds = new Set(getOfflineQueue().filter(i => i.type === 'category').map(i => i.data?.id).filter(Boolean));
           const pendingCategoryDeleteIds = new Set(getOfflineQueue().filter(i => i.type === 'category_delete').map(i => i.data?.id).filter(Boolean));
           const mergedProducts = mergeUnique(data.products, state.products || []);
           // A successful remote snapshot may omit a newly-created offline product.
           // Keep it until its durable product operation is confirmed remotely.
           const finalProducts = (Array.isArray(data.products) && data.products.length > 0)
-            ? mergedProducts.filter(p => data.products.some((sp: any) => sp.id === p.id) || pendingProductIds.has(p.id))
+            ? mergedProducts.filter(p => !pendingProductDeleteIds.has(p.id) && (data.products.some((sp: any) => sp.id === p.id) || pendingProductIds.has(p.id)))
             : mergedProducts;
 
           const mergedCategories = mergeUnique(data.categories, state.categories || []);

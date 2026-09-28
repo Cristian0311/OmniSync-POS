@@ -11,7 +11,7 @@ import { addSyncLog } from '../utils/syncLogger';
 export type OfflineActionType =
   | 'transaction' | 'void_transaction' | 'return_complete' | 'transfer'
   | 'supplier_receive' | 'transfer_bulk' | 'audit_complete' | 'cash_session' | 'inventory' | 'inventory_adjustment' | 'inventory_reconcile'
-  | 'customer' | 'customer_delete' | 'return' | 'bank_transaction'
+  | 'customer' | 'customer_delete' | 'product_delete' | 'return' | 'bank_transaction'
   | 'branch' | 'product' | 'category' | 'receipt_config' | 'store_config' | 'catalog_config' | 'salary_settlement'
   | 'user' | 'currency' | 'idn_settlement_price' | 'warranty' | 'time_shift' | 'quote' | 'bank_internal_transfer' | 'bank_internal_transfer_delete' | 'bank_transaction_delete' | 'bank_card_delete'
   | 'bank_card' | 'bank_card_balance' | 'supplier' | 'supplier_order' | 'inventory_audit'

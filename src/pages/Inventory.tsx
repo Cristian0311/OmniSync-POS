@@ -888,7 +888,7 @@ export default function Inventory() {
                           <Edit className="w-3.5 h-3.5" />
                         </button>
                         <button 
-                          onClick={() => window.confirm("¿Marcar este producto como descontinuado?\n\nSe conservarán sus ventas e inventario histórico.") && deleteProduct(item.id)}
+                          onClick={() => window.confirm("¿Eliminar este producto permanentemente?\n\nSe eliminará del inventario y catálogo. Los registros históricos que no dependan del producto se conservarán cuando sea posible.") && deleteProduct(item.id)}
                           className="text-muted hover:text-rose-600 transition-colors p-1.5 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-base shadow-sm"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
