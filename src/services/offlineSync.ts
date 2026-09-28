@@ -713,7 +713,8 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
       return true;
     }
     case 'supplier_receive': {
-      const res = await callReceiveSupplierOrderRPC(data.id, data.userId || 'system');
+      if (!data.userId) throw new PermanentSyncError('La recepción de mercancía no tiene un trabajador válido asociado.');
+      const res = await callReceiveSupplierOrderRPC(data.id, data.userId);
       if (!res.success) {
         const code = String(res.errorCode || '');
         if (['P0001','23503','23505','42501','22003','22P02'].includes(code)) {
@@ -744,10 +745,10 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         p_movement_type: data.movementType || 'ADJUSTMENT'
       });
       if (error) throw error;
-      if (result?.conflict) throw new Error(result.message || 'Conflicto de inventario');
+      if (result?.conflict) throw new PermanentSyncError(result.message || 'Conflicto de inventario: el stock cambió mientras la operación estaba pendiente.');
       return true;
     }
-    case 'inventory_reconcile': {
+    case 'inventory_reconcile':
       const { data: result, error } = await supabase.rpc('reconcile_inventory_v2', {
         p_operation_id: item.actionId, p_product_id: data.productId, p_branch_id: data.branchId,
         p_variant_label: data.variantLabel || '', p_expected_quantity: Number(data.expectedQuantity),
@@ -755,7 +756,7 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         p_user_id: data.userId || null
       });
       if (error) throw error;
-      if (result?.conflict) throw new Error(result.message || 'Conflicto de inventario: el stock cambió mientras estaba offline');
+      if (result?.conflict) throw new PermanentSyncError(result.message || 'Conflicto de inventario: el stock cambió mientras estaba offline.');
       return true;
     }
     case 'return': {
