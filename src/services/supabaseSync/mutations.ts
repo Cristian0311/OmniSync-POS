@@ -310,7 +310,13 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
 
     const extractMeta = (notes: string | null | undefined) => {
       if (!notes || !notes.includes('__META__:')) {
-        return { baseNotes: notes || '', movements: [] as any[], removedMovementIds: [] as string[] };
+        return {
+          baseNotes: notes || '',
+          movements: [] as any[],
+          removedMovementIds: [] as string[],
+          auditStatus: undefined as CashRegisterSession['auditStatus'],
+          auditNotes: undefined as string | undefined
+        };
       }
       const parts = notes.split('__META__:');
       const base = parts.shift() || '';
@@ -321,10 +327,18 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
           movements: Array.isArray(parsed?.movements) ? parsed.movements : [],
           removedMovementIds: Array.isArray(parsed?.removed_movement_ids)
             ? parsed.removed_movement_ids.map(String)
-            : []
+            : [],
+          auditStatus: parsed?.audit_status as CashRegisterSession['auditStatus'] | undefined,
+          auditNotes: typeof parsed?.audit_notes === 'string' ? parsed.audit_notes : undefined
         };
       } catch {
-        return { baseNotes: base.trim(), movements: [] as any[], removedMovementIds: [] as string[] };
+        return {
+          baseNotes: base.trim(),
+          movements: [] as any[],
+          removedMovementIds: [] as string[],
+          auditStatus: undefined as CashRegisterSession['auditStatus'],
+          auditNotes: undefined as string | undefined
+        };
       }
     };
 
@@ -357,6 +371,10 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
     }
 
     let extendedNotes = localMeta.baseNotes || remoteMeta.baseNotes || '';
+    const effectiveAuditStatus = session.auditStatus || localMeta.auditStatus || remoteMeta.auditStatus;
+    const effectiveAuditNotes = session.auditNotes !== undefined
+      ? session.auditNotes
+      : (localMeta.auditNotes !== undefined ? localMeta.auditNotes : (remoteMeta.auditNotes || ''));
     const meta = {
       closing_balances: session.closingBalances?.length ? session.closingBalances : (() => {
         try {
@@ -366,7 +384,9 @@ export async function pushCashSessionToSupabase(session: CashRegisterSession): P
       })(),
       closing_date: session.closingDate || remoteSession?.closed_at || null,
       movements: mergedMovements,
-      removed_movement_ids: removedMovementIds
+      removed_movement_ids: removedMovementIds,
+      audit_status: effectiveAuditStatus || null,
+      audit_notes: effectiveAuditNotes
     };
     extendedNotes = (extendedNotes ? extendedNotes + ' ' : '') + '__META__:' + JSON.stringify(meta);
 
