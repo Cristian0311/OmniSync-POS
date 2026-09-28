@@ -438,6 +438,30 @@ export async function callReceiveSupplierOrderRPC(orderId: string, userId: strin
   }
 }
 
+export async function callReserveNCFRangeRPC(params: {
+  fiscalType: string;
+  deviceId: string;
+  blockSize?: number;
+  userId: string;
+}): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: 'Supabase no configurado' };
+  try {
+    const { data, error } = await supabase.rpc('reserve_ncf_range_v2', {
+      p_fiscal_type: params.fiscalType,
+      p_device_id: params.deviceId,
+      p_block_size: params.blockSize || 100,
+      p_user_id: params.userId
+    });
+    if (error) throw error;
+    assertRpcSuccess(data, 'reserve_ncf_range_v2');
+    return { success: true, data };
+  } catch (e: any) {
+    console.error('[RPC] reserve_ncf_range_v2 failed:', e);
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
+  }
+}
+
 export async function callTransferInventoryRPC(params: {
   operationId: string; batchId?: string; productId: string; fromBranchId: string; toBranchId: string;
   variants: { variantLabel: string; quantity: number }[]; userId: string;
