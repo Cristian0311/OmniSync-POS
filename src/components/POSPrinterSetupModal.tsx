@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bluetooth, Printer, Smartphone, Usb, X } from 'lucide-react';
+import { Bluetooth, Printer, Usb, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { printThermalReceipt, disconnectPrinter, disconnectBluetoothPrinter } from '../lib/escpos';
 
@@ -13,6 +13,7 @@ interface POSPrinterSetupModalProps {
   onPrinterConnectedChange: (name: string | null) => void;
   onSuccess: (message: string) => void;
   onError: (message: string) => void;
+  printerWidth?: '58mm' | '80mm';
 }
 
 export default function POSPrinterSetupModal({
@@ -35,8 +36,8 @@ export default function POSPrinterSetupModal({
             <Printer className="w-4 h-4" />
           </div>
           <div>
-            <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Impresora Térmica 58mm</h3>
-            <p className="text-[10px] font-bold text-slate-400">Bluetooth BLE, USB/Serie y Bluetooth clásico con RawBT</p>
+            <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Configuración de Impresora Térmica</h3>
+            <p className="text-[10px] font-bold text-slate-400">Bluetooth BLE o conexión por cable USB/Serie</p>
           </div>
         </div>
         <button 
@@ -97,41 +98,15 @@ export default function POSPrinterSetupModal({
 
           <button
             type="button"
-            onClick={async () => {
-              await printThermalReceipt({
-                lines: [
-                  "CENTER|BOLD|MARÉ POS",
-                  "CENTER|PRUEBA RAWBT ANDROID",
-                  "---",
-                  "Conexión exitosa con RawBT",
-                  "Impresión térmica 58mm OK",
-                  "---"
-                ],
-                width: '58mm',
-                preferRawBT: true
-              });
-              onClose();
-            }}
-            className="w-full p-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all shadow-md shadow-emerald-100 active:scale-95"
-          >
-            <div className="flex items-center gap-2.5">
-              <Smartphone className="w-4 h-4 text-emerald-200" />
-              <span>2. Impresora Bluetooth / USB con RawBT</span>
-            </div>
-            <span className="text-[9px] bg-emerald-500/50 px-2 py-0.5 rounded-md text-emerald-100">Bluetooth clásico / Android</span>
-          </button>
-
-          <button
-            type="button"
             disabled={isConnectingPrinter}
             onClick={onConnectUsb}
             className="w-full p-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-between transition-all active:scale-95 disabled:opacity-50 border border-slate-200"
           >
             <div className="flex items-center gap-2.5">
               <Usb className="w-4 h-4 text-slate-500" />
-              <span>3. Conectar por Cable USB</span>
+              <span>2. Conectar por Cable USB</span>
             </div>
-            <span className="text-[9px] bg-slate-200 px-2 py-0.5 rounded-md text-slate-600">Cable OTG</span>
+            <span className="text-[9px] bg-slate-200 px-2 py-0.5 rounded-md text-slate-600">USB / OTG</span>
           </button>
         </div>
 
@@ -143,7 +118,7 @@ export default function POSPrinterSetupModal({
               const printed = await printThermalReceipt({
                 lines: [
                   "CENTER|BOLD|MARÉ POS",
-                  "CENTER|TICKET DE PRUEBA 58MM",
+                  "CENTER|TICKET DE PRUEBA",
                   "---",
                   `Fecha: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
                   "Estado: Correcto",
@@ -151,9 +126,9 @@ export default function POSPrinterSetupModal({
                   "CENTER|Impresión Térmica OK"
                 ],
                 openDrawer: true,
-                width: '58mm',
+                width: printerWidth,
                 onSuccess: (method) => {
-                  onSuccess(`Prueba enviada (${method})`);
+                  onSuccess(`Prueba enviada por ${method === 'bluetooth' ? 'Bluetooth' : 'USB/Serie'}`);
                   setTimeout(() => onSuccess(""), 2500);
                 }
               });
