@@ -184,6 +184,7 @@ export async function pullBranchOperationalDataFromSupabase(branchId: string): P
     const transactions: Transaction[] = (txRes.data || []).map((t:any) => ({
       id:t.id,date:t.date,total:Number(t.total)||0,tax:Number(t.tax)||0,discount:Number(t.discount)||0,
       branchId:t.branch_id,customerId:t.customer_id,userId:t.user_id,status:t.status||'completed',
+      ncf:t.ncf||undefined,ncfType:t.ncf_type||undefined,
       notes:t.notes||'',paymentMethod:t.payment_method||'cash',sessionId:t.session_id,
       changeGiven:Number(t.change_given)||0,items:normalizeTransactionItems(t.items, catalogProducts),
       payments:Array.isArray(t.payments)?t.payments:[],changePayments:Array.isArray(t.change_payments)?t.change_payments:[],
@@ -553,6 +554,8 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
           customerId: t.customer_id,
           userId: t.user_id,
           status: t.status || 'completed',
+          ncf: t.ncf || undefined,
+          ncfType: t.ncf_type || undefined,
           notes: t.notes || '',
           paymentMethod: t.payment_method || 'cash',
           sessionId: t.session_id,

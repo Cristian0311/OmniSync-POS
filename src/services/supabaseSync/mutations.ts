@@ -237,6 +237,8 @@ export async function pushTransactionToSupabase(tx: Transaction): Promise<boolea
       customer_id: tx.customerId || null,
       user_id: tx.userId || null,
       status: tx.status || 'completed',
+      ncf: tx.ncf || null,
+      ncf_type: tx.ncfType || null,
       notes: tx.notes || '',
       payment_method: tx.paymentMethod || 'cash',
       session_id: tx.sessionId || null,
@@ -599,9 +601,9 @@ export async function clearSelectedDataFromSupabase(sections: ResetSection[]): P
   return { success: failed.length === 0, failed };
 }
 
-export async function clearHistoryFromSupabase() {
+export async function clearHistoryFromSupabase(): Promise<{ success: boolean; failed: string[] }> {
   const supabase = getSupabase();
-  if (!supabase) return;
+  if (!supabase) return { success: false, failed: ['Supabase no configurado'] };
 
   console.debug("[clearHistoryFromSupabase] Iniciando limpieza selectiva de Historial (Ventas/Turnos/Movimientos)...");
 
@@ -617,6 +619,7 @@ export async function clearHistoryFromSupabase() {
     'returns',
     'warranties'
   ];
+  const failed: string[] = [];
 
   for (const table of historyTables) {
     try {
@@ -624,9 +627,13 @@ export async function clearHistoryFromSupabase() {
       const { error } = await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
       if (error) throw error;
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'error desconocido';
+      failed.push(`${table}: ${message}`);
       console.warn(`[clearHistoryFromSupabase] Error en tabla ${table}:`, err);
     }
   }
+
+  return { success: failed.length === 0, failed };
 }
 
 export async function pushUserToSupabase(user: User) {

@@ -237,7 +237,7 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
     // and accidentally turn a second sale into a false success.
     const { data: persisted, error: verifyError } = await supabase
       .from('transactions')
-      .select('id,branch_id,user_id,total,tax,discount,session_id,payment_method,status,items,payments')
+      .select('id,branch_id,user_id,total,tax,discount,session_id,payment_method,status,items,payments,ncf,ncf_type')
       .eq('id', tx.id)
       .maybeSingle();
 
@@ -246,6 +246,41 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
       const e: any = new Error('Supabase no confirmó la venta en la tabla transactions.');
       e.code = 'TRANSACTION_NOT_PERSISTED';
       throw e;
+    }
+
+    // NCF se asigna en el POS antes de la venta. La RPC de inventario/venta
+    // existente no recibe esos campos, por compatibilidad con clientes anteriores,
+    // así que los persistimos inmediatamente después de confirmar la fila.
+    if (tx.ncf || tx.ncfType) {
+      if (
+        (persisted.ncf || null) !== null &&
+        (tx.ncf || null) !== persisted.ncf
+      ) {
+        const e: any = new Error('Conflicto de NCF: el ticket ya tiene un comprobante fiscal diferente.');
+        e.code = 'IDEMPOTENCY_CONFLICT';
+        throw e;
+      }
+      if (
+        (persisted.ncf_type || null) !== null &&
+        (tx.ncfType || null) !== persisted.ncf_type
+      ) {
+        const e: any = new Error('Conflicto de tipo NCF: el ticket ya tiene otro tipo de comprobante fiscal.');
+        e.code = 'IDEMPOTENCY_CONFLICT';
+        throw e;
+      }
+
+      const { data: ncfRow, error: ncfError } = await supabase
+        .from('transactions')
+        .update({ ncf: tx.ncf || null, ncf_type: tx.ncfType || null })
+        .eq('id', tx.id)
+        .select('ncf,ncf_type')
+        .maybeSingle();
+      if (ncfError) throw ncfError;
+      if (!ncfRow || (tx.ncf && ncfRow.ncf !== tx.ncf) || (tx.ncfType && ncfRow.ncf_type !== tx.ncfType)) {
+        throw new Error('Supabase no confirmó el NCF después de guardarlo.');
+      }
+      (persisted as any).ncf = ncfRow.ncf;
+      (persisted as any).ncf_type = ncfRow.ncf_type;
     }
 
     const persistedItems = Array.isArray(persisted.items) ? persisted.items : [];
