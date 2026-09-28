@@ -78,5 +78,5 @@ begin
 end;
 $function$;
 
-revoke execute on function public.process_inventory_transfer_bulk_v2(text,text,text,text,jsonb,text) from public, anon, authenticated;
+revoke execute on function public.process_inventory_transfer_bulk_v2(text,text,text,jsonb,text) from public, anon, authenticated;
 grant execute on function public.process_inventory_transfer_bulk_v2(text,text,text,jsonb,text) to anon, authenticated;
