@@ -521,9 +521,6 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
       case 'audit_recount':
         add(dep('audit_start', 'audit-start:' + data.id));
         add(dep('audit_complete', 'audit:' + data.id));
-        for (const candidate of queueAtStart) {
-          if (candidate.type === 'audit_recount' && candidate.id !== item.id && candidate.data?.id === data.id) add(candidate);
-        }
         break;
       case 'audit_approve':
         add(dep('audit_start', 'audit-start:' + data.id));
