@@ -237,6 +237,8 @@ export async function pushTransactionToSupabase(tx: Transaction): Promise<boolea
       customer_id: tx.customerId || null,
       user_id: tx.userId || null,
       status: tx.status || 'completed',
+      ncf: tx.ncf || null,
+      ncf_type: tx.ncfType || null,
       notes: tx.notes || '',
       payment_method: tx.paymentMethod || 'cash',
       session_id: tx.sessionId || null,
