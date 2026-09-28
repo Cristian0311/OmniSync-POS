@@ -8,7 +8,6 @@ import {
   connectBluetoothPrinter,
   connectPrinter,
   getConnectedDeviceName,
-  isPrinterConnected,
   printThermalReceipt
 } from "../lib/escpos";
 import { useStore } from "../store/useStore";
@@ -496,7 +495,7 @@ export default function POS() {
     }
   };
 
-  const handlePrintIDNThermal = async (data: typeof showIDNReceiptModal, options?: { preferRawBT?: boolean }) => {
+  const handlePrintIDNThermal = async (data: typeof showIDNReceiptModal) => {
     if (!data) return;
     try {
       const lines: string[] = [
@@ -508,27 +507,26 @@ export default function POS() {
         "---",
         "BOLD|DETALLE DE VENTAS (CUP):",
       ];
-
       (data.details || []).forEach(d => {
         const label = `${d.qty}x ${(d.name || '').slice(0, 16)}`;
         const val = `${baseCurrency.symbol}${d.subtotal.toLocaleString()} CUP`;
         const spaceCount = Math.max(1, 32 - label.length - val.length);
         lines.push(`${label}${" ".repeat(spaceCount)}${val}`);
       });
-
       lines.push("---");
       lines.push(`BOLD|TOTAL LIQUIDAR: ${baseCurrency.symbol}${data.totalToPay.toLocaleString()} CUP`);
       lines.push("---");
       lines.push("CENTER|CUADRE REALIZADO CON EXITO");
-
-      await printThermalReceipt({ lines,
-        width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm', preferRawBT: options?.preferRawBT });
-      setPosSuccess("Enviado a imprimir vale térmico...");
+      await printThermalReceipt({
+        lines,
+        width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm'
+      });
+      setPosSuccess("Vale de liquidación enviado a la impresora.");
       setTimeout(() => setPosSuccess(""), 3000);
-    } catch (printErr) {
+    } catch (printErr: any) {
       console.warn("Thermal print error:", printErr);
-      setPosError("No se pudo imprimir el ticket.");
-      setTimeout(() => setPosError(""), 3000);
+      setPosError(printErr?.message || "No se pudo imprimir el ticket.");
+      setTimeout(() => setPosError(""), 3500);
     }
   };
 
@@ -944,6 +942,7 @@ export default function POS() {
       }
 
       setLastClosedSession(sessionToClose);
+      void handlePrintClosureThermal(sessionToClose);
       setClosingBalances({});
       setSessionWorkerName("");
       setSessionPassword("");
@@ -1736,121 +1735,62 @@ export default function POS() {
     return lines;
   };
 
-  const handleThermalPrint = async (tx: import("../types").Transaction, options?: { preferRawBT?: boolean; silent?: boolean }) => {
+  const handleThermalPrint = async (tx: import("../types").Transaction, options?: { silent?: boolean }) => {
     try {
       const lines = getTransactionReceiptLines(tx);
-      const isConnected = await isPrinterConnected();
-
-      if (options?.preferRawBT) {
-        await printThermalReceipt({
-          lines,
-          openDrawer: receiptConfig.openDrawer ?? true,
-          width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
-          preferRawBT: true,
-          onSuccess: () => {
-            setPosSuccess("Enviado a impresora (RawBT)");
+      await printThermalReceipt({
+        lines,
+        openDrawer: receiptConfig.openDrawer ?? true,
+        width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
+        onSuccess: (method) => {
+          if (!options?.silent) {
+            setPosSuccess(`Ticket enviado a impresora (${method === 'bluetooth' ? 'Bluetooth' : 'USB/Serie'})`);
             setTimeout(() => setPosSuccess(""), 2500);
           }
-        });
-        return;
-      }
-
-      if (!isConnected) {
-        // Direct attempt via printThermalReceipt (will use Bluetooth/Serial/RawBT)
-        const printed = await printThermalReceipt({
-          lines,
-          openDrawer: receiptConfig.openDrawer ?? true,
-          width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
-          onSuccess: (method) => {
-            setPosSuccess(`Ticket enviado (${method === 'bluetooth' ? 'Bluetooth' : method === 'rawbt' ? 'RawBT' : 'USB'})`);
-            setTimeout(() => setPosSuccess(""), 2500);
-          },
-          onError: () => {
-            if (!options?.silent) {
-              setPosError("Sin conexión activa con impresora");
-              setTimeout(() => setPosError(""), 3000);
-            }
+        },
+        onError: (error) => {
+          if (!options?.silent) {
+            setPosError(error?.message || "Sin conexión activa con impresora");
+            setTimeout(() => setPosError(""), 3500);
           }
-        });
-        if (!printed && !options?.silent) {
-          setPosError("Sin conexión activa con impresora");
-          setTimeout(() => setPosError(""), 3000);
         }
-      } else {
-        await printThermalReceipt({
-          lines,
-          openDrawer: receiptConfig.openDrawer ?? true,
-          width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
-          onSuccess: (method) => {
-            setPosSuccess(`Ticket impreso (${method === 'bluetooth' ? 'Bluetooth' : 'USB'})`);
-            setTimeout(() => setPosSuccess(""), 2500);
-          }
-        });
-      }
+      });
     } catch (err: any) {
       console.warn("Thermal print:", err);
       if (!options?.silent) {
-        setPosError("No se pudo imprimir el ticket");
-        setTimeout(() => setPosError(""), 3000);
+        setPosError(err?.message || "No se pudo imprimir el ticket");
+        setTimeout(() => setPosError(""), 3500);
       }
     }
   };
 
-  const handlePrintClosureThermal = async (session: CashRegisterSession | null, options?: { preferRawBT?: boolean }) => {
+  const handlePrintClosureThermal = async (session: CashRegisterSession | null, options?: { silent?: boolean }) => {
     if (!session) return;
     try {
       const lines = getClosureReceiptLines(session);
-      const isConnected = await isPrinterConnected();
-
-      setLastClosedSession(session);
-
-      if (options?.preferRawBT) {
-        await printThermalReceipt({
-          lines,
-          openDrawer: false,
-          width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
-          preferRawBT: true,
-          onSuccess: () => {
-            setPosSuccess("Cierre enviado a impresora (RawBT)");
+      await printThermalReceipt({
+        lines,
+        openDrawer: false,
+        width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
+        onSuccess: (method) => {
+          if (!options?.silent) {
+            setPosSuccess(`Cierre impreso (${method === 'bluetooth' ? 'Bluetooth' : 'USB/Serie'})`);
             setTimeout(() => setPosSuccess(""), 2500);
           }
-        });
-        return;
-      }
-
-      if (!isConnected) {
-        const printed = await printThermalReceipt({
-          lines,
-          openDrawer: false,
-          width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
-          onSuccess: (method) => {
-            setPosSuccess(`Comprobante impreso (${method === 'bluetooth' ? 'Bluetooth' : method === 'rawbt' ? 'RawBT' : 'USB'})`);
-            setTimeout(() => setPosSuccess(""), 2500);
-          },
-          onError: () => {
-            setPosError("Sin conexión a impresora");
-            setTimeout(() => setPosError(""), 3000);
+        },
+        onError: (error) => {
+          if (!options?.silent) {
+            setPosError(error?.message || "Sin conexión a impresora");
+            setTimeout(() => setPosError(""), 3500);
           }
-        });
-        if (!printed) {
-          setPosError("Sin impresora térmica conectada");
-          setTimeout(() => setPosError(""), 3000);
         }
-      } else {
-        await printThermalReceipt({
-          lines,
-          openDrawer: false,
-          width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
-          onSuccess: (method) => {
-            setPosSuccess(`Comprobante impreso (${method === 'bluetooth' ? 'Bluetooth' : 'USB'})`);
-            setTimeout(() => setPosSuccess(""), 2500);
-          }
-        });
-      }
+      });
     } catch (err: any) {
-      console.error('Error al imprimir comprobante:', err);
-      setPosError("No se pudo imprimir el comprobante");
-      setTimeout(() => setPosError(""), 3000);
+      console.error('Error al imprimir comprobante de cierre:', err);
+      if (!options?.silent) {
+        setPosError(err?.message || "No se pudo imprimir el comprobante de cierre");
+        setTimeout(() => setPosError(""), 3500);
+      }
     }
   };
 
@@ -2699,14 +2639,7 @@ export default function POS() {
                     <Printer className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" />
                     <span>Ticket 58mm</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handlePrintIDNThermal(showIDNReceiptModal, { preferRawBT: true })}
-                    className="py-2.5 px-2 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-xl font-black text-[9px] sm:text-[10px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
-                  >
-                    <Share2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                    <span>RawBT (Móvil)</span>
-                  </button>
+                  
                 </div>
 
                 <button
@@ -2890,14 +2823,7 @@ export default function POS() {
                         <Printer className="w-3 h-3 text-slate-500" />
                         Ticket 58mm
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => handlePrintClosureThermal(lastClosedSession, { preferRawBT: true })}
-                        className="py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-black text-[8px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95"
-                      >
-                        <Share2 className="w-3 h-3 text-indigo-500" />
-                        RawBT (Móvil)
-                      </button>
+                      
                     </div>
 
                     <button
@@ -3932,17 +3858,9 @@ export default function POS() {
                             className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
                           >
                             <Printer className="w-4 h-4" />
-                            Imprimir Resumen Turno (58mm)
+                            Imprimir Resumen de Cierre
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handlePrintClosureThermal(currentSession, { preferRawBT: true })}
-                            className="py-3 px-4 bg-slate-800 text-slate-200 rounded-xl font-black text-[10px] uppercase tracking-wider hover:bg-slate-900 transition-all active:scale-95 flex items-center justify-center gap-1.5"
-                            title="Impresión con RawBT para Android"
-                          >
-                            <Printer className="w-3.5 h-3.5 text-indigo-400" />
-                            RawBT
-                          </button>
+                          
                         </div>
                       </div>
                     );
@@ -4788,20 +4706,13 @@ export default function POS() {
                 <button 
                   onClick={() => handlePrintClosureThermal(lastClosedSession)}
                   className="py-2.5 px-2 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white text-white rounded-xl font-black text-[9px] sm:text-[10px] uppercase tracking-wider transition-all shadow-xs active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                  title="Impresión Térmica 58mm"
+                  title="Imprimir ticket en la impresora configurada"
                 >
                   <Printer className="w-3.5 h-3.5 shrink-0" />
-                  <span>Imprimir 58mm</span>
+                  <span>Imprimir Ticket</span>
                 </button>
 
-                <button 
-                  onClick={() => handlePrintClosureThermal(lastClosedSession, { preferRawBT: true })}
-                  className="py-2.5 px-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[9px] sm:text-[10px] uppercase tracking-wider transition-all shadow-xs active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                  title="Imprimir con RawBT (Android)"
-                >
-                  <Smartphone className="w-3.5 h-3.5 shrink-0" />
-                  <span>RawBT</span>
-                </button>
+                
               </div>
 
               <button 
@@ -5079,6 +4990,7 @@ export default function POS() {
           onPairBluetooth={handlePairBluetooth}
           onConnectUsb={handleConnectUsb}
           onPrinterConnectedChange={setConnectedPrinterName}
+          printerWidth={(receiptConfig.printerWidth || '58mm') as '58mm' | '80mm'}
           onSuccess={(message) => {
             setPosSuccess(message);
             if (message) setTimeout(() => setPosSuccess(""), 2500);

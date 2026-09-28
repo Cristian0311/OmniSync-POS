@@ -1,11 +1,12 @@
 import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useEffect } from "react";
-import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw, Usb, Bluetooth, Wifi, Printer, CheckCircle2, ExternalLink, AlertCircle, Sparkles, Smartphone, ChevronRight, Package, Search, X, Database, CreditCard, CloudUpload, CloudDownload, Check, Sun, Moon } from "lucide-react";
+import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw, Usb, Bluetooth, Wifi, Printer, CheckCircle2, ExternalLink, AlertCircle, Sparkles, ChevronRight, Package, Search, X, Database, CreditCard, CloudUpload, CloudDownload, Check, Sun, Moon } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { Branch, Category, User } from "../types";
 import { cn } from "../lib/utils";
 import { normalizeSemanticText } from "../utils/textUtils";
+import { connectBluetoothPrinter, connectPrinter, printESCPOS, isInsideIframe } from "../lib/escpos";
 
 export default function Settings() {
   const { 
@@ -1761,8 +1762,8 @@ export default function Settings() {
                 
                 <label className="flex items-center justify-between cursor-pointer group">
                   <div>
-                    <span className="text-[10px] font-bold text-secondary group-hover:text-primary transition-colors block uppercase">Impresión Nativa</span>
-                    <span className="text-[7px] text-muted font-medium uppercase">Directo USB / BT / WiFi</span>
+                    <span className="text-[10px] font-bold text-secondary group-hover:text-primary transition-colors block uppercase">Impresión Directa</span>
+                    <span className="text-[7px] text-muted font-medium uppercase">Directo Bluetooth BLE / USB / Serie</span>
                   </div>
                   <div className="relative inline-flex items-center ml-2 shrink-0">
                     <input 
@@ -1819,7 +1820,7 @@ export default function Settings() {
                         onClick={async () => {
                           setPrinterStatus({ type: 'loading', message: 'Buscando puertos USB...' });
                           try {
-                            const { connectPrinter, isInsideIframe } = await import('../lib/escpos');
+                            
                             if (isInsideIframe()) {
                               setPrinterStatus({
                                 type: 'warning',
@@ -1852,7 +1853,7 @@ export default function Settings() {
                         onClick={async () => {
                           setPrinterStatus({ type: 'loading', message: 'Escaneando Bluetooth...' });
                           try {
-                            const { connectBluetoothPrinter, isInsideIframe } = await import('../lib/escpos');
+                            
                             if (isInsideIframe()) {
                               setPrinterStatus({
                                 type: 'warning',
@@ -1881,25 +1882,12 @@ export default function Settings() {
                       </button>
                     </div>
 
-                    <div className="pt-2 border-t border-base flex items-center gap-2">
-                      <div className="relative flex-1">
-                        <Wifi size={12} className="text-muted absolute left-2.5 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="text"
-                          placeholder="IP (Ej: 192.168.1.100)"
-                          value={ticketConfig.printerIp || ''}
-                          onChange={e => setTicketConfig({ ...ticketConfig, printerIp: e.target.value })}
-                          className="w-full pl-7 pr-2 py-1.5 bg-primary border border-base rounded-lg text-[10px] font-bold text-primary placeholder:text-muted outline-none focus:ring-1 focus:ring-indigo-500"
-                        />
-                      </div>
-                    </div>
-
                     <div className="space-y-1 pt-1">
                       <button
                         type="button"
                         onClick={async () => {
                           try {
-                            const { printESCPOS } = await import('../lib/escpos');
+                            
                             const randomProducts = [...products].sort(() => 0.5 - Math.random()).slice(0, 2);
                             const productLines = randomProducts.map(p => `LEFT|${p.name.toUpperCase()} x1 ... $${p.price}`);
                             
@@ -1938,7 +1926,7 @@ export default function Settings() {
                 <div>
                   <label className="block text-[8px] font-black text-muted uppercase tracking-widest mb-1">Ancho de Papel</label>
                   <select 
-                    value={ticketConfig.printerWidth || '80mm'}
+                    value={ticketConfig.printerWidth || '58mm'}
                     onChange={e => setTicketConfig({...ticketConfig, printerWidth: e.target.value as '58mm' | '80mm'})}
                     className="w-full px-3 py-2 bg-primary border border-base rounded-xl text-xs font-bold text-primary outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                   >

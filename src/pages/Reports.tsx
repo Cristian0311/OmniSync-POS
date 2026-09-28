@@ -1,7 +1,7 @@
 import { useShallow } from 'zustand/react/shallow';
 import React, { lazy, Suspense, useCallback, useState, useMemo, useRef, useEffect } from "react";
 import { 
-  TrendingUp, DollarSign, Calendar, Calculator, Package, User, Users, Smartphone, Eye,
+  TrendingUp, DollarSign, Calendar, Calculator, Package, User, Users, Eye,
   X, ArrowDownRight, ArrowUpRight, ArrowLeftRight, ArrowRight, History, Download, Printer, CheckCircle2, 
   Clock, AlertCircle, AlertTriangle, FileSpreadsheet, ChevronDown, Check, Plus, Search,
   BarChart3, Brain, ListChecks, ShieldAlert, Loader2, Trash2,
@@ -18,6 +18,7 @@ import { useReportsAnalytics } from "../hooks/useReportsAnalytics";
 import type { ExcelExportData } from "../utils/excelExport";
 import { pullPosBootstrapFromSupabase } from "../services/supabaseSync/pull";
 import { getOfflineQueueCount } from "../services/offlineQueue";
+import { printThermalReceipt, format58mmLine } from "../lib/escpos";
 
 export default function Reports() {
   const store = useStore(useShallow((state) => ({
@@ -347,9 +348,8 @@ export default function Reports() {
     transferSearch
   });
 
-  const handlePrintIDNTicket = async (tx: any, preferRawBT = false) => {
+  const handlePrintIDNTicket = async (tx: any) => {
     try {
-      const { printThermalReceipt } = await import('../lib/escpos');
       const worker = users.find(u => u.id === tx.userId);
       const workerName = tx.cashierName || worker?.name || 'Vendedor IDN';
       const branchName = branches.find(b => b.id === tx.branchId)?.name || 'Almacén';
@@ -379,11 +379,12 @@ export default function Reports() {
 
       await printThermalReceipt({
         lines,
-        width: '58mm',
-        preferRawBT
+        width: (receiptConfig?.printerWidth || '58mm') as '58mm' | '80mm'
       });
-    } catch (err) {
+      addNotification("Vale IDN enviado a la impresora.", "success");
+    } catch (err: any) {
       console.warn("Thermal print error:", err);
+      addNotification(err?.message || "No se pudo imprimir el vale IDN.", "error");
     }
   };
 
@@ -417,35 +418,22 @@ export default function Reports() {
     return Array.from(sessionMap.values());
   }, [cashSessions, transactions]);
 
-  // El número de turno es persistido por Supabase y es la autoridad global.
-  // Los registros históricos sin número reciben un número temporal determinista
-  // después de los números persistidos, para no reordenar turnos ya numerados.
+  // Los turnos visibles se presentan siempre consecutivos. La base de datos
+  // mantiene la misma secuencia después de cada eliminación mediante sus triggers.
   const sessionTurnMap = useMemo(() => {
     const map = new Map<string, string>();
-    const ordered = [...reconciledSessions].sort(
-      (a, b) =>
-        new Date(a.openedAt || a.closedAt || '').getTime() -
-        new Date(b.openedAt || b.closedAt || '').getTime()
-    );
-    const usedNumbers = new Set<number>();
+    const ordered = [...reconciledSessions]
+      .filter(session => !session.deletedAt)
+      .sort((a, b) => {
+        const timeA = new Date(a.openedAt || a.closedAt || '').getTime();
+        const timeB = new Date(b.openedAt || b.closedAt || '').getTime();
+        if (timeA !== timeB) return timeA - timeB;
+        return a.id.localeCompare(b.id);
+      });
 
-    for (const session of ordered) {
-      const number = Number(session.turnNumber);
-      if (Number.isFinite(number) && number > 0) {
-        map.set(session.id, `Turno-${number}`);
-        usedNumbers.add(number);
-      }
-    }
-
-    let nextNumber = Math.max(0, ...Array.from(usedNumbers)) + 1;
-    for (const session of ordered) {
-      if (map.has(session.id)) continue;
-      while (usedNumbers.has(nextNumber)) nextNumber += 1;
-      map.set(session.id, `Turno-${nextNumber}`);
-      usedNumbers.add(nextNumber);
-      nextNumber += 1;
-    }
-
+    ordered.forEach((session, index) => {
+      map.set(session.id, `Turno-${index + 1}`);
+    });
     return map;
   }, [reconciledSessions]);
 
@@ -663,7 +651,7 @@ export default function Reports() {
     }
 
     try {
-      const { printThermalReceipt, format58mmLine } = await import('../lib/escpos');
+
       const branch = branches.find(b => b.id === session.branchId);
       const payrollItem = payrollList.find(p => p.sessionId === session.id);
       const sequentialTurn = sessionTurnMap.get(session.id) || session.id;
@@ -729,7 +717,7 @@ export default function Reports() {
       await printThermalReceipt({
         lines,
         openDrawer: false,
-        width: '58mm',
+        width: (receiptConfig?.printerWidth || '58mm') as '58mm' | '80mm',
         onError: (err) => {
           console.warn('Direct thermal print failed:', err);
         }
@@ -1123,41 +1111,42 @@ export default function Reports() {
     }
   };
 
-  const handlePrintTransferTicket = async (transfer: import('../types').InventoryTransfer, preferRawBT = false) => {
+  const handlePrintTransferTicket = async (transfer: import('../types').InventoryTransfer) => {
     try {
-      const { printThermalReceipt, format58mmLine } = await import('../lib/escpos');
       const user = users.find(u => u.id === transfer.userId);
       const fromB = branches.find(b => b.id === transfer.fromBranchId)?.name || transfer.fromBranchName || 'Origen';
       const toB = branches.find(b => b.id === transfer.toBranchId)?.name || transfer.toBranchName || 'Destino';
       const dateStr = new Date(transfer.date).toLocaleDateString('es-CU');
       const timeStr = new Date(transfer.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const width = (receiptConfig?.printerWidth || '58mm') as '58mm' | '80mm';
+      const cols = width === '58mm' ? 32 : 48;
 
       const lines: string[] = [
         "CENTER|BOLD|" + (receiptConfig?.businessName || "MARÉ POS"),
         "CENTER|VALE DE TRANSFERENCIA STOCK",
         "---",
-        format58mmLine("FECHA:", dateStr, 32),
-        format58mmLine("HORA:", timeStr, 32),
-        format58mmLine("ORIGEN:", fromB.slice(0, 18), 32),
-        format58mmLine("DESTINO:", toB.slice(0, 18), 32),
-        format58mmLine("RESPONSABLE:", (user?.name || transfer.userId || 'Sistema').slice(0, 15), 32),
+        format58mmLine("FECHA:", dateStr, cols),
+        format58mmLine("HORA:", timeStr, cols),
+        format58mmLine("ORIGEN:", fromB, cols),
+        format58mmLine("DESTINO:", toB, cols),
+        format58mmLine("RESPONSABLE:", user?.name || transfer.userId || 'Sistema', cols),
         "---",
         "PRODUCTO | VAR | CANT",
         `${transfer.productName} | ${transfer.variantLabel || 'Base'} | ${transfer.quantity} uds`,
         "---",
-        format58mmLine("TOTAL UDS:", `${transfer.quantity} UDS`, 32),
+        format58mmLine("TOTAL UDS:", `${transfer.quantity} UDS`, cols),
         "---",
         "CENTER|EMITIDO Y REGISTRADO"
       ];
 
       await printThermalReceipt({
         lines,
-        width: '58mm',
-        preferRawBT
+        width
       });
-      if (addNotification) addNotification("Comprobante de transferencia enviado a impresión", "success");
-    } catch (e) {
+      addNotification("Comprobante de transferencia enviado a impresión", "success");
+    } catch (e: any) {
       console.error("Error printing transfer ticket:", e);
+      addNotification(e?.message || "No se pudo imprimir el comprobante de transferencia.", "error");
     }
   };
 

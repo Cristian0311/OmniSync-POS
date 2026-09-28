@@ -1,5 +1,5 @@
 import React from 'react';
-import { Printer, Receipt, Smartphone, MessageSquare, X } from 'lucide-react';
+import { Printer, Receipt, MessageSquare, X } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import type { Currency, Product, Transaction } from '../types';
 
@@ -11,7 +11,7 @@ interface POSReceiptModalProps {
   formatMoney: (amount: number, symbol: string) => string;
   onClose: () => void;
   onWhatsAppReceipt: (tx: Transaction) => void;
-  onThermalPrint: (tx: Transaction, options?: { preferRawBT?: boolean }) => void | Promise<void>;
+  onThermalPrint: (tx: Transaction) => void | Promise<void>;
 }
 
 export default function POSReceiptModal({
@@ -256,21 +256,12 @@ export default function POSReceiptModal({
           </button>
           
           <button 
-            onClick={() => onThermalPrint(showReceiptModal, { preferRawBT: true })}
-            className="order-3 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm shadow-indigo-200 dark:shadow-none active:scale-95 cursor-pointer"
-            title="Impresión directa para Android con RawBT"
-          >
-            <Smartphone className="w-3.5 h-3.5 text-indigo-200 shrink-0" />
-            <span>RawBT</span>
-          </button>
-
-          <button 
             onClick={() => onThermalPrint(showReceiptModal)}
             className="order-4 py-2 px-3 bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white text-white rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
-            title="Impresión Térmica Directa 58mm (Bluetooth / USB)"
+            title="Imprimir ticket en la impresora configurada (Bluetooth / USB)"
           >
             <Printer className="w-3.5 h-3.5 shrink-0" />
-            <span>Imprimir 58mm</span>
+            <span>Imprimir Ticket</span>
           </button>
         </div>
       </div>
