@@ -1,6 +1,5 @@
 import { getSupabase } from '../../lib/supabase';
 import { useStore } from '../../store/useStore';
-import { enqueueOfflineItem } from '../offlineSync';
 import { normalizeSemanticText } from '../../utils/textUtils';
 import { 
   Product, Category, Branch, InventoryLevel, User, 

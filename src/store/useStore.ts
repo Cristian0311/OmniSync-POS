@@ -36,6 +36,52 @@ function removeFromOfflineQueueByTransactionId(transactionId: string) {
   if (queued) removeFromOfflineQueue(queued.id);
 }
 
+async function refreshInventoryBranchesFromSupabase(branchIds: string[]): Promise<boolean> {
+  const ids = Array.from(new Set(branchIds.filter(Boolean)));
+  if (!ids.length) return true;
+  try {
+    const results = await Promise.all(ids.map(id => pullBranchInventoryFromSupabase(id)));
+    if (results.some(result => !result.success)) return false;
+
+    const byKey = new Map<string, InventoryLevel>();
+    useStore.getState().inventory.forEach(item => {
+      if (!ids.includes(item.branchId)) {
+        byKey.set(`${item.productId}:${item.branchId}:${item.variantLabel || ''}`, item);
+      }
+    });
+
+    for (const result of results) {
+      for (const item of result.inventory) {
+        byKey.set(`${item.productId}:${item.branchId}:${item.variantLabel || ''}`, item);
+      }
+    }
+
+    useStore.setState({ inventory: Array.from(byKey.values()) });
+    return true;
+  } catch (error) {
+    console.warn('[inventory] No se pudo refrescar el inventario canónico de las sucursales:', error);
+    return false;
+  }
+}
+
+function applyCanonicalInventoryQuantity(
+  productId: string,
+  branchId: string,
+  variantLabel: string | undefined,
+  quantity: number
+): void {
+  const label = variantLabel || '';
+  useStore.setState(state => ({
+    inventory: (state.inventory || []).map(item =>
+      item.productId === productId &&
+      item.branchId === branchId &&
+      (item.variantLabel || '') === label
+        ? { ...item, quantity: Math.max(0, Number(quantity) || 0) }
+        : item
+    )
+  }));
+}
+
 function replaceRemoteRecords<T extends Record<string, any>>(
   remoteData: T[] | undefined,
   localData: T[],
@@ -814,6 +860,9 @@ export const useStore = create<AppState>()(
     await enqueueOfflineItem('transfer', serverPayload, actionId);
 
     let wasOnline = typeof navigator !== 'undefined' && navigator.onLine;
+    let serverConfirmed = false;
+    let canonicalRefreshed = false;
+
     if (wasOnline) {
       try {
         const res = await callTransferInventoryRPC(serverPayload);
@@ -826,12 +875,28 @@ export const useStore = create<AppState>()(
           }
 
           // Timeout/5xx/corte de red: el servidor pudo haber aplicado el
-          // traslado. Conservamos EXACTAMENTE la operación original en la cola,
-          // la mostramos como pendiente y aplicamos el mismo espejo local que
-          // usamos offline. Así el cajero no la repite manualmente.
+          // traslado. Conservamos EXACTAMENTE la operación original en la cola
+          // para replay idempotente y no la marcamos como completada.
           wasOnline = false;
         } else {
-          removeFromOfflineQueueByAction('transfer', actionId);
+          serverConfirmed = true;
+
+          // La RPC ya cambió el stock canónico. No debemos volver a calcular el
+          // stock desde un snapshot local que puede estar atrasado respecto a
+          // otra tablet. Solo retiramos la operación de la cola cuando podemos
+          // refrescar origen y destino desde Supabase.
+          canonicalRefreshed = await refreshInventoryBranchesFromSupabase([
+            fromBranchId,
+            toBranchId
+          ]);
+          if (canonicalRefreshed) {
+            removeFromOfflineQueueByAction('transfer', actionId);
+          } else {
+            // El servidor confirmó, pero el refresh local no llegó. Se conserva
+            // en la cola para que el siguiente replay vuelva a verificar por
+            // operation_id y termine de reconciliar el espejo local.
+            wasOnline = false;
+          }
         }
       } catch (err: any) {
         console.warn('[transferInventoryBatch] Fallo de transporte; operación durable queda pendiente:', err);
@@ -839,18 +904,51 @@ export const useStore = create<AppState>()(
       }
     }
 
-    const newInventory = [...get().inventory];
-    let totalQuantity = 0;
-    for (const v of activeVariants) {
-      totalQuantity += v.quantity;
-      const sourceIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === fromBranchId && (i.variantLabel || '') === v.variantLabel);
-      if (sourceIdx !== -1) newInventory[sourceIdx] = { ...newInventory[sourceIdx], quantity: Math.max(0, newInventory[sourceIdx].quantity - v.quantity) };
-      const targetIdx = newInventory.findIndex(i => i.productId === productId && i.branchId === toBranchId && (i.variantLabel || '') === v.variantLabel);
-      if (targetIdx !== -1) newInventory[targetIdx] = { ...newInventory[targetIdx], quantity: newInventory[targetIdx].quantity + v.quantity };
-      else newInventory.push({ id: crypto.randomUUID(), productId, branchId: toBranchId, variantLabel: v.variantLabel || undefined, quantity: v.quantity, minQuantity: 5 });
-    }
-    set({ inventory: newInventory });
+    // Solo hacemos espejo optimista cuando la operación todavía necesita
+    // sincronizarse o cuando Supabase confirmó el traslado pero el refresh
+    // canónico no estuvo disponible. Un éxito online completamente reconciliado
+    // no toca el stock local con cálculos basados en un snapshot potencialmente
+    // obsoleto.
+    if (!canonicalRefreshed) {
+      const newInventory = [...get().inventory];
+      for (const v of activeVariants) {
+        const sourceIdx = newInventory.findIndex(i =>
+          i.productId === productId &&
+          i.branchId === fromBranchId &&
+          (i.variantLabel || '') === v.variantLabel
+        );
+        if (sourceIdx !== -1) {
+          newInventory[sourceIdx] = {
+            ...newInventory[sourceIdx],
+            quantity: Math.max(0, newInventory[sourceIdx].quantity - v.quantity)
+          };
+        }
 
+        const targetIdx = newInventory.findIndex(i =>
+          i.productId === productId &&
+          i.branchId === toBranchId &&
+          (i.variantLabel || '') === v.variantLabel
+        );
+        if (targetIdx !== -1) {
+          newInventory[targetIdx] = {
+            ...newInventory[targetIdx],
+            quantity: newInventory[targetIdx].quantity + v.quantity
+          };
+        } else {
+          newInventory.push({
+            id: crypto.randomUUID(),
+            productId,
+            branchId: toBranchId,
+            variantLabel: v.variantLabel || undefined,
+            quantity: v.quantity,
+            minQuantity: 5
+          });
+        }
+      }
+      set({ inventory: newInventory });
+    }
+
+    const totalQuantity = activeVariants.reduce((sum, v) => sum + v.quantity, 0);
     const product = get().products.find(p => p.id === productId);
     const fromBranch = get().branches.find(b => b.id === fromBranchId);
     const toBranch = get().branches.find(b => b.id === toBranchId);
@@ -859,7 +957,7 @@ export const useStore = create<AppState>()(
       fromBranchId, fromBranchName: fromBranch?.name || 'Sucursal Origen',
       toBranchId, toBranchName: toBranch?.name || 'Sucursal Destino',
       quantity: totalQuantity, variants: activeVariants, date: new Date().toISOString(),
-      userId, status: wasOnline ? 'completed' : 'pending', variantLabel: activeVariants.length === 1 ? (activeVariants[0].variantLabel || 'Producto Base') : activeVariants.map(v => v.variantLabel || 'Base').join(', '),
+      userId, status: serverConfirmed && canonicalRefreshed ? 'completed' : 'pending', variantLabel: activeVariants.length === 1 ? (activeVariants[0].variantLabel || 'Producto Base') : activeVariants.map(v => v.variantLabel || 'Base').join(', '),
       transactionId, batchId
     };
     get().addTransfer(transferRecord);
@@ -892,6 +990,9 @@ export const useStore = create<AppState>()(
         continue;
       }
       const res = await reconcileInventoryToSupabase(op);
+      if (res.success && !res.conflict && Number.isFinite(Number(res.data?.quantity))) {
+        applyCanonicalInventoryQuantity(op.productId, op.branchId, op.variantLabel, Number(res.data.quantity));
+      }
       if (!res.success || res.conflict) {
         await enqueueOfflineItem('inventory_reconcile', op, op.operationId);
         needsRefresh = true;
@@ -964,14 +1065,24 @@ export const useStore = create<AppState>()(
       return;
     }
     applyInventoryAdjustmentToSupabase(payload).then(async res => {
-      if (!res.success || res.conflict) {
-        await enqueueOfflineItem('inventory_adjustment', payload, operationId);
-        // En un conflicto multi-tablet, el stock local ya no es confiable:
-        // vuelve a leer el valor canónico sin eliminar la operación pendiente.
-        await get().refreshBranchInventory().catch(err =>
-          console.warn('[adjustInventory] No se pudo refrescar tras conflicto:', err)
-        );
+      if (res.success && !res.conflict) {
+        const canonicalQuantity = Number(res.data?.quantity);
+        if (Number.isFinite(canonicalQuantity)) {
+          applyCanonicalInventoryQuantity(productId, branchId, variantLabel, canonicalQuantity);
+        } else {
+          await get().refreshBranchInventory().catch(err =>
+            console.warn('[adjustInventory] No se pudo refrescar tras confirmación:', err)
+          );
+        }
+        return;
       }
+
+      await enqueueOfflineItem('inventory_adjustment', payload, operationId);
+      // En un conflicto multi-tablet, el stock local ya no es confiable:
+      // vuelve a leer el valor canónico sin eliminar la operación pendiente.
+      await get().refreshBranchInventory().catch(err =>
+        console.warn('[adjustInventory] No se pudo refrescar tras conflicto:', err)
+      );
     }).catch(async err => {
       await enqueueOfflineItem('inventory_adjustment', payload, operationId);
       console.warn('[adjustInventory] Ajuste pendiente por error de red:', err);
@@ -999,6 +1110,9 @@ export const useStore = create<AppState>()(
       return;
     }
     reconcileInventoryToSupabase({ ...payload, newQuantity }).then(async res => {
+      if (res.success && !res.conflict && Number.isFinite(Number(res.data?.quantity))) {
+        applyCanonicalInventoryQuantity(productId, branchId, variantLabel, Number(res.data.quantity));
+      }
       if (!res.success || res.conflict) {
         await enqueueOfflineItem('inventory_reconcile', payload, operationId);
         await get().refreshBranchInventory();
