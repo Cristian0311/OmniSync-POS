@@ -31,6 +31,7 @@ export interface OfflineQueueItem {
 }
 
 const STORAGE_KEY = 'pos_offline_sync_queue';
+const TOMBSTONES_KEY = 'pos_offline_sync_queue_tombstones';
 const DB_NAME = 'omnisync-pos-offline';
 const DB_VERSION = 1;
 const STORE_NAME = 'operations';
@@ -54,6 +55,43 @@ function getDeviceId(): string {
   const id = crypto.randomUUID();
   localStorage.setItem(DEVICE_KEY, id);
   return id;
+}
+
+function readQueueTombstones(): Set<string> {
+  if (typeof localStorage === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(TOMBSTONES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeQueueTombstones(ids: Iterable<string>): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(TOMBSTONES_KEY, JSON.stringify(Array.from(new Set(ids))));
+  } catch (e) {
+    console.warn('[offlineSync] No se pudo persistir el registro de borrados de la cola:', e);
+  }
+}
+
+function addQueueTombstone(id: string): void {
+  const tombstones = readQueueTombstones();
+  tombstones.add(String(id));
+  writeQueueTombstones(tombstones);
+}
+
+function removeQueueTombstone(id: string): void {
+  const tombstones = readQueueTombstones();
+  if (!tombstones.delete(String(id))) return;
+  writeQueueTombstones(tombstones);
+}
+
+function clearQueueTombstones(): void {
+  if (typeof localStorage === 'undefined') return;
+  try { localStorage.removeItem(TOMBSTONES_KEY); } catch {}
 }
 
 function openDb(): Promise<IDBDatabase | null> {
@@ -146,6 +184,7 @@ async function migrateLegacyQueue(): Promise<void> {
   if (typeof window === 'undefined') { queueReady = true; return; }
   const legacyRaw = localStorage.getItem(STORAGE_KEY);
   const legacy = legacyRaw ? (() => { try { return JSON.parse(legacyRaw); } catch { return []; } })() : [];
+  const tombstones = readQueueTombstones();
   let existing: OfflineQueueItem[] | null = null;
   try {
     existing = await idbGetAll();
@@ -165,10 +204,13 @@ async function migrateLegacyQueue(): Promise<void> {
     const normalized = { ...item, deviceId: item.deviceId || getDeviceId() };
     merged.set(`${normalized.type}:${normalized.actionId}`, normalized);
   }
-  memoryQueue = Array.from(merged.values()).sort((a,b) => a.timestamp.localeCompare(b.timestamp));
+  memoryQueue = Array.from(merged.values())
+    .filter(item => !tombstones.has(String(item.id)))
+    .sort((a,b) => a.timestamp.localeCompare(b.timestamp));
   try {
     await idbReplaceAll(memoryQueue);
     if (legacyRaw) localStorage.removeItem(STORAGE_KEY);
+    clearQueueTombstones();
   } catch (e) {
     persistenceError = e instanceof Error ? e : new Error(String(e));
     // Si IndexedDB está dañado/bloqueado, conservamos una copia durable en
@@ -236,6 +278,7 @@ function persistQueueItem(item: OfflineQueueItem): Promise<void> {
     if (!queueReady && queueInitPromise) await queueInitPromise;
     if (typeof indexedDB !== 'undefined') {
       try {
+        removeQueueTombstone(item.id);
         await idbPut(item);
         persistenceError = null;
         return;
@@ -270,11 +313,17 @@ function persistQueueItem(item: OfflineQueueItem): Promise<void> {
 }
 
 function persistQueueDelete(id: string): Promise<void> {
+  addQueueTombstone(id);
   persistenceChain = persistenceChain.then(async () => {
     if (!queueReady && queueInitPromise) await queueInitPromise;
     if (typeof indexedDB !== 'undefined') {
-      await idbDelete(id);
-      return;
+      try {
+        await idbDelete(id);
+        return;
+      } catch (idbError) {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch {}
+        throw idbError;
+      }
     }
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch (e) {
       console.error('[offlineSync] Error al guardar cola offline:', e);
@@ -282,7 +331,7 @@ function persistQueueDelete(id: string): Promise<void> {
   }).catch(async e => {
     persistenceError = e instanceof Error ? e : new Error(String(e));
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryQueue)); } catch { /* se reporta y se conserva en memoria */ }
-    console.error('[offlineSync] Error persistiendo cola:', e);
+    console.error('[offlineSync] Error persistiendo eliminación de cola offline:', e);
   });
   return persistenceChain;
 }
@@ -293,13 +342,25 @@ async function waitForQueuePersistence(): Promise<void> {
 }
 
 function persistQueueClear(): void {
+  const ids = memoryQueue.map(item => String(item.id));
+  writeQueueTombstones(new Set([...readQueueTombstones(), ...ids]));
   persistenceChain = persistenceChain.then(async () => {
     if (!queueReady && queueInitPromise) await queueInitPromise;
     if (typeof indexedDB !== 'undefined') {
-      await idbClear();
-      return;
+      try {
+        await idbClear();
+        clearQueueTombstones();
+        return;
+      } catch (idbError) {
+        try { localStorage.removeItem(STORAGE_KEY); } catch {}
+        console.warn('[offlineSync] No se pudo limpiar IndexedDB; los tombstones evitarán la reaparición:', idbError);
+        return;
+      }
     }
-    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      clearQueueTombstones();
+    } catch (e) {
       console.error('[offlineSync] Error al limpiar cola offline:', e);
     }
   }).catch(e => console.error('[offlineSync] Error persistiendo cola:', e));
@@ -335,6 +396,7 @@ export function enqueueOfflineItem(type: OfflineActionType, data: any, actionId?
 export function removeFromOfflineQueue(id: string): void {
   removedDuringQueueProcess.add(id);
   memoryQueue = memoryQueue.filter(item => item.id !== id);
+  addQueueTombstone(id);
   emitQueueEvent();
   persistQueueDelete(id);
 }
