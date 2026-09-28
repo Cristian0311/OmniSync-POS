@@ -205,6 +205,7 @@ export const useStore = create<AppState>()(
     
     // 1. Intentar buscar en los usuarios locales (que vienen de Supabase sincronizados o INITIAL_USERS)
     let user = get().users.find(u => 
+      u.isActive !== false &&
       ((u.email || '').trim().toLowerCase() === cleanIdentifier || (u.name || '').trim().toLowerCase() === cleanIdentifier) && 
       u.password === pass
     );
