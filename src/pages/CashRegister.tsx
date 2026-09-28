@@ -583,7 +583,7 @@ export default function CashRegister() {
                     sessionProducts.map((sp, idx) => (
                       <div key={idx} className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
                         <div className="flex justify-between items-start mb-1">
-                          <p className="text-[10px] font-black text-slate-900 uppercase tracking-tighter truncate max-w-[120px]">{sp.name}</p>
+                          <p className="text-[10px] font-black text-slate-900 uppercase tracking-tighter whitespace-normal break-words max-w-[180px]">{sp.name}</p>
                           <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-lg uppercase">{sp.currency}</span>
                         </div>
                         <div className="flex justify-between items-center">
@@ -623,8 +623,8 @@ export default function CashRegister() {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {useStore.getState().cashSessions
-                .filter(s => s.branchId === currentBranchId)
-                .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime())
+                .filter(s => s.branchId === currentBranchId && !s.deletedAt)
+                .sort((a, b) => (Number(b.turnNumber || 0) - Number(a.turnNumber || 0)) || (new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime()))
                 .slice(0, 10)
                 .map(s => {
                   const finalCash = s.closingBalances?.find(b => b.currencyCode === baseCurrency.code && b.method === 'cash')?.amount || 0;

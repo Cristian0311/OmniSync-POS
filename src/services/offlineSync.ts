@@ -111,16 +111,21 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     }
     case 'salary_settlement': {
       const settlement = data;
-      // Keep the offline replay payload aligned with the live schema.
-      // `discrepancy_deduction` was removed from salary_settlements; sending it
-      // through PostgREST produces a 400/PGRST204 and leaves the item stuck.
       const { error } = await supabase.from('salary_settlements').upsert({
         id: settlement.id, user_id: settlement.userId || null, user_name: settlement.userName || '',
-        session_id: settlement.sessionId || null, base_salary: settlement.baseSalary || 0,
-        sales_goal: settlement.salesGoal || 0, commissions: settlement.commissions || 0,
-        total: settlement.total || 0, date: settlement.date, status: settlement.status || 'pending'
+        session_id: settlement.sessionId || null, base_salary: Number(settlement.baseSalary) || 0,
+        sales_goal: Number(settlement.salesGoal) || 0, commissions: Number(settlement.commissions) || 0,
+        total: Number(settlement.total) || 0, date: settlement.date, status: settlement.status || 'pending'
       });
       if (error) throw error;
+
+      const { data: persisted, error: verifyError } = await supabase
+        .from('salary_settlements')
+        .select('id,user_id,session_id,total,status')
+        .eq('id', settlement.id)
+        .maybeSingle();
+      if (verifyError) throw verifyError;
+      if (!persisted) throw new Error('Liquidación salarial no confirmada en Supabase después del replay.');
       return true;
     }
     case 'customer': {
@@ -598,7 +603,7 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
   }
 
   isProcessingQueue = false;
-  return { processed, failed, remaining: finalQueue.length, errors };
+  return { processed, failed, remaining: finalQueue.filter(item => item.status !== 'conflict').length, errors };
 }
 
 function isManualOfflineSyncEnabled(): boolean {

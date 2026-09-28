@@ -1801,7 +1801,7 @@ export default function Reports() {
                           {/* Vendedor y Sucursal en una sola línea */}
                           <td className="px-3 py-2 whitespace-nowrap">
                             <div className="flex items-center gap-1.5">
-                              <span className="text-[11px] font-black text-primary uppercase">{workerName}</span>
+                              <span className="text-[11px] font-black text-primary uppercase whitespace-normal break-words">{workerName}</span>
                               <span className="text-[8px] font-bold text-muted uppercase bg-subtle px-1.5 py-0.5 rounded border border-base">
                                 {branchName}
                               </span>
