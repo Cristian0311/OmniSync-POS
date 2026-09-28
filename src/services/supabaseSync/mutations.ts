@@ -1173,31 +1173,43 @@ export async function pushInventoryAuditToSupabase(audit: InventoryAudit) {
 export async function pushSalarySettlementToSupabase(settlement: SalarySettlement) {
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     enqueueOfflineItem('salary_settlement', settlement, settlement.id);
-    return;
+    return null;
   }
   const supabase = getSupabase();
   if (!supabase) {
     enqueueOfflineItem('salary_settlement', settlement, settlement.id);
-    return;
+    return null;
   }
   try {
+    // El esquema actual no tiene discrepancy_deduction. La deducción ya queda
+    // reflejada en total y no se envía como columna adicional.
     const row = {
       id: settlement.id,
-      user_id: settlement.userId,
-      user_name: settlement.userName,
-      session_id: settlement.sessionId,
-      base_salary: settlement.baseSalary,
-      sales_goal: settlement.salesGoal,
-      commissions: settlement.commissions,
-      total: settlement.total,
+      user_id: settlement.userId || null,
+      user_name: settlement.userName || '',
+      session_id: settlement.sessionId || null,
+      base_salary: Number(settlement.baseSalary) || 0,
+      sales_goal: Number(settlement.salesGoal) || 0,
+      commissions: Number(settlement.commissions) || 0,
+      total: Number(settlement.total) || 0,
       date: settlement.date,
-      status: settlement.status
+      status: settlement.status || 'pending'
     };
     const result = await safeUpsert(supabase, 'salary_settlements', row);
     if (result?.error) throw result.error;
+
+    const { data: persisted, error: verifyError } = await supabase
+      .from('salary_settlements')
+      .select('id,user_id,session_id,total,status')
+      .eq('id', settlement.id)
+      .maybeSingle();
+    if (verifyError) throw verifyError;
+    if (!persisted) throw new Error('Liquidación salarial no confirmada en Supabase después del upsert.');
+    return persisted;
   } catch (e) {
     enqueueOfflineItem('salary_settlement', settlement, settlement.id);
     console.warn("Supabase push salary settlement failed:", e);
+    return null;
   }
 }
 
