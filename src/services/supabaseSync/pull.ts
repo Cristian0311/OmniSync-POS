@@ -191,7 +191,7 @@ export async function pullBranchOperationalDataFromSupabase(branchId: string): P
       deletedAt:t.deleted_at||undefined,deletedBy:t.deleted_by||undefined,deleteReason:t.delete_reason||undefined
     }));
     const cashSessions: CashRegisterSession[] = (sessionsRes.data || []).map((s:any) => ({
-      id:s.id,userId:s.user_id,workerName:s.worker_name,branchId:s.branch_id,openedAt:s.opened_at,
+      id:s.id,turnNumber:Number(s.turn_number)||undefined,userId:s.user_id,workerName:s.worker_name,branchId:s.branch_id,openedAt:s.opened_at,
       closedAt:s.closed_at,openingBalance:Number(s.opening_balance??s.opening_amount)||0,
       openingAmount:Number(s.opening_amount??s.opening_balance)||0,closingBalances:Array.isArray(s.closing_balances)?s.closing_balances:[],
       status:s.status||'open',notes:s.notes||'',closingDate:s.closing_date||undefined,
@@ -299,7 +299,7 @@ export async function pullPosBootstrapFromSupabase(branchId?: string): Promise<{
     const mapUser = (u:any): User => ({ id:u.id,name:u.name,email:u.email||'',password:u.password||'',role:u.role||'employee',commissionRate:Number(u.commission_rate)||0,baseSalary:Number(u.base_salary)||0,salesGoal:Number(u.sales_goal)||0,branchId:u.branch_id||undefined,allowedBranches:Array.isArray(u.allowed_branches)?u.allowed_branches:undefined,permissions:Array.isArray(u.permissions)?u.permissions:undefined,isActive:u.is_active!==false,isIndependent:u.is_independent===true,assignedBranchId:u.assigned_branch_id||undefined });
     const mapCustomer = (c:any): Customer => ({ id:c.id,name:c.name,email:c.email||'',phone:c.phone||'',taxId:c.tax_id||'' });
     const mapTx = (t:any): Transaction => ({ id:t.id,date:t.date,total:Number(t.total)||0,tax:Number(t.tax)||0,discount:Number(t.discount)||0,branchId:t.branch_id,customerId:t.customer_id,userId:t.user_id,status:t.status||'completed',notes:t.notes||'',paymentMethod:t.payment_method||'cash',sessionId:t.session_id,changeGiven:Number(t.change_given)||0,items:normalizeTransactionItems(t.items, mappedProducts),payments:Array.isArray(t.payments)?t.payments:[],changePayments:Array.isArray(t.change_payments)?t.change_payments:[],sellerEmployeeIds:Array.isArray(t.seller_employee_ids)?t.seller_employee_ids:[],deletedAt:t.deleted_at||undefined,deletedBy:t.deleted_by||undefined,deleteReason:t.delete_reason||undefined });
-    const mapSession = (s:any): CashRegisterSession => ({ id:s.id,userId:s.user_id,workerName:s.worker_name,branchId:s.branch_id,openedAt:s.opened_at,closedAt:s.closed_at,openingBalance:Number(s.opening_balance??s.opening_amount)||0,openingAmount:Number(s.opening_amount??s.opening_balance)||0,closingBalances:Array.isArray(s.closing_balances)?s.closing_balances:[],status:s.status||'open',notes:s.notes||'',closingDate:s.closing_date||undefined,workingEmployeeIds:Array.isArray(s.working_employee_ids)?s.working_employee_ids:[],movements:Array.isArray(s.movements)?s.movements:[] });
+    const mapSession = (s:any): CashRegisterSession => ({ id:s.id,turnNumber:Number(s.turn_number)||undefined,userId:s.user_id,workerName:s.worker_name,branchId:s.branch_id,openedAt:s.opened_at,closedAt:s.closed_at,openingBalance:Number(s.opening_balance??s.opening_amount)||0,openingAmount:Number(s.opening_amount??s.opening_balance)||0,closingBalances:Array.isArray(s.closing_balances)?s.closing_balances:[],status:s.status||'open',notes:s.notes||'',closingDate:s.closing_date||undefined,workingEmployeeIds:Array.isArray(s.working_employee_ids)?s.working_employee_ids:[],movements:Array.isArray(s.movements)?s.movements:[] });
     return { success:true, data:{
       branches:(branchesRes.data||[]).map((b:any)=>({id:b.id,name:b.name,address:b.address,phone:b.phone,isMain:b.is_main})),
       categories:(categoriesRes.data||[]).map((c:any)=>({id:c.id,name:c.name,department:c.department||'',color:c.color})),
@@ -595,6 +595,7 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
 
           return {
             id: s.id,
+            turnNumber: Number(s.turn_number) || undefined,
             userId: s.user_id,
             workerName: s.worker_name,
             branchId: s.branch_id,
