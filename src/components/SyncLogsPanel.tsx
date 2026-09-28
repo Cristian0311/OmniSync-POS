@@ -134,14 +134,31 @@ export function SyncLogsPanel() {
       setPendingQueueCount(res.remaining);
       await syncWithSupabase();
 
-      addSyncLog({
-        level: 'success',
-        source: 'background_sync',
-        title: 'Sincronización Manual Completada',
-        details: `Se procesaron ${res.processed} elementos pendientes. Restantes en cola: ${res.remaining}.`
-      });
-
-      if (addNotification) addNotification('Sincronización completada correctamente', 'success');
+      const hasPending = res.remaining > 0;
+      const hasErrors = res.failed > 0 || (res.errors?.length || 0) > 0;
+      if (hasPending || hasErrors) {
+        addSyncLog({
+          level: 'warning',
+          source: 'background_sync',
+          title: 'Sincronización Manual Incompleta',
+          details: `Confirmadas: ${res.processed}. Fallidas/error: ${res.failed}. Restantes en cola: ${res.remaining}.`
+        });
+        if (addNotification) {
+          addNotification(
+            `Sincronización incompleta: ${res.processed} confirmadas; ${res.remaining} pendientes.`,
+            'warning',
+            res.errors?.length ? res.errors.map(e => `${e.type} · ${e.actionId}: ${e.message}`).join('\n') : undefined
+          );
+        }
+      } else {
+        addSyncLog({
+          level: 'success',
+          source: 'background_sync',
+          title: 'Sincronización Manual Completada',
+          details: `Se procesaron ${res.processed} elementos pendientes. Restantes en cola: 0.`
+        });
+        if (addNotification) addNotification('Sincronización completada correctamente', 'success');
+      }
     } catch (err: any) {
       addSyncLog({
         level: 'error',
