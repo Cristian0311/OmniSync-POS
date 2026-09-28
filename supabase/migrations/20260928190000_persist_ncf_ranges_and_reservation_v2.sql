@@ -100,4 +100,5 @@ end;
 $function$;
 
 revoke execute on function public.reserve_ncf_range(text,text,integer) from public, anon, authenticated;
+revoke execute on function public.reserve_ncf_range_v2(text,text,integer,text) from public, anon, authenticated;
 grant execute on function public.reserve_ncf_range_v2(text,text,integer,text) to anon, authenticated;
