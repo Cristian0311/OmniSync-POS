@@ -535,13 +535,23 @@ export default function POS() {
       (u.name && currentSession.workerName && u.name.toLowerCase() === currentSession.workerName.toLowerCase())
     );
 
-    const isPasswordValid =
-      (worker?.password && cancelShiftPassword === worker.password) ||
-      (currentUser?.password && cancelShiftPassword === currentUser.password) ||
-      users.some(u => u.role === 'admin' && u.password === cancelShiftPassword);
+    const isAdminAuthorized =
+      currentUser?.role === 'admin' &&
+      !!currentUser.password &&
+      cancelShiftPassword === currentUser.password;
 
-    if (!isPasswordValid) {
-      setPosError("Contraseña incorrecta. Por favor ingresa la contraseña asignada al trabajador.");
+    const isWorkerAuthorized =
+      currentUser?.role !== 'admin' &&
+      !!worker?.password &&
+      cancelShiftPassword === worker.password &&
+      worker.isActive !== false;
+
+    if (!isAdminAuthorized && !isWorkerAuthorized) {
+      setPosError(
+        currentUser?.role === 'admin'
+          ? "Contraseña de administrador incorrecta."
+          : `Debes ingresar la contraseña del trabajador del turno (${worker?.name || 'trabajador'}).`
+      );
       setTimeout(() => setPosError(""), 3000);
       return;
     }
