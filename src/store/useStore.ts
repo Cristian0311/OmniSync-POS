@@ -2011,8 +2011,17 @@ export const useStore = create<AppState>()(
     const userId = get().currentUser?.id || 'system';
     const actionId = 'supplier:' + id;
 
+    const receiveOffline = requestedReceived && !(typeof navigator !== 'undefined' && navigator.onLine);
     if (requestedReceived) {
       await enqueueOfflineItem('supplier_receive', { id, userId }, actionId);
+      if (receiveOffline) {
+        // La recepción debe ser la única operación que cambie el stock y el
+        // estado remoto. Si encolamos supplier_order con status=received antes,
+        // el replay puede llegar a receive_supplier_order_v2 cuando ya ve la
+        // orden como recibida y entonces no aplicar el inventario.
+        const pendingOrderSnapshot = { ...get().supplierOrders.find(x => x.id === id), ...o, status: 'pending' as const };
+        await enqueueOfflineItem('supplier_order', pendingOrderSnapshot, id);
+      }
       if (navigator.onLine) {
         try {
           const res = await callReceiveSupplierOrderRPC(id, userId);
@@ -2048,7 +2057,11 @@ export const useStore = create<AppState>()(
       return { supplierOrders: updated };
     });
     const updatedOrder = get().supplierOrders.find(x => x.id === id);
-    if (updatedOrder) pushSupplierOrderToSupabase(updatedOrder).catch(() => {});
+    // Cuando la acción fue una recepción offline, el encabezado pendiente ya
+    // quedó encolado con status=pending y debe ser consumido por receive RPC.
+    if (updatedOrder && !receiveOffline) {
+      pushSupplierOrderToSupabase(updatedOrder).catch(() => {});
+    }
   },
 
   inventoryAudits: [],
