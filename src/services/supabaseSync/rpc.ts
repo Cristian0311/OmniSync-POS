@@ -334,6 +334,28 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
   }
 }
 
+export async function reserveNcfRangeRPC(
+  fiscalType: string,
+  deviceId: string,
+  blockSize: number = 100
+): Promise<{ success: boolean; data?: any; error?: string; errorCode?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { success: false, error: 'Supabase no configurado' };
+  try {
+    const { data, error } = await supabase.rpc('reserve_ncf_range', {
+      p_fiscal_type: fiscalType,
+      p_device_id: deviceId,
+      p_block_size: blockSize
+    });
+    if (error) throw error;
+    assertRpcSuccess(data, 'reserve_ncf_range');
+    return { success: true, data };
+  } catch (e: any) {
+    console.error('[RPC] reserve_ncf_range failed:', e);
+    return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
+  }
+}
+
 export async function callStartInventoryAuditRPC(
   auditId: string, branchId: string, userId: string, mode: 'physical' | 'cycle_count',
   blindCount: boolean, notes?: string
