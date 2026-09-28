@@ -919,6 +919,14 @@ export const useStore = create<AppState>()(
     set((state) => ({
       products: state.products.map(p => ids.includes(p.id) ? { ...p, ...updates } : p)
     }));
+
+    // Las ediciones masivas también deben pasar por la misma capa durable que
+    // una edición individual: online se confirma en Supabase y offline queda
+    // en IndexedDB para reintento.
+    for (const id of ids) {
+      const updated = get().products.find(p => p.id === id);
+      if (updated) pushProductToSupabase(updated).catch(() => {});
+    }
   },
   adjustInventory: (productId, branchId, delta, variantLabel, minQuantity) => {
     const current = get().inventory.find(i => i.productId === productId && i.branchId === branchId && (i.variantLabel || '') === (variantLabel || ''));
