@@ -554,6 +554,8 @@ export async function pullAllFromSupabase(): Promise<{ data: any; result: SyncRe
           customerId: t.customer_id,
           userId: t.user_id,
           status: t.status || 'completed',
+          ncf: t.ncf || undefined,
+          ncfType: t.ncf_type || undefined,
           notes: t.notes || '',
           paymentMethod: t.payment_method || 'cash',
           sessionId: t.session_id,
