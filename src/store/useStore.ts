@@ -381,15 +381,25 @@ export const useStore = create<AppState>()(
     return remote;
   },
   clearReportsHistory: async () => {
-    // 1. Clear Supabase History only (surgical)
+    // Primero se confirma la limpieza remota. Nunca debemos vaciar el estado
+    // local si Supabase falló, porque eso dejaría el dispositivo divergente de la nube.
     try {
       const { clearHistoryFromSupabase } = await import('../services/supabaseSync');
-      await clearHistoryFromSupabase();
-    } catch (err) {
-      console.warn("Supabase history clear failed (continuing locally):", err);
+      const remote = await clearHistoryFromSupabase();
+      if (!remote?.success) {
+        const details = Array.isArray(remote?.failed) && remote.failed.length
+          ? remote.failed.join(' · ')
+          : 'Supabase no pudo confirmar la limpieza del historial.';
+        get().addNotification('No se limpió el historial local porque la nube no confirmó la operación.', 'error', details);
+        return false;
+      }
+    } catch (err: any) {
+      console.warn("Supabase history clear failed; keeping local history:", err);
+      get().addNotification('No se limpió el historial local porque la nube no confirmó la operación.', 'error', err?.message || 'Error de conexión.');
+      return false;
     }
 
-    // 2. Clear ONLY reporting/history states (KEEP products, categories, branches, users)
+    // Solo después de confirmación remota se limpia el estado local.
     set({ 
       transactions: [],
       returns: [],
@@ -402,6 +412,7 @@ export const useStore = create<AppState>()(
       cart: [],
       notifications: []
     });
+    return true;
   },
   exportData: () => {
     const state = get();
