@@ -118,10 +118,13 @@ export default function POS() {
       const { processOfflineQueue } = await import("../services/offlineSync");
       const res = await processOfflineQueue();
       setPendingOfflineCount(res.remaining);
-      if (res.remaining > 0) {
+      setOfflineConflictCount(getOfflineConflictCount());
+      if (res.remaining > 0 || getOfflineConflictCount() > 0) {
         addNotification(`Sincronización incompleta: ${res.processed} operaciones procesadas y ${res.remaining} siguen pendientes.`, 'warning');
       } else if (res.processed > 0) {
         addNotification(`Sincronización manual completada: ${res.processed} operaciones confirmadas.`, 'success');
+      } else if (getOfflineConflictCount() > 0) {
+        addNotification('La cola tiene ' + getOfflineConflictCount() + ' conflicto(s) que requieren revisión.', 'warning');
       } else {
         addNotification('Todo está al día y sincronizado con Supabase.', 'info');
       }
@@ -4339,7 +4342,7 @@ export default function POS() {
                   setTimeout(() => setPosError(""), 5000);
                 }}
               >
-                !${offlineConflictCount}
+                !{offlineConflictCount}
               </span>
             )}
           </button>
