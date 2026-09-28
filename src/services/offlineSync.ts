@@ -534,7 +534,6 @@ export async function processOfflineQueue(): Promise<{ processed: number; failed
       case 'idn_settlement_price_delete':
       case 'supplier_delete':
         break;
-      case 'audit_complete': add(dep('audit_start', 'audit-start:' + data.id)); break;
       case 'salary_settlement': add(cashOp(data.sessionId, 'close')); break;
       case 'bank_transaction': add(dep('bank_card', data.cardId)); add(dep('transaction', data.transactionId)); break;
       case 'bank_card_balance': add(dep('bank_card', data.id)); break;
