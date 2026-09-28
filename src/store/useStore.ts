@@ -3054,6 +3054,10 @@ export const useStore = create<AppState>()(
           return Array.from(map.values());
         };
         const queue = getOfflineQueue();
+        const pendingStoreConfig = [...queue]
+          .filter(i => i.type === 'store_config' && i.data && typeof i.data === 'object')
+          .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+          .at(-1)?.data;
         const pendingProductIds = new Set(queue.filter(i => i.type === 'product').map(i => i.data?.id).filter(Boolean));
         const pendingCategoryIds = new Set(queue.filter(i => i.type === 'category').map(i => i.data?.id).filter(Boolean));
         const pendingCategoryDeleteIds = new Set(queue.filter(i => i.type === 'category_delete').map(i => i.data?.id).filter(Boolean));
@@ -3068,11 +3072,15 @@ export const useStore = create<AppState>()(
           users: mergeById(d.users || [], state.users || []),
           currencies: d.currencies?.length ? d.currencies : state.currencies,
           idnSettlementPrices: mergeById(d.idnSettlementPrices || [], state.idnSettlementPrices || []).filter(x => !pendingIdnDeleteIds.has(x.id)),
-          fiscalConfigs: Array.isArray(d.settings?.store_config?.fiscalConfigs)
-            ? d.settings.store_config.fiscalConfigs
-            : state.fiscalConfigs,
+          fiscalConfigs: Array.isArray(pendingStoreConfig?.fiscalConfigs)
+            ? pendingStoreConfig.fiscalConfigs
+            : (Array.isArray(d.settings?.store_config?.fiscalConfigs)
+              ? d.settings.store_config.fiscalConfigs
+              : state.fiscalConfigs),
           receiptConfig: d.settings?.receipt_config ? { ...state.receiptConfig, ...d.settings.receipt_config } : state.receiptConfig,
-          storeConfig: d.settings?.store_config ? { ...state.storeConfig, ...d.settings.store_config } : state.storeConfig,
+          storeConfig: pendingStoreConfig
+            ? { ...state.storeConfig, ...(d.settings?.store_config || {}), ...pendingStoreConfig }
+            : (d.settings?.store_config ? { ...state.storeConfig, ...d.settings.store_config } : state.storeConfig),
           catalogConfig: d.settings?.catalog_config ? { ...state.catalogConfig, ...d.settings.catalog_config } : state.catalogConfig
         };
       });
@@ -3153,6 +3161,10 @@ export const useStore = create<AppState>()(
     const res = await pullPosBootstrapFromSupabase(branchId);
     if (!res.success || !res.data) return false;
     const d = res.data;
+    const queuedStoreConfig = [...getOfflineQueue()]
+      .filter(i => i.type === 'store_config' && i.data && typeof i.data === 'object')
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      .at(-1)?.data;
     set((state) => {
       const mergeById = <T extends { id: string }>(remote: T[] | undefined, local: T[]) => {
         const map = new Map(local.map(x => [x.id, x]));
@@ -3179,6 +3191,18 @@ export const useStore = create<AppState>()(
         customers: mergeById(d.customers, state.customers || []),
         currencies: d.currencies?.length ? d.currencies : state.currencies,
         idnSettlementPrices: mergeById(d.idnSettlementPrices, state.idnSettlementPrices || []),
+        fiscalConfigs: Array.isArray(queuedStoreConfig?.fiscalConfigs)
+          ? queuedStoreConfig.fiscalConfigs
+          : (Array.isArray(d.settings?.store_config?.fiscalConfigs) ? d.settings.store_config.fiscalConfigs : state.fiscalConfigs),
+        storeConfig: queuedStoreConfig
+          ? { ...state.storeConfig, ...(d.settings?.store_config || {}), ...queuedStoreConfig }
+          : (d.settings?.store_config ? { ...state.storeConfig, ...d.settings.store_config } : state.storeConfig),
+        receiptConfig: d.settings?.receipt_config
+          ? { ...state.receiptConfig, ...d.settings.receipt_config }
+          : state.receiptConfig,
+        catalogConfig: d.settings?.catalog_config
+          ? { ...state.catalogConfig, ...d.settings.catalog_config }
+          : state.catalogConfig,
         transactions: (() => {
           const pending = new Set(getOfflineQueue().filter(i => i.type === 'transaction' || i.type === 'void_transaction').map(i => String(i.data?.id || i.actionId)));
           const map = new Map<string, Transaction>();
