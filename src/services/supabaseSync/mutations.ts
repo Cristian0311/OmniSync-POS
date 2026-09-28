@@ -1313,16 +1313,31 @@ export async function pushReceiptConfigToSupabase(config: ReceiptConfig) {
   }
 }
 
-export async function pushStoreConfigToSupabase(config: StoreConfig) {
+export async function pushStoreConfigToSupabase(config: StoreConfig & Record<string, any>) {
   const supabase = getSupabase();
   if (!supabase || (typeof navigator !== 'undefined' && !navigator.onLine)) {
     enqueueOfflineItem('store_config', config, 'global');
     return;
   }
   try {
+    // No reemplazar el JSON global con un snapshot incompleto. Esto protege
+    // campos agregados por versiones nuevas (por ejemplo fiscalConfigs) cuando
+    // una tablet todavía conserva una configuración anterior.
+    const { data: current, error: readError } = await supabase
+      .from('settings')
+      .select('store_config')
+      .eq('id', 'global')
+      .maybeSingle();
+    if (readError) throw readError;
+
+    const currentConfig = (current?.store_config && typeof current.store_config === 'object')
+      ? current.store_config
+      : {};
+    const mergedConfig = { ...currentConfig, ...config };
+
     const { error } = await supabase.from('settings').upsert({
       id: 'global',
-      store_config: config
+      store_config: mergedConfig
     });
     if (error) {
       console.warn("Supabase push store config failed:", error);
