@@ -507,7 +507,12 @@ export default function Transfers() {
                     );
                     
                     if (result.success) {
-                      addNotification(`Traslado masivo completado exitosamente.`, 'success');
+                      addNotification(
+                        (result as any).pending
+                          ? 'Traslado masivo guardado offline. Quedó pendiente de confirmación con la nube.'
+                          : 'Traslado masivo completado exitosamente.',
+                        (result as any).pending ? 'info' : 'success'
+                      );
                       setBulkTransferItems([]);
                       setActiveTab('history');
                     } else {
@@ -545,18 +550,43 @@ export default function Transfers() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                   {products
                     .filter(p => 
-                      !bulkTransferItems.some(item => item.productId === p.id) &&
+                      !bulkTransferItems.some(item => item.productId === p.id && (!item.variant || item.variant === '')) &&
                       (p.name.toLowerCase().includes(transferSearch.toLowerCase()) || 
                        p.sku?.toLowerCase().includes(transferSearch.toLowerCase()))
                     )
                     .slice(0, 21)
                     .map(product => {
-                      const stock = inventory.find(inv => inv.productId === product.id && inv.branchId === bulkTransferSourceId)?.quantity || 0;
+                      const productVariants = Array.from(new Set([
+                        ...(product.availableSizes || []),
+                        ...(product.availableColors || [])
+                      ])).map(v => String(v).trim()).filter(Boolean);
+                      const cardVariants = productVariants.length ? productVariants : [''];
+                      const availableVariant = cardVariants.find(v => {
+                        const row = inventory.find(inv =>
+                          inv.productId === product.id &&
+                          inv.branchId === bulkTransferSourceId &&
+                          (inv.variantLabel || '') === v
+                        );
+                        return Number(row?.quantity || 0) > 0;
+                      });
+                      const stock = availableVariant === undefined ? 0 : Number(
+                        inventory.find(inv =>
+                          inv.productId === product.id &&
+                          inv.branchId === bulkTransferSourceId &&
+                          (inv.variantLabel || '') === availableVariant
+                        )?.quantity || 0
+                      );
                       return (
                         <button
                           key={product.id}
                           disabled={stock <= 0}
-                          onClick={() => setBulkTransferItems(prev => [...prev, { productId: product.id, quantity: 1 }])}
+                          onClick={() => {
+                            if (availableVariant === undefined) return;
+                            setBulkTransferItems(prev => [
+                              ...prev,
+                              { productId: product.id, quantity: 1, variant: availableVariant || undefined }
+                            ]);
+                          }}
                           className={cn(
                             "p-4 rounded-xl border text-left transition-all group flex flex-col gap-2 shadow-sm",
                             stock > 0 
@@ -606,27 +636,80 @@ export default function Transfers() {
                 ) : (
                   bulkTransferItems.map((item, index) => {
                     const product = products.find(p => p.id === item.productId);
-                    const stock = inventory.find(inv => inv.productId === item.productId && inv.branchId === bulkTransferSourceId)?.quantity || 0;
+                    const productVariants = Array.from(new Set([
+                      ...(product?.availableSizes || []),
+                      ...(product?.availableColors || [])
+                    ])).map(v => String(v).trim()).filter(Boolean);
+                    const selectedVariant = String(item.variant || '');
+                    const stock = Number(
+                      inventory.find(inv =>
+                        inv.productId === item.productId &&
+                        inv.branchId === bulkTransferSourceId &&
+                        (inv.variantLabel || '') === selectedVariant
+                      )?.quantity || 0
+                    );
+                    const rowKey = item.productId + ':' + selectedVariant;
                     
                     return (
-                      <div key={item.productId} className="p-4 bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 shadow-xs animate-in slide-in-from-right-2 duration-200">
+                      <div key={rowKey} className="p-4 bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 shadow-xs animate-in slide-in-from-right-2 duration-200">
                         <div className="flex items-center justify-between gap-3 mb-3">
                           <p className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase truncate leading-tight">{product?.name}</p>
                           <button 
-                            onClick={() => setBulkTransferItems(prev => prev.filter(i => i.productId !== item.productId))}
+                            onClick={() => setBulkTransferItems(prev => prev.filter((i, idx) => idx !== index))}
                             className="w-6 h-6 rounded-lg bg-rose-50 text-rose-400 hover:bg-rose-100 hover:text-rose-600 flex items-center justify-center transition-all shrink-0"
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
                         </div>
+                        {productVariants.length > 0 && (
+                          <select
+                            value={selectedVariant}
+                            onChange={(e) => {
+                              const nextVariant = e.target.value;
+                              setBulkTransferItems(prev => {
+                                const duplicate = prev.some((candidate, candidateIndex) =>
+                                  candidateIndex !== index &&
+                                  candidate.productId === item.productId &&
+                                  (candidate.variant || '') === nextVariant
+                                );
+                                if (duplicate) return prev;
+                                return prev.map((candidate, candidateIndex) =>
+                                  candidateIndex === index
+                                    ? { ...candidate, variant: nextVariant, quantity: Math.min(
+                                        Math.max(1, candidate.quantity),
+                                        Number(inventory.find(inv =>
+                                          inv.productId === candidate.productId &&
+                                          inv.branchId === bulkTransferSourceId &&
+                                          (inv.variantLabel || '') === nextVariant
+                                        )?.quantity || 0)
+                                      ) }
+                                    : candidate
+                                );
+                              });
+                            }}
+                            className="mb-2 w-full bg-white border border-indigo-100 rounded-lg px-2 py-2 text-[9px] font-black uppercase text-indigo-700 outline-none"
+                          >
+                            {productVariants.map(v => (
+                              <option key={v} value={v}>
+                                {v} — {Number(inventory.find(inv =>
+                                  inv.productId === item.productId &&
+                                  inv.branchId === bulkTransferSourceId &&
+                                  (inv.variantLabel || '') === v
+                                )?.quantity || 0)} uds
+                              </option>
+                            ))}
+                          </select>
+                        )}
                         <div className="flex items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900 p-2.5 rounded-xl border border-slate-100 shadow-inner">
                           <div className="flex flex-col">
-                            <span className="text-[8px] font-black text-slate-400 uppercase leading-none mb-1">Disponible</span>
+                            <span className="text-[8px] font-black text-slate-400 uppercase leading-none mb-1">
+                              {selectedVariant ? 'Disponible · ' + selectedVariant : 'Disponible'}
+                            </span>
                             <span className="text-[10px] font-black text-slate-700">{stock} uds</span>
                           </div>
                           <div className="flex items-center gap-1 bg-white dark:bg-slate-800 rounded-lg p-1 border border-slate-100">
                             <button 
-                              onClick={() => setBulkTransferItems(prev => prev.map((i, idx) => idx === index ? { ...i, quantity: Math.max(1, i.quantity - 1) } : i))}
+                              onClick={() => setBulkTransferItems(prev => prev.map((i, idx) => idx === index ? { ...i, quantity: Math.max(1, Math.min(i.quantity, Math.max(1, stock)) - 1) } : i))}
                               className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
                             >
                               <Minus className="w-4 h-4" />
