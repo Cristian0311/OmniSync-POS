@@ -476,7 +476,14 @@ export async function callTransferInventoryBulkRPC(params: {
       p_batch_id: params.batchId,
       p_from_branch_id: params.fromBranchId,
       p_to_branch_id: params.toBranchId,
-      p_items: params.items,
+      p_items: (params.items || []).map((item: any) => ({
+        operationId: item.operationId,
+        productId: item.productId,
+        variants: Array.isArray(item.variants) ? item.variants.map((v: any) => ({
+          variant_label: String(v?.variantLabel ?? v?.variant_label ?? '').trim(),
+          quantity: Number(v?.quantity)
+        })) : []
+      })),
       p_user_id: params.userId
     });
     if (error) throw error;
