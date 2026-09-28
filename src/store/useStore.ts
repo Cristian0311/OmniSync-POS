@@ -2982,6 +2982,7 @@ export const useStore = create<AppState>()(
           // --- 7. Otros (Deduplicación simple por ID o clave única) ---
           const pendingProductIds = new Set(getOfflineQueue().filter(i => i.type === 'product').map(i => i.data?.id).filter(Boolean));
           const pendingCategoryIds = new Set(getOfflineQueue().filter(i => i.type === 'category').map(i => i.data?.id).filter(Boolean));
+          const pendingCategoryDeleteIds = new Set(getOfflineQueue().filter(i => i.type === 'category_delete').map(i => i.data?.id).filter(Boolean));
           const mergedProducts = mergeUnique(data.products, state.products || []);
           // A successful remote snapshot may omit a newly-created offline product.
           // Keep it until its durable product operation is confirmed remotely.
