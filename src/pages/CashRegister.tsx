@@ -6,7 +6,7 @@ import { InfoTooltip } from "../components/InfoTooltip";
 import { cn } from "../lib/utils";
 
 export default function CashRegister() {
-  const { branches, currentBranchId, setCurrentBranch, getCurrentSession, openSession, closeSession, getBaseCurrency, currencies, currentUser, transactions, users, salarySettlements, updateSalarySettlement, cashSessions } = useStore();
+  const { branches, currentBranchId, setCurrentBranch, getCurrentSession, openSession, closeSession, getBaseCurrency, currencies, currentUser, transactions, users, products, salarySettlements, updateSalarySettlement, cashSessions } = useStore();
   const session = getCurrentSession(currentBranchId, currentUser?.id || 'u1');
   const baseCurrency = getBaseCurrency();
   const currentBranch = branches.find(b => b.id === currentBranchId);
@@ -234,18 +234,27 @@ export default function CashRegister() {
   const turnProductSalaryRows = useMemo(() => {
     if (!session) return [];
 
-    const rows = new Map<string, {
+    type SalaryRow = {
+      key: string;
+      employeeId: string;
+      employeeName: string;
       productId: string;
       name: string;
       quantity: number;
       salaryPerUnit: number;
       salaryTotal: number;
-    }>();
+    };
+
+    const rows = new Map<string, SalaryRow>();
+    const productCatalog = products || [];
 
     transactions
       .filter(tx =>
         tx.branchId === currentBranchId &&
-        new Date(tx.date) >= new Date(session.openedAt)
+        tx.status === 'completed' &&
+        !tx.deletedAt &&
+        new Date(tx.date) >= new Date(session.openedAt) &&
+        (!tx.sessionId || tx.sessionId === session.id)
       )
       .forEach(tx => {
         const sellers = tx.sellerEmployeeIds && tx.sellerEmployeeIds.length > 0
@@ -254,42 +263,64 @@ export default function CashRegister() {
         const splitFactor = Math.max(1, sellers.length);
 
         tx.items.forEach(item => {
-          // Algunas ventas antiguas/offline guardan product como ID en vez de objeto.
-          // Resolverlo aquí evita que la liquidación muestre "Producto desconocido"
-          // o desaparezca el salario por unidad.
-          const rawProduct = item.product as any;
+          const rawItem = item as any;
+          const rawProduct = rawItem.product ?? rawItem.productId ?? rawItem.id;
           const product = typeof rawProduct === 'string'
-            ? useStore.getState().products.find(p => p.id === rawProduct)
+            ? productCatalog.find(p => p.id === rawProduct)
             : rawProduct;
+
           const productId = product?.id || (typeof rawProduct === 'string' ? rawProduct : 'unknown');
-          const name = product?.name || (typeof rawProduct === 'string' ? rawProduct : 'Producto desconocido');
-          const quantity = Number(item.quantity || 0);
+          const name = product?.name || (typeof rawProduct === 'string' ? rawProduct : 'Producto vendido');
+          const quantity = Number(rawItem.quantity || 0);
+          if (!productId || quantity <= 0) return;
+
           const unitCommission = product?.commissionType === 'fixed'
             ? Number(product?.commissionValue || 0)
-            : Number(product?.price || 0) * (Number(product?.commissionValue || 0) / 100);
-          const salaryPerUnit = unitCommission / splitFactor;
+            : Number(product?.price ?? rawItem.price ?? 0) * (Number(product?.commissionValue || 0) / 100);
+          const salaryPerUnitForSeller = unitCommission / splitFactor;
 
-          const current = rows.get(productId);
-          if (current) {
-            current.quantity += quantity;
-            current.salaryTotal += salaryPerUnit * quantity;
-            current.salaryPerUnit = current.quantity > 0
-              ? current.salaryTotal / current.quantity
-              : 0;
-          } else {
-            rows.set(productId, {
-              productId,
-              name,
-              quantity,
-              salaryPerUnit,
-              salaryTotal: salaryPerUnit * quantity
-            });
-          }
+          sellers.forEach((sellerId: string) => {
+            const employee = users.find(u => u.id === sellerId);
+            const employeeName = employee?.name || tx.cashierName || sellerId || 'Empleado';
+            const key = `${sellerId}-${productId}`;
+            const current = rows.get(key);
+
+            if (current) {
+              current.quantity += quantity;
+              current.salaryTotal += salaryPerUnitForSeller * quantity;
+              current.salaryPerUnit = current.quantity > 0
+                ? current.salaryTotal / current.quantity
+                : 0;
+            } else {
+              rows.set(key, {
+                key,
+                employeeId: sellerId,
+                employeeName,
+                productId,
+                name,
+                quantity,
+                salaryPerUnit: salaryPerUnitForSeller,
+                salaryTotal: salaryPerUnitForSeller * quantity
+              });
+            }
+          });
         });
       });
 
-    return Array.from(rows.values()).sort((a, b) => b.quantity - a.quantity);
-  }, [session, transactions, currentBranchId]);
+    return Array.from(rows.values()).sort((a, b) =>
+      a.employeeName.localeCompare(b.employeeName) || b.quantity - a.quantity
+    );
+  }, [session, transactions, currentBranchId, products, users]);
+
+  const totalToDeliver = useMemo(() => {
+    if (!session) return 0;
+    return expectedBalances.reduce((sum, balance) => {
+      const rate = balance.currencyCode === baseCurrency.code
+        ? 1
+        : Number(balance.exchangeRate || currencies.find(c => c.code === balance.currencyCode)?.rateToBase || 1);
+      return sum + Number(balance.amount || 0) * rate;
+    }, 0);
+  }, [session, expectedBalances, baseCurrency, currencies]);
 
   const handleClose = (e: React.FormEvent) => {
     e.preventDefault();
@@ -571,11 +602,12 @@ export default function CashRegister() {
 
                 <form onSubmit={handleClose} className="p-5 space-y-6">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* Campo fijo: Efectivo MN/CUP. No depende de la configuración de monedas. */}
-                    <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-100 focus-within:border-emerald-300 transition-colors">
-                      <label className="block text-[8px] font-black text-emerald-600 uppercase tracking-widest mb-1">
-                        Efectivo MN / CUP
+                    {/* Campo fijo: CUP/MN. Se muestra siempre y no depende de la configuración de monedas. */}
+                    <div className="bg-emerald-50 p-3 rounded-2xl border-2 border-emerald-200 focus-within:border-emerald-400 transition-colors shadow-sm">
+                      <label className="block text-[9px] font-black text-emerald-700 uppercase tracking-widest mb-1">
+                        Efectivo CUP / MN
                       </label>
+                      <p className="text-[7px] font-bold text-emerald-500 uppercase mb-1">Conteo físico de efectivo</p>
                       <div className="relative">
                         <span className="absolute left-0 top-1/2 -translate-y-1/2 text-xs font-black text-emerald-300">$</span>
                         <input
@@ -628,8 +660,16 @@ export default function CashRegister() {
                   <div className="bg-indigo-50/60 rounded-2xl border border-indigo-100 p-4 space-y-3">
                     <div className="flex items-center justify-between gap-3 border-b border-indigo-100 pb-3">
                       <div>
+                        <h4 className="text-[10px] font-black text-indigo-900 uppercase tracking-[0.18em]">Total a entregar</h4>
+                        <p className="text-[8px] font-bold text-indigo-500 uppercase mt-1">Monto esperado del turno</p>
+                      </div>
+                      <span className="text-base font-black text-indigo-700">{formatMoney(totalToDeliver, baseCurrency.symbol)}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 border-b border-indigo-100 pb-3">
+                      <div>
                         <h4 className="text-[10px] font-black text-indigo-900 uppercase tracking-[0.18em]">Liquidación del turno</h4>
-                        <p className="text-[8px] font-bold text-indigo-500 uppercase mt-1">Producto vendido, cantidad y salario por unidad</p>
+                        <p className="text-[8px] font-bold text-indigo-500 uppercase mt-1">Cada producto cobrado y el salario que corresponde a cada empleado</p>
                       </div>
                       <span className="text-[8px] font-black text-indigo-500 uppercase whitespace-nowrap">
                         {turnProductSalaryRows.reduce((sum, row) => sum + row.quantity, 0)} unidades
@@ -637,23 +677,32 @@ export default function CashRegister() {
                     </div>
 
                     {turnProductSalaryRows.length > 0 ? (
-                      <div className="space-y-2 max-h-72 overflow-y-auto custom-scrollbar">
-                        {turnProductSalaryRows.map(row => (
-                          <div key={row.productId} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 bg-white rounded-xl border border-indigo-100 px-3 py-2">
-                            <p className="text-[9px] font-black text-slate-800 uppercase leading-tight break-words min-w-0">{row.name}</p>
-                            <div className="text-right">
-                              <p className="text-[7px] font-black text-slate-400 uppercase">Cantidad</p>
-                              <p className="text-[10px] font-black text-slate-800">{row.quantity}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-[7px] font-black text-indigo-500 uppercase">Salario / unidad</p>
-                              <p className="text-[10px] font-black text-indigo-700">{formatMoney(row.salaryPerUnit, baseCurrency.symbol)}</p>
-                            </div>
+                      <div className="overflow-x-auto">
+                        <div className="min-w-[520px] space-y-1.5">
+                          <div className="grid grid-cols-[minmax(120px,1fr)_minmax(120px,1fr)_auto_auto_auto] gap-2 px-3 text-[7px] font-black text-indigo-400 uppercase tracking-widest">
+                            <span>Empleado</span>
+                            <span>Producto</span>
+                            <span className="text-right">Cantidad</span>
+                            <span className="text-right">Salario / unidad</span>
+                            <span className="text-right">Salario total</span>
                           </div>
-                        ))}
+                          <div className="max-h-72 overflow-y-auto custom-scrollbar space-y-1.5">
+                            {turnProductSalaryRows.map(row => (
+                              <div key={row.key} className="grid grid-cols-[minmax(120px,1fr)_minmax(120px,1fr)_auto_auto_auto] items-center gap-2 bg-white rounded-xl border border-indigo-100 px-3 py-2">
+                                <p className="text-[8px] font-black text-slate-700 uppercase leading-tight break-words">{row.employeeName}</p>
+                                <p className="text-[8px] font-black text-slate-800 uppercase leading-tight break-words">{row.name}</p>
+                                <p className="text-[9px] font-black text-slate-800 text-right">{row.quantity}</p>
+                                <p className="text-[9px] font-black text-indigo-700 text-right">{formatMoney(row.salaryPerUnit, baseCurrency.symbol)}</p>
+                                <p className="text-[9px] font-black text-indigo-900 text-right">{formatMoney(row.salaryTotal, baseCurrency.symbol)}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     ) : (
-                      <p className="text-center py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">No hay productos vendidos en este turno</p>
+                      <div className="bg-white rounded-xl border border-indigo-100 px-3 py-4 text-center">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">No hay productos vendidos en este turno</p>
+                      </div>
                     )}
                   </div>
 
