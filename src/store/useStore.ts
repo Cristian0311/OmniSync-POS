@@ -1566,12 +1566,9 @@ export const useStore = create<AppState>()(
           removeFromOfflineQueueByTransactionId(transaction.id);
         } catch (err) {
           console.warn('[processTransaction] Liquidación IDN no confirmada; queda durable para reintento:', err);
-          set((state) => ({
-            transactions: [{ ...transaction }, ...state.transactions.filter(t => t.id !== transaction.id)],
-            cart: [],
-            currentCustomerId: undefined
-          }));
-          return true;
+          // La operación ya está durablemente en la cola. No reportar éxito
+          // hasta que Supabase confirme para evitar falsos completados.
+          return false;
         }
       }
       set((state) => ({
