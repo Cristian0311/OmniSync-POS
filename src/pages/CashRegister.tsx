@@ -82,12 +82,19 @@ export default function CashRegister() {
         const splitFactor = Math.max(1, sellers.length);
 
         tx.items.forEach(item => {
-          const product = item.product;
-          const productId = product?.id || 'unknown';
+          const rawProduct = item.product as any;
+          const productId = typeof rawProduct === 'string' ? rawProduct : rawProduct?.id;
+          const product = productId ? (productCatalog || []).find(p => p.id === productId) : rawProduct;
           const name = product?.name || 'Producto desconocido';
-          // commissionValue es la comisión FIJA en CUP por unidad.
-          // Nunca usar price ni commissionType para convertirla en porcentaje.
-          const unitCommission = Number(product?.commissionValue || 0);
+          // La comisión configurada en el producto es fija: X CUP por unidad.
+          // Se toma del catálogo, no del precio de venta ni de un porcentaje.
+          const unitCommission = Number(
+            product?.commissionValue ??
+            rawProduct?.commissionValue ??
+            (item as any).product_snapshot?.commissionValue ??
+            (item as any).commissionValue ??
+            0
+          ) || 0;
           const salaryPerUnit = unitCommission / splitFactor;
           const quantity = Number(item.quantity || 0);
 
@@ -390,9 +397,19 @@ export default function CashRegister() {
       const splitFactor = sellers.length;
 
       tx.items.forEach(item => {
-        // commissionValue es fija por unidad en CUP.
-        // El cierre no debe interpretar ese valor como porcentaje del precio.
-        const itemComm = Number(item.product?.commissionValue || 0) * Number(item.quantity || 0);
+        // La comisión es FIJA en CUP por unidad y siempre se toma del
+        // catálogo actual del producto. Nunca del precio ni como porcentaje.
+        const rawProduct = item.product as any;
+        const productId = typeof rawProduct === 'string' ? rawProduct : rawProduct?.id;
+        const product = productId ? (products || []).find(p => p.id === productId) : rawProduct;
+        const commissionValue = Number(
+          product?.commissionValue ??
+          rawProduct?.commissionValue ??
+          (item as any).product_snapshot?.commissionValue ??
+          (item as any).commissionValue ??
+          0
+        ) || 0;
+        const itemComm = commissionValue * Number(item.quantity || 0);
         
         const splitComm = itemComm / splitFactor;
         
