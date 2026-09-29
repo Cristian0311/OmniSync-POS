@@ -128,6 +128,8 @@ body {
     border: 1px solid var(--border-base);
     color: var(--text-primary);
     @apply outline-none transition-all focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .dark input, .dark textarea, .dark select {
@@ -356,6 +358,17 @@ body {
     touch-action: manipulation;
     -webkit-user-select: none;
     user-select: none;
+  }
+
+  /* Android: no native long-press/callout bubble on form fields. */
+  input, textarea, select {
+    -webkit-touch-callout: none !important;
+  }
+
+  /* Space reserved around the focused field while the software keyboard is open. */
+  .keyboard-safe-scroll {
+    scroll-padding-bottom: 35vh;
+    scroll-padding-top: 12vh;
   }
 
   /* Hardware accelerated scrolling helper */
