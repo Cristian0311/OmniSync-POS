@@ -2959,6 +2959,17 @@ export default function POS() {
                                         <button
                                           key={u.id}
                                           type="button"
+                                          onPointerUp={(e) => {
+                                            e.preventDefault();
+                                            setSessionWorkerName(u.name || '');
+                                            setEmployeePickerSearch(u.name || '');
+                                            setEmployeePickerOpen(false);
+                                            setSessionPassword('');
+                                            if (u.assignedBranchId) setSessionBranchId(u.assignedBranchId);
+                                            else if (u.branchId) setSessionBranchId(u.branchId);
+                                            else if ((u.allowedBranches || []).length === 1) setSessionBranchId(u.allowedBranches![0]);
+                                            setPosError('');
+                                          }}
                                           onClick={() => {
                                             setSessionWorkerName(u.name || '');
                                             setEmployeePickerSearch(u.name || '');
