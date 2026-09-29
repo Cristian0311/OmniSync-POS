@@ -1868,6 +1868,27 @@ export default function POS() {
 
   const handleCheckout = async () => {
     if (isSubmittingCheckout) return;
+    if (!currentSession) {
+      setPosError('No existe un turno de caja activo para registrar esta venta.');
+      setShowOpenShiftModal(true);
+      return;
+    }
+    if (!Number.isFinite(totalBase) || totalBase <= 0) {
+      setPosError('El total de la venta no es válido.');
+      return;
+    }
+    if (remainingBase > (isCupBase ? 0 : 0.01)) {
+      setPosError(`Falta por cobrar ${formatMoney(remainingBase, baseCurrency.symbol)}.`);
+      return;
+    }
+    const invalidTransfer = paymentLines.some(l =>
+      l.method === 'transfer' &&
+      (!l.bankCardId || !bankCards.some(c => c.id === l.bankCardId && (c.currency === l.code || (l.code === 'MN' && c.currency === 'CUP'))))
+    );
+    if (invalidTransfer) {
+      setPosError('Seleccione una cuenta bancaria válida para cada pago por transferencia.');
+      return;
+    }
     setIsSubmittingCheckout(true);
     try {
       // Final payments with rounded USD
@@ -2307,8 +2328,14 @@ export default function POS() {
               <div className="flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded-xl border border-slate-700">
                 <span className="text-[8px] font-bold text-slate-400 uppercase hidden sm:inline">Vendedor:</span>
                 <select
-                  value={activeIDNWorker?.id || ''}
-                  onChange={e => setSelectedAdminIDNUserId(e.target.value)}
+                  value={selectedAdminIDNUserId || independentUsers[0]?.id || ''}
+                  onChange={e => {
+                    const nextId = e.target.value;
+                    if (nextId && independentUsers.some(u => u.id === nextId)) {
+                      setSelectedAdminIDNUserId(nextId);
+                      setPosError('');
+                    }
+                  }}
                   className="bg-transparent text-amber-400 text-[10px] font-black uppercase outline-none cursor-pointer"
                 >
                   {independentUsers.map(u => {
