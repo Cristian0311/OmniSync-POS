@@ -219,13 +219,16 @@ export default function POS() {
       if (!activeSessionId) setSessionWorkerName("");
       return;
     }
-    if (sessionWorkerName !== (currentSession.workerName || "")) {
+    // Do not overwrite a manually selected seller in the picker.
+    // Previously this effect restored the current-session worker as soon
+    // as the seller selection changed, making the selection disappear.
+    if (!employeePickerOpen && !sessionWorkerName) {
       setSessionWorkerName(currentSession.workerName || "");
     }
     if (currentBranchId !== currentSession.branchId) {
       setCurrentBranch(currentSession.branchId);
     }
-  }, [currentSession?.id, currentSession?.workerName, currentSession?.branchId, activeSessionId, sessionWorkerName, currentBranchId, setCurrentBranch]);
+  }, [currentSession?.id, currentSession?.workerName, currentSession?.branchId, activeSessionId, currentBranchId, setCurrentBranch, employeePickerOpen, sessionWorkerName]);
 
   const [employeePickerOpen, setEmployeePickerOpen] = useState(false);
   const [employeePickerSearch, setEmployeePickerSearch] = useState("");
