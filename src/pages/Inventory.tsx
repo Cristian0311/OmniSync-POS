@@ -464,7 +464,7 @@ export default function Inventory() {
               setEditingProduct(null);
               setFormData({ 
                 name: "", sku: "", barcode: "", costPrice: 0, price: 0, margin: 0, categoryId: "", 
-                color: "bg-slate-100 text-slate-700", commissionType: 'percentage', commissionValue: 0,
+                color: "bg-slate-100 text-slate-700", commissionType: 'fixed', commissionValue: 0,
                 initialQuantity: 0, initialBranchId: branches[0]?.id || ""
               });
               setShowAddModal(true);
