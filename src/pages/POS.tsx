@@ -4252,9 +4252,9 @@ export default function POS() {
                                 type="number"
                                 min="0"
                                 step="0.01"
-                                value={closingBalances[\`${c.code}-cash\`] || ''}
+                                value={closingBalances[`${c.code}-cash`] || ''}
                                 onFocus={(e) => e.target.select()}
-                                onChange={(e) => setClosingBalances({ ...closingBalances, [\`${c.code}-cash\`]: parseFloat(e.target.value) || 0 })}
+                                onChange={(e) => setClosingBalances({ ...closingBalances, [`${c.code}-cash`]: parseFloat(e.target.value) || 0 })}
                                 className="w-full bg-transparent border-none focus:ring-0 outline-none font-black text-slate-900 text-sm p-0"
                                 placeholder="0.00"
                               />
