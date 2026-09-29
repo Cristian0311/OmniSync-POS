@@ -1890,12 +1890,17 @@ export default function POS() {
       return;
     }
     setIsSubmittingCheckout(true);
+    setPosError("");
+    setPosSuccess("");
     try {
       // Final payments with rounded USD
     const finalizedPayments: import('../types').Payment[] = paymentLines
-      .filter(p => p.amount > 0)
+      .filter(p => Number.isFinite(p.amount) && p.amount > 0)
       .map(p => {
-        const currency = currencies.find(c => c.code === p.code)!;
+        const currency = currencies.find(c => c.code === p.code);
+        if (!currency || !Number.isFinite(Number(currency.rateToBase)) || Number(currency.rateToBase) <= 0) {
+          throw new Error(`No existe una tasa de cambio válida para ${p.code}. Actualiza las monedas antes de cobrar.`);
+        }
         let amount = p.amount;
         if (p.code === 'CUP') {
           amount = Math.round(amount);
@@ -1956,13 +1961,21 @@ export default function POS() {
     };
 
     // Generate NCF if customer is selected or if config requires it
-    const nextNcf = await useStore.getState().getNextNCF('B01'); // Default to Factura de Crédito Fiscal if needed, or B02
+    // El NCF es complementario al cobro. Nunca debe bloquear indefinidamente
+    // una venta si la reserva fiscal está lenta o temporalmente no disponible.
+    const nextNcf = await Promise.race([
+      useStore.getState().getNextNCF('B01'),
+      new Promise<string | undefined>(resolve => setTimeout(() => resolve(undefined), 7000))
+    ]);
     if (nextNcf) {
       tx.ncf = nextNcf;
       tx.ncfType = 'B01';
     }
 
-    const saleConfirmed = await processTransaction(tx);
+    const saleConfirmed = await Promise.race([
+      processTransaction(tx),
+      new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error('La confirmación de la venta está tardando demasiado. La operación quedó protegida para reintento y no se perderá.')), 25000))
+    ]);
     if (!saleConfirmed) {
       setPosError('La venta no fue confirmada. Verifique el stock, turno y conexión antes de continuar.');
       setTimeout(() => setPosError(''), 5000);
@@ -2013,6 +2026,11 @@ export default function POS() {
       if (useStore.getState().receiptConfig.autoPrint) {
         handleThermalPrint(tx, { silent: true }).catch(console.error);
       }
+    } catch (err: any) {
+      console.error('[POS] Error al confirmar cobro:', err);
+      const message = err?.message || 'No se pudo completar el cobro. La operación no se ha marcado como completada.';
+      setPosError(message);
+      setTimeout(() => setPosError(''), 8000);
     } finally {
       setIsSubmittingCheckout(false);
     }
