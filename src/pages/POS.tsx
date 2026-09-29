@@ -761,6 +761,21 @@ export default function POS() {
   };
 
   const baseCurrency = getBaseCurrency();
+  // CUP/MN siempre visible en el arqueo físico.
+  const cashDisplayCurrencies = React.useMemo(() => {
+    const configured = [...(currencies || [])];
+    if (!configured.some(c => c.code === 'CUP')) {
+      configured.unshift({
+        code: 'CUP',
+        name: 'Peso Cubano',
+        symbol: '$',
+        rateToBase: 1,
+        isBase: true
+      } as any);
+    }
+    return configured;
+  }, [currencies]);
+
   const expectedBalances = React.useMemo(() => {
     if (!currentSession) return [];
     
@@ -831,6 +846,84 @@ export default function POS() {
     return expected.filter(e => e.amount !== 0);
   }, [currentSession, activeTransactions, currentBranchId, baseCurrency, currencies]);
 
+  // Liquidación por producto del turno actual.
+  const turnProductSalaryRows = React.useMemo(() => {
+    if (!currentSession) return [];
+    const rows = new Map();
+
+    activeTransactions
+      .filter(tx =>
+        tx.branchId === currentBranchId &&
+        tx.status === 'completed' &&
+        !tx.deletedAt &&
+        new Date(tx.date) >= new Date(currentSession.openedAt) &&
+        (!tx.sessionId || tx.sessionId === currentSession.id)
+      )
+      .forEach(tx => {
+        const sellers = tx.sellerEmployeeIds?.length ? tx.sellerEmployeeIds : [tx.userId];
+        const splitFactor = Math.max(1, sellers.length);
+
+        (tx.items || []).forEach(item => {
+          const rawItem = item as any;
+          const rawProduct = rawItem.product ?? rawItem.productId;
+          const product = typeof rawProduct === 'string'
+            ? (products || []).find(p => p.id === rawProduct)
+            : rawProduct;
+
+          const productId = product?.id || rawItem.product_id || (typeof rawProduct === 'string' ? rawProduct : '');
+          if (!productId) return;
+
+          const productName = product?.name || rawItem.product_name || (typeof rawProduct === 'string' ? rawProduct : 'Producto vendido');
+          const quantity = Number(rawItem.quantity || 0);
+          if (!Number.isFinite(quantity) || quantity <= 0) return;
+
+          const commissionValue = Number(product?.commissionValue ?? rawItem.product_snapshot?.commissionValue ?? 0) || 0;
+          const commissionType = product?.commissionType ?? rawItem.product_snapshot?.commissionType ?? rawItem.commissionType;
+          const soldUnitPrice = Number(rawItem.price ?? product?.price ?? rawItem.product_snapshot?.price ?? 0) || 0;
+          const unitCommission = commissionType === 'percentage'
+            ? soldUnitPrice * (commissionValue / 100)
+            : commissionValue;
+          const salaryPerUnit = unitCommission / splitFactor;
+
+          sellers.forEach((sellerId: string) => {
+            const employee = (users || []).find(u => u.id === sellerId);
+            const key = sellerId + '::' + productId;
+            const existing = rows.get(key);
+
+            if (existing) {
+              existing.quantity += quantity;
+              existing.salaryTotal += salaryPerUnit * quantity;
+              existing.salaryPerUnit = existing.quantity > 0 ? existing.salaryTotal / existing.quantity : 0;
+            } else {
+              rows.set(key, {
+                key,
+                employeeName: employee?.name || tx.cashierName || 'Empleado',
+                productName,
+                quantity,
+                salaryPerUnit,
+                salaryTotal: salaryPerUnit * quantity
+              });
+            }
+          });
+        });
+      });
+
+    return Array.from(rows.values()).sort((a, b) =>
+      String(a.employeeName).localeCompare(String(b.employeeName)) ||
+      String(a.productName).localeCompare(String(b.productName))
+    );
+  }, [currentSession, activeTransactions, currentBranchId, products, users]);
+
+  const totalExpectedToDeliver = React.useMemo(() => {
+    return expectedBalances.reduce((sum, line) => {
+      const rate = line.currencyCode === baseCurrency.code
+        ? 1
+        : Number(line.exchangeRate || currencies.find(c => c.code === line.currencyCode)?.rateToBase || 1);
+      return sum + Number(line.amount || 0) * rate;
+    }, 0);
+  }, [expectedBalances, baseCurrency, currencies]);
+
+
   const handleReturnItem = async () => {
     if (!returnConfirm) return;
     const { tx, item } = returnConfirm;
@@ -878,7 +971,7 @@ export default function POS() {
           return {
             currencyCode: code as any,
             amount: amount as number,
-            exchangeRate: getSafeRateToBase(p.code),
+            exchangeRate: getSafeRateToBase(code),
             method: method as any
           };
         });
@@ -4054,6 +4147,40 @@ export default function POS() {
                               <span className="text-[9px] font-black text-amber-900 uppercase">Total a Entregar</span>
                               <span className="text-lg font-black text-amber-600">{formatMoney(totalSalary, baseCurrency.symbol)}</span>
                             </div>
+                            <div className="pt-3 border-t border-amber-100 space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[9px] font-black text-amber-900 uppercase tracking-widest">Productos cobrados y salario por producto</span>
+                                <span className="text-[8px] font-black text-amber-700 uppercase whitespace-nowrap">{turnProductSalaryRows.reduce((sum, row) => sum + row.quantity, 0)} uds</span>
+                              </div>
+                              {turnProductSalaryRows.length > 0 ? (
+                                <div className="overflow-x-auto rounded-xl border border-amber-100 bg-white">
+                                  <table className="w-full min-w-[560px] text-left">
+                                    <thead><tr className="bg-amber-50 border-b border-amber-100">
+                                      <th className="px-3 py-2 text-[7px] font-black text-amber-700 uppercase">Empleado</th>
+                                      <th className="px-3 py-2 text-[7px] font-black text-amber-700 uppercase">Producto</th>
+                                      <th className="px-3 py-2 text-[7px] font-black text-amber-700 uppercase text-right">Cantidad</th>
+                                      <th className="px-3 py-2 text-[7px] font-black text-amber-700 uppercase text-right">Salario / unidad</th>
+                                      <th className="px-3 py-2 text-[7px] font-black text-amber-700 uppercase text-right">Salario total</th>
+                                    </tr></thead>
+                                    <tbody className="divide-y divide-amber-50">
+                                      {turnProductSalaryRows.map(row => (
+                                        <tr key={row.key}>
+                                          <td className="px-3 py-2 text-[8px] font-black text-slate-700 uppercase break-words">{row.employeeName}</td>
+                                          <td className="px-3 py-2 text-[8px] font-black text-slate-900 uppercase break-words">{row.productName}</td>
+                                          <td className="px-3 py-2 text-[8px] font-black text-slate-800 text-right">{row.quantity}</td>
+                                          <td className="px-3 py-2 text-[8px] font-black text-indigo-700 text-right">{formatMoney(row.salaryPerUnit, baseCurrency.symbol)}</td>
+                                          <td className="px-3 py-2 text-[8px] font-black text-indigo-900 text-right">{formatMoney(row.salaryTotal, baseCurrency.symbol)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              ) : (
+                                <div className="bg-white rounded-xl border border-amber-100 px-3 py-4 text-center">
+                                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">No hay productos cobrados en este turno</p>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         );
                       })()}
@@ -4062,18 +4189,15 @@ export default function POS() {
                     <div className="space-y-3">
                       <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest border-b border-slate-100 pb-2">Arqueo de Efectivo Físico</h4>
                       <div className="grid grid-cols-2 gap-3">
-                        {currencies.map(c => (
+                        <div className="bg-emerald-50 p-3 rounded-xl border-2 border-emerald-200 focus-within:ring-2 focus-within:ring-emerald-500 transition-all shadow-sm">
+                          <label className="block text-[9px] font-black text-emerald-700 uppercase tracking-widest mb-1">Efectivo CUP / MN</label>
+                          <p className="text-[7px] font-bold text-emerald-500 uppercase mb-1">Conteo físico de efectivo</p>
+                          <input type="number" min="0" step="0.01" value={closingBalances['CUP-cash'] || ''} onFocus={(e) => e.target.select()} onChange={(e) => setClosingBalances({ ...closingBalances, ['CUP-cash']: parseFloat(e.target.value) || 0 })} className="w-full bg-transparent border-none focus:ring-0 outline-none font-black text-emerald-900 text-sm p-0" placeholder="0.00" />
+                        </div>
+                        {cashDisplayCurrencies.filter(c => c.code !== 'CUP').map(c => (
                           <div key={c.code} className="bg-slate-50 p-3 rounded-xl border border-slate-100 focus-within:ring-2 focus-within:ring-emerald-500 transition-all">
                             <label className="block text-[8px] font-black text-emerald-600 uppercase tracking-widest mb-1">Efectivo {c.code}</label>
-                            <input 
-                              type="number" 
-                              min="0" step="0.01"
-                              value={closingBalances[`${c.code}-cash`] || ''}
-                              onFocus={(e) => e.target.select()}
-                              onChange={(e) => setClosingBalances({ ...closingBalances, [`${c.code}-cash`]: parseFloat(e.target.value) || 0 })}
-                              className="w-full bg-transparent border-none focus:ring-0 outline-none font-black text-slate-900 text-sm p-0"
-                              placeholder="0.00"
-                            />
+                            <input type="number" min="0" step="0.01" value={closingBalances[c.code + '-cash'] || ''} onFocus={(e) => e.target.select()} onChange={(e) => setClosingBalances({ ...closingBalances, [c.code + '-cash']: parseFloat(e.target.value) || 0 })} className="w-full bg-transparent border-none focus:ring-0 outline-none font-black text-slate-900 text-sm p-0" placeholder="0.00" />
                           </div>
                         ))}
                       </div>
