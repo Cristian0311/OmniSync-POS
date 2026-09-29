@@ -85,9 +85,9 @@ export default function CashRegister() {
           const product = item.product;
           const productId = product?.id || 'unknown';
           const name = product?.name || 'Producto desconocido';
-          const unitCommission = product?.commissionType === 'fixed'
-            ? Number(product?.commissionValue || 0)
-            : Number(product?.price || 0) * (Number(product?.commissionValue || 0) / 100);
+          // commissionValue es la comisión FIJA en CUP por unidad.
+          // Nunca usar price ni commissionType para convertirla en porcentaje.
+          const unitCommission = Number(product?.commissionValue || 0);
           const salaryPerUnit = unitCommission / splitFactor;
           const quantity = Number(item.quantity || 0);
 
@@ -133,6 +133,10 @@ export default function CashRegister() {
     const formatted = amount.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return `${symbol} ${formatted}`;
   };
+
+  // Los salarios y las comisiones fijas de productos siempre se liquidan en CUP/MN.
+  // No dependen de la moneda base ni del precio final de venta.
+  const formatSalaryCUP = (value: number) => `${Math.round(Number(value) || 0).toLocaleString('es-ES')} CUP`;
 
   const handleOpen = (e: React.FormEvent) => {
     e.preventDefault();
@@ -274,9 +278,15 @@ export default function CashRegister() {
           const quantity = Number(rawItem.quantity || 0);
           if (!productId || quantity <= 0) return;
 
-          const unitCommission = product?.commissionType === 'fixed'
-            ? Number(product?.commissionValue || 0)
-            : Number(product?.price ?? rawItem.price ?? 0) * (Number(product?.commissionValue || 0) / 100);
+          // commissionValue es la comisión FIJA en CUP por unidad.
+          // Nunca usar el precio final de venta para calcular el salario.
+          const commissionValue = Number(
+            product?.commissionValue ??
+            rawItem.product_snapshot?.commissionValue ??
+            rawItem.commissionValue ??
+            0
+          ) || 0;
+          const unitCommission = commissionValue;
           const salaryPerUnitForSeller = unitCommission / splitFactor;
 
           sellers.forEach((sellerId: string) => {
@@ -380,12 +390,9 @@ export default function CashRegister() {
       const splitFactor = sellers.length;
 
       tx.items.forEach(item => {
-        let itemComm = 0;
-        if (item.product.commissionType === 'fixed') {
-          itemComm = (item.product.commissionValue || 0) * item.quantity;
-        } else {
-          itemComm = (item.product.price * ((item.product.commissionValue || 0) / 100)) * item.quantity;
-        }
+        // commissionValue es fija por unidad en CUP.
+        // El cierre no debe interpretar ese valor como porcentaje del precio.
+        const itemComm = Number(item.product?.commissionValue || 0) * Number(item.quantity || 0);
         
         const splitComm = itemComm / splitFactor;
         
@@ -692,7 +699,7 @@ export default function CashRegister() {
                                 <p className="text-[8px] font-black text-slate-700 uppercase leading-tight break-words">{row.employeeName}</p>
                                 <p className="text-[8px] font-black text-slate-800 uppercase leading-tight break-words">{row.name}</p>
                                 <p className="text-[9px] font-black text-slate-800 text-right">{row.quantity}</p>
-                                <p className="text-[9px] font-black text-indigo-700 text-right">{formatMoney(row.salaryPerUnit, baseCurrency.symbol)}</p>
+                                <p className="text-[9px] font-black text-indigo-700 text-right">{formatSalaryCUP(row.salaryPerUnit)}</p>
                                 <p className="text-[9px] font-black text-indigo-900 text-right">{formatMoney(row.salaryTotal, baseCurrency.symbol)}</p>
                               </div>
                             ))}
@@ -1042,12 +1049,12 @@ export default function CashRegister() {
                 </div>
                 <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-slate-500">
                   <span>Comisiones</span>
-                  <span className="text-slate-900">{formatMoney(pendingSettlement.commissions, baseCurrency.symbol)}</span>
+                  <span className="text-slate-900">{formatSalaryCUP(pendingSettlement.commissions)}</span>
                 </div>
                 <div className="h-px bg-slate-200" />
                 <div className="flex justify-between items-center">
                   <span className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600">Total a Pagar</span>
-                  <span className="text-lg font-black text-indigo-600">{formatMoney(pendingSettlement.total, baseCurrency.symbol)}</span>
+                  <span className="text-lg font-black text-indigo-600">{formatSalaryCUP(pendingSettlement.total)}</span>
                 </div>
               </div>
 
