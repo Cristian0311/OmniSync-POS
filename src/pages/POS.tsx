@@ -870,7 +870,7 @@ export default function POS() {
           return {
             currencyCode: code as any,
             amount: amount as number,
-            exchangeRate: currency.rateToBase,
+            exchangeRate: getSafeRateToBase(p.code),
             method: method as any
           };
         });
@@ -1078,17 +1078,35 @@ export default function POS() {
   const isCupBase = baseCurrency.code === 'CUP' || baseCurrency.code === 'MN';
   const totalBase = isCupBase ? Math.round(rawTotalBase) : Math.round(rawTotalBase * 100) / 100;
 
-  // Calcula cuánto se ha pagado en moneda base
-  const totalPaidBase = paymentLines.reduce((sum, line) => {
-    const currency = currencies.find(c => c.code === line.code);
-    if (!currency || !line.amount) return sum;
-    return sum + (line.amount * currency.rateToBase);
-  }, 0);
+  // Todos los importes del checkout se convierten a la moneda base con una
+  // tasa válida. La moneda base siempre vale 1, incluso si la configuración
+  // remota llega momentáneamente sin rateToBase.
+  const getSafeRateToBase = (code: string) => {
+    if (code === baseCurrency.code) return 1;
+    const rate = Number(currencies.find(c => c.code === code)?.rateToBase);
+    return Number.isFinite(rate) && rate > 0 ? rate : 1;
+  };
 
-  const balanceBase = totalBase - totalPaidBase;
-  const remainingBase = isCupBase ? Math.round(Math.max(0, balanceBase)) : Math.max(0, Math.round(balanceBase * 100) / 100);
-  const changeBase = isCupBase ? Math.round(Math.abs(Math.min(0, balanceBase))) : Math.abs(Math.min(0, Math.round(balanceBase * 100) / 100));
-  const isPaid = remainingBase <= 0 && totalBase > 0;
+  const toBaseAmount = (amount: number, code: string) => {
+    const value = Number(amount);
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return value * getSafeRateToBase(code);
+  };
+
+  const roundBaseAmount = (amount: number) => {
+    const value = Number(amount) || 0;
+    return isCupBase ? Math.round(value) : Math.round(value * 100) / 100;
+  };
+
+  const totalPaidBase = roundBaseAmount(paymentLines.reduce(
+    (sum, line) => sum + toBaseAmount(line.amount, line.code),
+    0
+  ));
+
+  const balanceBase = roundBaseAmount(totalBase - totalPaidBase);
+  const remainingBase = Math.max(0, balanceBase);
+  const changeBase = Math.max(0, -balanceBase);
+  const isPaid = remainingBase <= (isCupBase ? 0 : 0.01) && totalBase > 0;
 
   const generateSerial = () => {
     const randomSN = `SN-${Math.floor(Math.random() * 100000000).toString().padStart(8, '0')}`;
@@ -1384,7 +1402,12 @@ export default function POS() {
 
     // Completa exactamente lo que falta. No se suma al importe existente,
     // porque eso podía duplicar el importe al volver a pulsar "Total a cobrar".
-    const amountNeededInCurrency = Math.max(0, remainingBase) / currency.rateToBase;
+    const paidByOtherLines = paymentLines.reduce((sum, p) => {
+      if (p.id === id) return sum;
+      return sum + toBaseAmount(p.amount, p.code);
+    }, 0);
+    const missingBase = Math.max(0, roundBaseAmount(totalBase - paidByOtherLines));
+    const amountNeededInCurrency = missingBase / getSafeRateToBase(line.code);
     const roundedAmount = (line.code === 'CUP' || line.code === 'MN' || line.code === 'CUC')
       ? Math.round(amountNeededInCurrency)
       : Math.round(amountNeededInCurrency * 100) / 100;
