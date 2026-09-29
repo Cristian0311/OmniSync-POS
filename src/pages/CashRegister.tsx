@@ -1083,7 +1083,7 @@ export default function CashRegister() {
                         <div className="text-right shrink-0">
                           <p className="text-[8px] font-black text-indigo-500 uppercase">Salario / unidad</p>
                           <p className="text-[10px] font-black text-slate-900">
-                            {formatMoney(row.salaryPerUnit, baseCurrency.symbol)}
+                            {formatSalaryCUP(row.salaryPerUnit)}
                           </p>
                         </div>
                       </div>
