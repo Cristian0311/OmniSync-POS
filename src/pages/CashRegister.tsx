@@ -227,6 +227,64 @@ export default function CashRegister() {
     return Object.values(productMap).sort((a, b) => b.quantity - a.quantity);
   }, [session, transactions, currentBranchId, baseCurrency]);
 
+
+  // Liquidación del turno: detalle real de productos vendidos y salario generado.
+  // Se calcula con las mismas reglas usadas al cerrar el turno, incluyendo reparto
+  // de comisión cuando una venta tiene varios vendedores.
+  const turnProductSalaryRows = useMemo(() => {
+    if (!session) return [];
+
+    const rows = new Map<string, {
+      productId: string;
+      name: string;
+      quantity: number;
+      salaryPerUnit: number;
+      salaryTotal: number;
+    }>();
+
+    transactions
+      .filter(tx =>
+        tx.branchId === currentBranchId &&
+        new Date(tx.date) >= new Date(session.openedAt)
+      )
+      .forEach(tx => {
+        const sellers = tx.sellerEmployeeIds && tx.sellerEmployeeIds.length > 0
+          ? tx.sellerEmployeeIds
+          : [tx.userId];
+        const splitFactor = Math.max(1, sellers.length);
+
+        tx.items.forEach(item => {
+          const product = item.product;
+          const productId = product?.id || 'unknown';
+          const name = product?.name || 'Producto desconocido';
+          const quantity = Number(item.quantity || 0);
+          const unitCommission = product?.commissionType === 'fixed'
+            ? Number(product?.commissionValue || 0)
+            : Number(product?.price || 0) * (Number(product?.commissionValue || 0) / 100);
+          const salaryPerUnit = unitCommission / splitFactor;
+
+          const current = rows.get(productId);
+          if (current) {
+            current.quantity += quantity;
+            current.salaryTotal += salaryPerUnit * quantity;
+            current.salaryPerUnit = current.quantity > 0
+              ? current.salaryTotal / current.quantity
+              : 0;
+          } else {
+            rows.set(productId, {
+              productId,
+              name,
+              quantity,
+              salaryPerUnit,
+              salaryTotal: salaryPerUnit * quantity
+            });
+          }
+        });
+      });
+
+    return Array.from(rows.values()).sort((a, b) => b.quantity - a.quantity);
+  }, [session, transactions, currentBranchId]);
+
   const handleClose = (e: React.FormEvent) => {
     e.preventDefault();
     if (session) {
@@ -507,13 +565,32 @@ export default function CashRegister() {
 
                 <form onSubmit={handleClose} className="p-5 space-y-6">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {cashDisplayCurrencies.map(c => (
+                    {/* Campo fijo: Efectivo MN/CUP. No depende de la configuración de monedas. */}
+                    <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-100 focus-within:border-emerald-300 transition-colors">
+                      <label className="block text-[8px] font-black text-emerald-600 uppercase tracking-widest mb-1">
+                        Efectivo MN / CUP
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-0 top-1/2 -translate-y-1/2 text-xs font-black text-emerald-300">$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={closingBalances[`CUP-cash`] || ''}
+                          onChange={(e) => setClosingBalances({ ...closingBalances, [`CUP-cash`]: parseFloat(e.target.value) || 0 })}
+                          className="w-full pl-6 py-0.5 bg-transparent border-none focus:ring-0 outline-none font-black text-emerald-900 text-sm placeholder:text-emerald-200"
+                          placeholder="0.00"
+                        />
+                      </div>
+                    </div>
+
+                    {cashDisplayCurrencies.filter(c => c.code !== 'CUP').map(c => (
                       <div key={`cash-${c.code}`} className="bg-slate-50 p-3 rounded-2xl border border-slate-100 focus-within:border-indigo-200 transition-colors">
                         <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Efectivo {c.code}</label>
                         <div className="relative">
                           <span className="absolute left-0 top-1/2 -translate-y-1/2 text-xs font-black text-slate-300">{c.symbol}</span>
-                          <input 
-                            type="number" 
+                          <input
+                            type="number"
                             min="0"
                             step="0.01"
                             value={closingBalances[`${c.code}-cash`] || ''}
@@ -542,6 +619,38 @@ export default function CashRegister() {
                     </div>
                   </div>
                   
+                  <div className="bg-indigo-50/60 rounded-2xl border border-indigo-100 p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3 border-b border-indigo-100 pb-3">
+                      <div>
+                        <h4 className="text-[10px] font-black text-indigo-900 uppercase tracking-[0.18em]">Liquidación del turno</h4>
+                        <p className="text-[8px] font-bold text-indigo-500 uppercase mt-1">Producto vendido, cantidad y salario por unidad</p>
+                      </div>
+                      <span className="text-[8px] font-black text-indigo-500 uppercase whitespace-nowrap">
+                        {turnProductSalaryRows.reduce((sum, row) => sum + row.quantity, 0)} unidades
+                      </span>
+                    </div>
+
+                    {turnProductSalaryRows.length > 0 ? (
+                      <div className="space-y-2 max-h-72 overflow-y-auto custom-scrollbar">
+                        {turnProductSalaryRows.map(row => (
+                          <div key={row.productId} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 bg-white rounded-xl border border-indigo-100 px-3 py-2">
+                            <p className="text-[9px] font-black text-slate-800 uppercase leading-tight break-words min-w-0">{row.name}</p>
+                            <div className="text-right">
+                              <p className="text-[7px] font-black text-slate-400 uppercase">Cantidad</p>
+                              <p className="text-[10px] font-black text-slate-800">{row.quantity}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[7px] font-black text-indigo-500 uppercase">Salario / unidad</p>
+                              <p className="text-[10px] font-black text-indigo-700">{formatMoney(row.salaryPerUnit, baseCurrency.symbol)}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-center py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">No hay productos vendidos en este turno</p>
+                    )}
+                  </div>
+
                   <button 
                     type="submit"
                     className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 active:scale-95"
