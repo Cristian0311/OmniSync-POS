@@ -212,6 +212,7 @@ export default function POS() {
   const [posSuccess, setPosSuccess] = useState("");
   const [openingAmount, setOpeningAmount] = useState("");
   const [sessionWorkerName, setSessionWorkerName] = useState("");
+  const [sessionWorkerId, setSessionWorkerId] = useState("");
   // La identidad del trabajador debe reconstruirse desde la sesión persistida
   // después de cambiar de módulo, recargar la página o rehidratar Zustand.
   useEffect(() => {
@@ -222,10 +223,13 @@ export default function POS() {
     if (sessionWorkerName !== (currentSession.workerName || "")) {
       setSessionWorkerName(currentSession.workerName || "");
     }
+    if (sessionWorkerId !== (currentSession.userId || "")) {
+      setSessionWorkerId(currentSession.userId || "");
+    }
     if (currentBranchId !== currentSession.branchId) {
       setCurrentBranch(currentSession.branchId);
     }
-  }, [currentSession?.id, currentSession?.workerName, currentSession?.branchId, sessionWorkerName, currentBranchId, setCurrentBranch]);
+  }, [currentSession?.id, currentSession?.userId, currentSession?.workerName, currentSession?.branchId, sessionWorkerName, sessionWorkerId, currentBranchId, setCurrentBranch]);
   const [employeePickerOpen, setEmployeePickerOpen] = useState(false);
   const [employeePickerSearch, setEmployeePickerSearch] = useState("");
   const employeePickerRef = useRef<HTMLDivElement>(null);
@@ -262,12 +266,16 @@ export default function POS() {
 
   // Worker detection for shift opening and branch locking
   const detectedWorker = React.useMemo(() => {
+    if (sessionWorkerId) {
+      const byId = (users || []).find(u => u.id === sessionWorkerId);
+      if (byId) return byId;
+    }
     const trimmed = (sessionWorkerName || '').toLowerCase().trim();
     if (trimmed) {
       return (users || []).find(u => (u.name || '').toLowerCase() === trimmed) || null;
     }
     return null;
-  }, [sessionWorkerName, users]);
+  }, [sessionWorkerId, sessionWorkerName, users]);
 
   const isWorkerIndependent = detectedWorker?.isIndependent === true;
   const workerAssignedBranchId = detectedWorker?.assignedBranchId || (
@@ -643,7 +651,7 @@ export default function POS() {
       setShowConfirmIDNModal(false);
       setPosViewMode('standard');
       setActiveSessionId(null);
-      setSessionWorkerName("");
+      setSessionWorkerName(""); setSessionWorkerId("");
       setSessionPassword("");
       setPosSuccess("Liquidación completada. Sesión cerrada.");
       setTimeout(() => setPosSuccess(""), 3000);
@@ -2019,7 +2027,8 @@ export default function POS() {
         return;
       }
 
-      const workerToAssign = detectedWorker ||
+      const workerToAssign = (sessionWorkerId && users.find(u => u.id === sessionWorkerId)) ||
+        detectedWorker ||
         users.find(u => (u.name || '').trim().toLowerCase() === trimmedWorkerName.toLowerCase()) ||
         null;
 
@@ -2988,6 +2997,7 @@ export default function POS() {
                                             e.stopPropagation();
                                             const workerName = (u.name || '').trim();
                                             setSessionWorkerName(workerName);
+                                            setSessionWorkerId(u.id);
                                             setEmployeePickerSearch(workerName);
                                             setEmployeePickerOpen(false);
                                             setSessionPassword('');
