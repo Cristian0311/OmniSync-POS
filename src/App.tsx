@@ -48,6 +48,37 @@ export default function App() {
   }, [isInitialized, restoreTransactionsFromBackup]);
 
   useEffect(() => {
+    // Keep the active form field visible when Android/iOS opens the software keyboard.
+    const scrollFocusedField = () => {
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement)) return;
+      if (!active.matches('input, textarea, select')) return;
+      window.setTimeout(() => {
+        active.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+      }, 80);
+    };
+
+    const handleContextMenu = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+        event.preventDefault();
+      }
+    };
+
+    document.addEventListener('focusin', scrollFocusedField);
+    document.addEventListener('contextmenu', handleContextMenu);
+    const viewport = window.visualViewport;
+    viewport?.addEventListener('resize', scrollFocusedField);
+    viewport?.addEventListener('scroll', scrollFocusedField);
+    return () => {
+      document.removeEventListener('focusin', scrollFocusedField);
+      document.removeEventListener('contextmenu', handleContextMenu);
+      viewport?.removeEventListener('resize', scrollFocusedField);
+      viewport?.removeEventListener('scroll', scrollFocusedField);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!currentUser) return;
 
     // El login activa los motores. El replay offline es un módulo pesado y se
