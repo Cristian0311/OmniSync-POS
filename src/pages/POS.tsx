@@ -215,21 +215,17 @@ export default function POS() {
   // La identidad del trabajador debe reconstruirse desde la sesión persistida
   // después de cambiar de módulo, recargar la página o rehidratar Zustand.
   useEffect(() => {
-    if (!currentSession) {
-      if (!activeSessionId) setSessionWorkerName("");
-      return;
-    }
-    // Do not overwrite a manually selected seller in the picker.
-    // Previously this effect restored the current-session worker as soon
-    // as the seller selection changed, making the selection disappear.
-    if (!employeePickerOpen && !sessionWorkerName) {
+    // Mantener la selección manual del vendedor mientras se prepara la apertura.
+    // No hay sesión abierta todavía, por lo que currentSession es null y no debe
+    // borrar sessionWorkerName justo después de que el usuario lo selecciona.
+    if (!currentSession) return;
+    if (sessionWorkerName !== (currentSession.workerName || "")) {
       setSessionWorkerName(currentSession.workerName || "");
     }
     if (currentBranchId !== currentSession.branchId) {
       setCurrentBranch(currentSession.branchId);
     }
-  }, [currentSession?.id, currentSession?.workerName, currentSession?.branchId, activeSessionId, currentBranchId, setCurrentBranch, employeePickerOpen, sessionWorkerName]);
-
+  }, [currentSession?.id, currentSession?.workerName, currentSession?.branchId, sessionWorkerName, currentBranchId, setCurrentBranch]);
   const [employeePickerOpen, setEmployeePickerOpen] = useState(false);
   const [employeePickerSearch, setEmployeePickerSearch] = useState("");
   const employeePickerRef = useRef<HTMLDivElement>(null);
