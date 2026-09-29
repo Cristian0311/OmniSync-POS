@@ -11,6 +11,22 @@ export default function CashRegister() {
   const baseCurrency = getBaseCurrency();
   const currentBranch = branches.find(b => b.id === currentBranchId);
 
+  // El arqueo siempre debe mostrar efectivo CUP, aunque la configuración
+  // de monedas de la sucursal no lo haya devuelto desde Supabase.
+  const cashDisplayCurrencies = useMemo(() => {
+    const configured = [...(currencies || [])];
+    if (!configured.some(c => c.code === 'CUP')) {
+      configured.unshift({
+        code: 'CUP',
+        name: 'Peso Cubano',
+        symbol: '$',
+        rateToBase: 1,
+        isBase: true
+      });
+    }
+    return configured;
+  }, [currencies]);
+
   // Historial visible: numeración consecutiva global entre todos los turnos no eliminados.
   const visibleCashSessions = useMemo(() => {
     const ordered = [...(cashSessions || [])]
@@ -32,6 +48,62 @@ export default function CashRegister() {
   const pendingSettlement = useMemo(() => 
     salarySettlements.find(s => s.status === 'pending'), 
   [salarySettlements]);
+  // Detalle de salario por producto vendido en el turno de la liquidación.
+  // Para una venta compartida, la comisión por unidad se reparte entre los vendedores.
+  const pendingSettlementProducts = useMemo(() => {
+    if (!pendingSettlement) return [];
+
+    const rows = new Map<string, {
+      productId: string;
+      name: string;
+      quantity: number;
+      salaryPerUnit: number;
+      salaryTotal: number;
+    }>();
+
+    transactions
+      .filter(tx => tx.sessionId === pendingSettlement.sessionId)
+      .forEach(tx => {
+        const sellers = tx.sellerEmployeeIds && tx.sellerEmployeeIds.length > 0
+          ? tx.sellerEmployeeIds
+          : [tx.userId];
+
+        if (!sellers.includes(pendingSettlement.userId)) return;
+
+        const splitFactor = Math.max(1, sellers.length);
+
+        tx.items.forEach(item => {
+          const product = item.product;
+          const productId = product?.id || 'unknown';
+          const name = product?.name || 'Producto desconocido';
+          const unitCommission = product?.commissionType === 'fixed'
+            ? Number(product?.commissionValue || 0)
+            : Number(product?.price || 0) * (Number(product?.commissionValue || 0) / 100);
+          const salaryPerUnit = unitCommission / splitFactor;
+          const quantity = Number(item.quantity || 0);
+
+          const current = rows.get(productId);
+          if (current) {
+            current.quantity += quantity;
+            current.salaryTotal += salaryPerUnit * quantity;
+            current.salaryPerUnit = current.quantity > 0
+              ? current.salaryTotal / current.quantity
+              : 0;
+          } else {
+            rows.set(productId, {
+              productId,
+              name,
+              quantity,
+              salaryPerUnit,
+              salaryTotal: salaryPerUnit * quantity
+            });
+          }
+        });
+      });
+
+    return Array.from(rows.values()).sort((a, b) => b.quantity - a.quantity);
+  }, [pendingSettlement, transactions]);
+
 
   const [openingAmount, setOpeningAmount] = useState("");
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>(currentUser ? [currentUser.id] : []);
@@ -153,11 +225,11 @@ export default function CashRegister() {
         .filter(([_, amount]) => (amount as number) > 0)
         .map(([key, amount]) => {
           const [code, method] = key.split('-');
-          const currency = currencies.find(c => c.code === code)!;
+          const currency = cashDisplayCurrencies.find(c => c.code === code);
           return {
             currencyCode: code as any,
             amount: amount as number,
-            exchangeRate: currency.rateToBase,
+            exchangeRate: code === 'CUP' || currency?.isBase ? 1 : (currency?.rateToBase || 1),
             method: method as any
           };
         });
@@ -426,7 +498,7 @@ export default function CashRegister() {
 
                 <form onSubmit={handleClose} className="p-5 space-y-6">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {currencies.map(c => (
+                    {cashDisplayCurrencies.map(c => (
                       <div key={`cash-${c.code}`} className="bg-slate-50 p-3 rounded-2xl border border-slate-100 focus-within:border-indigo-200 transition-colors">
                         <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Efectivo {c.code}</label>
                         <div className="relative">
@@ -805,6 +877,40 @@ export default function CashRegister() {
                   <span className="text-lg font-black text-indigo-600">{formatMoney(pendingSettlement.total, baseCurrency.symbol)}</span>
                 </div>
               </div>
+
+
+              {pendingSettlementProducts.length > 0 && (
+                <div className="text-left space-y-2 pt-1">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <h4 className="text-[9px] font-black text-slate-500 uppercase tracking-[0.16em]">
+                      Productos vendidos y salario por unidad
+                    </h4>
+                    <span className="text-[8px] font-bold text-slate-400 uppercase">
+                      {pendingSettlementProducts.reduce((sum, row) => sum + row.quantity, 0)} unidades
+                    </span>
+                  </div>
+                  <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
+                    {pendingSettlementProducts.map(row => (
+                      <div key={row.productId} className="flex items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl px-3 py-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[9px] font-black text-slate-800 uppercase leading-tight break-words">
+                            {row.name}
+                          </p>
+                          <p className="text-[8px] font-bold text-slate-400 uppercase mt-0.5">
+                            Cantidad: {row.quantity}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-[8px] font-black text-indigo-500 uppercase">Salario / unidad</p>
+                          <p className="text-[10px] font-black text-slate-900">
+                            {formatMoney(row.salaryPerUnit, baseCurrency.symbol)}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3 pt-2">
                 <button 
