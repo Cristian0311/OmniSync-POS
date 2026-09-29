@@ -1898,8 +1898,6 @@ export default function POS() {
       .filter(p => Number.isFinite(p.amount) && p.amount > 0)
       .map(p => {
         const currency = currencies.find(c => c.code === p.code);
-        // La moneda base siempre tiene tasa 1; no debe bloquearse el cobro
-        // aunque su fila remota no tenga rateToBase poblado.
         const isPaymentBaseCurrency = p.code === baseCurrency.code || (p.code === 'MN' && baseCurrency.code === 'CUP');
         const configuredRate = Number(currency?.rateToBase);
         const exchangeRate = isPaymentBaseCurrency
