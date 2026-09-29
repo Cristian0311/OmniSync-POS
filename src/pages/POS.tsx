@@ -761,13 +761,23 @@ export default function POS() {
   };
 
   const baseCurrency = getBaseCurrency();
+  // CUP/MN debe existir siempre en el arqueo físico, aunque la configuración
+  // de monedas llegue incompleta o el terminal tenga datos antiguos.
   const cashDisplayCurrencies = React.useMemo(() => {
     const configured = [...(currencies || [])];
     if (!configured.some(c => c.code === 'CUP')) {
       configured.unshift({
         code: 'CUP',
         name: 'Peso Cubano',
-        symbol: '  const expectedBalances = React.useMemo(() => {
+        symbol: '$',
+        rateToBase: 1,
+        isBase: true
+      } as any);
+    }
+    return configured;
+  }, [currencies]);
+
+  const expectedBalances = React.useMemo(() => {
     if (!currentSession) return [];
     
     // Start with opening balance as cash in base currency
