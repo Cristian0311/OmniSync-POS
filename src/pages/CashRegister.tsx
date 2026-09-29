@@ -62,14 +62,23 @@ export default function CashRegister() {
     }>();
 
     transactions
-      .filter(tx => tx.sessionId === pendingSettlement.sessionId)
+      .filter(tx =>
+        tx.branchId === currentBranchId &&
+        (
+          tx.sessionId === pendingSettlement.sessionId ||
+          (!tx.sessionId && new Date(tx.date) >= new Date(
+            cashSessions.find(s => s.id === pendingSettlement.sessionId)?.openedAt || 0
+          ))
+        )
+      )
       .forEach(tx => {
         const sellers = tx.sellerEmployeeIds && tx.sellerEmployeeIds.length > 0
           ? tx.sellerEmployeeIds
           : [tx.userId];
 
-        if (!sellers.includes(pendingSettlement.userId)) return;
-
+        // Mostrar todos los productos del turno. El salario por unidad se
+        // corresponde con la comisión que genera una unidad y, si la venta
+        // fue compartida, se divide entre los vendedores.
         const splitFactor = Math.max(1, sellers.length);
 
         tx.items.forEach(item => {
@@ -102,7 +111,7 @@ export default function CashRegister() {
       });
 
     return Array.from(rows.values()).sort((a, b) => b.quantity - a.quantity);
-  }, [pendingSettlement, transactions]);
+  }, [pendingSettlement, transactions, currentBranchId, cashSessions]);
 
 
   const [openingAmount, setOpeningAmount] = useState("");
