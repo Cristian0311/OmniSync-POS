@@ -1619,9 +1619,13 @@ export const useStore = create<AppState>()(
         removeFromOfflineQueueByTransactionId(transaction.id);
         return true;
       } catch (err) {
-        console.warn('[processTransaction] No hubo confirmación definitiva del servidor; venta preservada localmente y encolada para replay idempotente:', err);
-        if (!localSaleApplied) applyLocalCompletedSale(transaction);
-        return true;
+        // La operación ya está en la cola durable. Si Supabase no confirma,
+        // NO debemos marcar la venta como completada ni vaciar el carrito:
+        // el usuario debe ver el error y puede reintentar. Si el servidor sí
+        // alcanzó a crearla antes de perderse la respuesta, la RPC es idempotente
+        // por transaction.id y el siguiente intento recuperará ese estado.
+        console.warn('[processTransaction] No hubo confirmación definitiva del servidor; venta preservada en cola para replay idempotente:', err);
+        return false;
       }
     }
 
