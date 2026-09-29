@@ -761,6 +761,8 @@ export default function POS() {
   };
 
   const baseCurrency = getBaseCurrency();
+  // Las liquidaciones de empleados se expresan siempre en CUP/MN, independientemente de la moneda base del POS.
+  const formatSalaryCUP = (value: number) => `${Math.round(Number(value) || 0).toLocaleString('es-ES')} CUP`;
   // CUP/MN siempre visible en el arqueo físico.
   const cashDisplayCurrencies = React.useMemo(() => {
     const configured = [...(currencies || [])];
@@ -877,13 +879,15 @@ export default function POS() {
           const quantity = Number(rawItem.quantity || 0);
           if (!Number.isFinite(quantity) || quantity <= 0) return;
 
-          const commissionValue = Number(product?.commissionValue ?? rawItem.product_snapshot?.commissionValue ?? 0) || 0;
-          const commissionType = product?.commissionType ?? rawItem.product_snapshot?.commissionType ?? rawItem.commissionType;
-          const soldUnitPrice = Number(rawItem.price ?? product?.price ?? rawItem.product_snapshot?.price ?? 0) || 0;
-          const unitCommission = commissionType === 'percentage'
-            ? soldUnitPrice * (commissionValue / 100)
-            : commissionValue;
-          const salaryPerUnit = unitCommission / splitFactor;
+          // commissionValue es el salario/comisión FIJO en CUP por unidad.
+          // No usar rawItem.price/product.price para calcular el salario fijo.
+          const commissionValue = Number(
+            product?.commissionValue ??
+            rawItem.product_snapshot?.commissionValue ??
+            rawItem.commissionValue ??
+            0
+          ) || 0;
+          const salaryPerUnit = commissionValue / splitFactor;
 
           sellers.forEach((sellerId: string) => {
             const employee = (users || []).find(u => u.id === sellerId);
@@ -1793,7 +1797,7 @@ export default function POS() {
       lines.push(`${comLabel}${" ".repeat(Math.max(1, 32 - comLabel.length - comVal.length))}${comVal}`);
       
       const netLabel = "Total a Pagar:";
-      const netVal = formatMoney(totalSalary, baseCurrency.symbol);
+      const netVal = formatSalaryCUP(totalSalary);
       lines.push(`BOLD|${netLabel}${" ".repeat(Math.max(1, 32 - netLabel.length - netVal.length))}${netVal}`);
       
       const settlement = useStore.getState().salarySettlements.find(s => s.sessionId === session.id);
@@ -1851,7 +1855,7 @@ export default function POS() {
     const comVal = `+${formatMoney(commissions, baseCurrency.symbol)}`;
     lines.push(`${comLabel}${" ".repeat(Math.max(1, 32 - comLabel.length - comVal.length))}${comVal}`);
     const totSalLabel = "TOTAL SALARIO:";
-    const totSalVal = formatMoney(totalSalary, baseCurrency.symbol);
+    const totSalVal = formatSalaryCUP(totalSalary);
     lines.push(`BOLD|${totSalLabel}${" ".repeat(Math.max(1, 32 - totSalLabel.length - totSalVal.length))}${totSalVal}`);
     lines.push("---");
     lines.push("CENTER|Firma: _________________");
@@ -4132,20 +4136,20 @@ export default function POS() {
                             <div className="grid grid-cols-2 gap-3 pt-2 border-t border-amber-100">
                               <div>
                                 <p className="text-[8px] font-bold text-amber-600 uppercase tracking-tighter">Salario Base</p>
-                                <p className="text-sm font-black text-amber-900">{formatMoney(sessionUser.baseSalary || 0, baseCurrency.symbol)}</p>
+                                <p className="text-sm font-black text-amber-900">{formatSalaryCUP(sessionUser.baseSalary || 0)}</p>
                               </div>
                               <div>
                                 <p className="text-[8px] font-bold text-amber-600 uppercase tracking-tighter">Comisiones Ventas</p>
-                                <p className="text-sm font-black text-emerald-700">+{formatMoney(totalCommissions, baseCurrency.symbol)}</p>
+                                <p className="text-sm font-black text-emerald-700">+{formatSalaryCUP(totalCommissions)}</p>
                                 {productCommissions > 0 && (
-                                  <p className="text-[7px] text-emerald-600 font-bold mt-0.5">({formatMoney(productCommissions, baseCurrency.symbol)} por productos)</p>
+                                  <p className="text-[7px] text-emerald-600 font-bold mt-0.5">({formatSalaryCUP(productCommissions)} por productos)</p>
                                 )}
                               </div>
                             </div>
                             
                             <div className="pt-2 border-t border-amber-100 flex justify-between items-center">
                               <span className="text-[9px] font-black text-amber-900 uppercase">Total a Entregar</span>
-                              <span className="text-lg font-black text-amber-600">{formatMoney(totalSalary, baseCurrency.symbol)}</span>
+                              <span className="text-lg font-black text-amber-600">{formatSalaryCUP(totalSalary)}</span>
                             </div>
                             <div className="pt-3 border-t border-amber-100 space-y-2">
                               <div className="flex items-center justify-between gap-2">
@@ -4168,8 +4172,8 @@ export default function POS() {
                                           <td className="px-3 py-2 text-[8px] font-black text-slate-700 uppercase break-words">{row.employeeName}</td>
                                           <td className="px-3 py-2 text-[8px] font-black text-slate-900 uppercase break-words">{row.productName}</td>
                                           <td className="px-3 py-2 text-[8px] font-black text-slate-800 text-right">{row.quantity}</td>
-                                          <td className="px-3 py-2 text-[8px] font-black text-indigo-700 text-right">{formatMoney(row.salaryPerUnit, baseCurrency.symbol)}</td>
-                                          <td className="px-3 py-2 text-[8px] font-black text-indigo-900 text-right">{formatMoney(row.salaryTotal, baseCurrency.symbol)}</td>
+                                          <td className="px-3 py-2 text-[8px] font-black text-indigo-700 text-right">{formatSalaryCUP(row.salaryPerUnit)}</td>
+                                          <td className="px-3 py-2 text-[8px] font-black text-indigo-900 text-right">{formatSalaryCUP(row.salaryTotal)}</td>
                                         </tr>
                                       ))}
                                     </tbody>
@@ -4890,7 +4894,7 @@ export default function POS() {
                           <span className="text-[7px] font-bold text-slate-400 uppercase">Liquidación Total Turno</span>
                         </div>
                         <span className="text-lg sm:text-xl font-black text-indigo-600 dark:text-indigo-400 font-mono tracking-tight">
-                          {formatMoney(totalSalary, baseCurrency.symbol)}
+                          {formatSalaryCUP(totalSalary)}
                         </span>
                       </div>
                     </div>
@@ -5176,7 +5180,7 @@ export default function POS() {
                 </div>
                 <div className="flex justify-between font-black text-xs pt-1 border-t border-dotted border-black">
                   <span>SALARIO A PAGAR:</span>
-                  <span>{formatMoney(totalSalary, baseCurrency.symbol)}</span>
+                  <span>{formatSalaryCUP(totalSalary)}</span>
                 </div>
 
                 <div className="border-t border-dashed border-black my-4"></div>
