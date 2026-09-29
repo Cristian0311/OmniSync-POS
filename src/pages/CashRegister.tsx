@@ -254,9 +254,15 @@ export default function CashRegister() {
         const splitFactor = Math.max(1, sellers.length);
 
         tx.items.forEach(item => {
-          const product = item.product;
-          const productId = product?.id || 'unknown';
-          const name = product?.name || 'Producto desconocido';
+          // Algunas ventas antiguas/offline guardan product como ID en vez de objeto.
+          // Resolverlo aquí evita que la liquidación muestre "Producto desconocido"
+          // o desaparezca el salario por unidad.
+          const rawProduct = item.product as any;
+          const product = typeof rawProduct === 'string'
+            ? useStore.getState().products.find(p => p.id === rawProduct)
+            : rawProduct;
+          const productId = product?.id || (typeof rawProduct === 'string' ? rawProduct : 'unknown');
+          const name = product?.name || (typeof rawProduct === 'string' ? rawProduct : 'Producto desconocido');
           const quantity = Number(item.quantity || 0);
           const unitCommission = product?.commissionType === 'fixed'
             ? Number(product?.commissionValue || 0)
