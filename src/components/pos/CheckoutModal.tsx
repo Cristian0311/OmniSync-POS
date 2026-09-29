@@ -438,7 +438,7 @@ export default function CheckoutModal({
 
             <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0">
               <button 
-                disabled={isSubmittingCheckout || remainingBase > 0.01 || paymentLines.length === 0 || paymentLines.some(l => l.method === 'transfer' && (!l.bankCardId || !bankCards.some(c => c.id === l.bankCardId && (c.currency === l.code || (l.code === 'MN' && c.currency === 'CUP')))))}
+                disabled={isSubmittingCheckout || paymentLines.length === 0}
                 onClick={onHandleCheckout}
                 className="w-full py-3 sm:py-3.5 bg-indigo-600 text-white rounded-xl sm:rounded-2xl font-black text-sm sm:text-base uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-30 disabled:grayscale disabled:shadow-none active:scale-95 cursor-pointer"
               >
