@@ -1380,15 +1380,15 @@ export default function POS() {
     const line = paymentLines.find(p => p.id === id);
     if (!line) return;
     const currency = currencies.find(c => c.code === line.code);
-    if (!currency) return;
-    
-    // We want to fill this line with what is missing in base currency
-    const amountNeededInCurrency = remainingBase / currency.rateToBase;
-    const finalAmount = line.amount + amountNeededInCurrency;
-    
-    // If it's CUP or MN, round to integer
-    const roundedAmount = (line.code === 'CUP' || line.code === 'MN') ? Math.round(finalAmount) : Math.round(finalAmount * 100) / 100;
-    
+    if (!currency || !Number.isFinite(currency.rateToBase) || currency.rateToBase <= 0) return;
+
+    // Completa exactamente lo que falta. No se suma al importe existente,
+    // porque eso podía duplicar el importe al volver a pulsar "Total a cobrar".
+    const amountNeededInCurrency = Math.max(0, remainingBase) / currency.rateToBase;
+    const roundedAmount = (line.code === 'CUP' || line.code === 'MN' || line.code === 'CUC')
+      ? Math.round(amountNeededInCurrency)
+      : Math.round(amountNeededInCurrency * 100) / 100;
+
     updatePaymentLine(id, 'amount', roundedAmount);
   };
 
