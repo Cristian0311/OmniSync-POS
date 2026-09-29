@@ -4117,8 +4117,10 @@ export default function POS() {
                           }, 0);
                         }, 0);
 
-                        const rateCommission = ((sessionUser.commissionRate || 0) > 0) ? (totalSales * (sessionUser.commissionRate || 0)) / 100 : 0;
-                        const totalCommissions = productCommissions + rateCommission;
+                        // La liquidación por producto es exclusivamente la comisión fija
+                        // configurada en CUP por unidad. No se mezcla con el precio de venta
+                        // ni con una comisión porcentual del total vendido.
+                        const totalCommissions = productCommissions;
                         const totalSalary = (sessionUser.baseSalary || 0) + totalCommissions;
                         
                         return (
@@ -4139,7 +4141,7 @@ export default function POS() {
                                 <p className="text-sm font-black text-amber-900">{formatSalaryCUP(sessionUser.baseSalary || 0)}</p>
                               </div>
                               <div>
-                                <p className="text-[8px] font-bold text-amber-600 uppercase tracking-tighter">Comisiones Ventas</p>
+                                <p className="text-[8px] font-bold text-amber-600 uppercase tracking-tighter">Comisiones por productos</p>
                                 <p className="text-sm font-black text-emerald-700">+{formatSalaryCUP(totalCommissions)}</p>
                                 {productCommissions > 0 && (
                                   <p className="text-[7px] text-emerald-600 font-bold mt-0.5">({formatSalaryCUP(productCommissions)} por productos)</p>
