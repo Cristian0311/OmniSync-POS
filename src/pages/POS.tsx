@@ -301,14 +301,16 @@ export default function POS() {
   const shouldShowIDNView = isCurrentUserIndependent || isSessionIndependent || posViewMode === 'idn';
 
   const activeIDNWorker = React.useMemo(() => {
+    // En la vista administrativa, la selección explícita del vendedor siempre
+    // tiene prioridad. Así el selector no pierde el valor al cambiar de vendedor.
+    if (currentUser?.role === 'admin' && selectedAdminIDNUserId) {
+      const selected = (users || []).find(u => u.id === selectedAdminIDNUserId && u.isIndependent);
+      if (selected) return selected;
+    }
     if (isCurrentUserIndependent) return currentUser;
     if (isSessionIndependent) return currentSessionWorker;
-    if (selectedAdminIDNUserId) {
-      const found = (users || []).find(u => u.id === selectedAdminIDNUserId);
-      if (found) return found;
-    }
     return (users || []).find(u => u.isIndependent) || currentUser;
-  }, [isCurrentUserIndependent, isSessionIndependent, selectedAdminIDNUserId, users, currentUser, currentSessionWorker]);
+  }, [currentUser?.role, isCurrentUserIndependent, isSessionIndependent, selectedAdminIDNUserId, users, currentUser, currentSessionWorker]);
 
   const activeIDNBranchId = activeIDNWorker?.assignedBranchId || activeIDNWorker?.branchId || currentBranchId;
 
