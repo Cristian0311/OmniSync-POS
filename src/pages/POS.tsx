@@ -11,6 +11,7 @@ import { InfoTooltip } from "../components/InfoTooltip";
 import { getOfflineQueueCount, getOfflineConflictCount } from "../services/offlineQueue";
 import { normalizeSemanticText } from "../utils/textUtils";
 import { POSCatalog } from "../components/POSCatalog";
+import { printThermalReceipt as printThermalReceiptDirect } from "../lib/escpos";
 const CheckoutModal = lazy(() => import("../components/pos/CheckoutModal"));
 
 const POSReceiptModal = lazy(() => import("../components/POSReceiptModal"));
@@ -541,8 +542,7 @@ export default function POS() {
       lines.push(`BOLD|TOTAL LIQUIDAR: ${baseCurrency.symbol}${data.totalToPay.toLocaleString()} CUP`);
       lines.push("---");
       lines.push("CENTER|CUADRE REALIZADO CON EXITO");
-      const { printThermalReceipt } = await import("../lib/escpos");
-      await printThermalReceipt({
+      await printThermalReceiptDirect({
         lines,
         width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm'
       });
