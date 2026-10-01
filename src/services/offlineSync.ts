@@ -577,6 +577,14 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
         if ((transaction.ncf || null) !== (persistedIdn.ncf || null) || (transaction.ncfType || null) !== (persistedIdn.ncf_type || null)) {
           throw new PermanentSyncError('El NCF de la liquidación IDN no coincide con el registro fiscal de Supabase');
         }
+        useStore.setState(state => {
+          const exists = (state.transactions || []).some(t => t.id === transaction.id);
+          return {
+            transactions: exists
+              ? (state.transactions || []).map(t => t.id === transaction.id ? { ...t, ...transaction, offlinePending: false } : t)
+              : [{ ...transaction, offlinePending: false }, ...(state.transactions || [])]
+          };
+        });
         return true;
       }
       const res = await callProcessTransactionRPC(transaction);
@@ -661,6 +669,17 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
           ]
         }));
       }
+
+      // La venta ya está confirmada en Supabase: quitar la marca local pendiente
+      // antes de retirar su operación del outbox.
+      useStore.setState(state => {
+        const exists = (state.transactions || []).some(t => t.id === transaction.id);
+        return {
+          transactions: exists
+            ? (state.transactions || []).map(t => t.id === transaction.id ? { ...t, ...transaction, offlinePending: false } : t)
+            : [{ ...transaction, offlinePending: false }, ...(state.transactions || [])]
+        };
+      });
       return true;
     }
     case 'void_transaction': {
