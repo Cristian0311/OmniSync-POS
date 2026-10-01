@@ -75,6 +75,7 @@ export default function Reports() {
   const userById = useMemo(() => new Map(users.map(user => [user.id, user])), [users]);
   const productById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
   const branchById = useMemo(() => new Map(branches.map(branch => [branch.id, branch])), [branches]);
+  const bankCardById = useMemo(() => new Map(bankCards.map(card => [card.id, card])), [bankCards]);
   const addSalarySettlement = store.addSalarySettlement;
   const updateSalarySettlement = store.updateSalarySettlement;
   const updateCashSession = store.updateCashSession;
@@ -141,12 +142,12 @@ export default function Reports() {
   // Calculate cash movements total
   const allMovements = cashSessions.flatMap(s => s.movements || []);
   const totalCashIncomes = allMovements.filter(m => m.type === 'income').reduce((s, m) => s + (m.amount * (currencyByCode.get(m.currencyCode)?.rateToBase || 1)), 0);
-  const totalCashExpenses = allMovements.filter(m => m.type === 'expense').reduce((s, m) => s + (m.amount * (currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1)), 0);
+  const totalCashExpenses = allMovements.filter(m => m.type === 'expense').reduce((s, m) => s + (m.amount * (currencyByCode.get(m.currencyCode)?.rateToBase || 1)), 0);
   
   // Bank movements breakdown
   const bankPaymentsReceived = bankTransactions.filter(t => t.type === 'payment_received').reduce((sum, t) => {
-    const card = bankCards.find(c => c.id === t.cardId);
-    const rate = currencies.find(c => c.code === card?.currency)?.rateToBase || 1;
+    const card = bankCardById.get(t.cardId);
+    const rate = currencyByCode.get(card?.currency || '')?.rateToBase || 1;
     return sum + (t.amount * rate);
   }, 0);
 
@@ -178,7 +179,7 @@ export default function Reports() {
   const txCount = (transactions || []).length;
 
   const formatMoney = (amount: number, code: string = baseCurrency.code) => {
-    const currency = currencies.find(c => c.code === code) || baseCurrency;
+    const currency = currencyByCode.get(code) || baseCurrency;
     const hasDecimals = amount % 1 !== 0;
     const formatted = amount.toLocaleString('es-CU', {
       minimumFractionDigits: hasDecimals ? 2 : 0,
@@ -205,7 +206,7 @@ export default function Reports() {
   const getProductName = (itemProduct: any) => {
     if (!itemProduct) return 'Desconocido';
     if (typeof itemProduct === 'string') {
-      const p = products.find(p => p.id === itemProduct);
+      const p = productById.get(itemProduct);
       return p ? p.name : itemProduct;
     }
     return itemProduct.name || 'Desconocido';
