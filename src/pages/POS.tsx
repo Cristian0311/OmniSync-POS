@@ -763,6 +763,10 @@ export default function POS() {
   };
 
   const baseCurrency = getBaseCurrency();
+  const productById = React.useMemo(() => new Map((products || []).map(product => [product.id, product])), [products]);
+  const userById = React.useMemo(() => new Map((users || []).map(user => [user.id, user])), [users]);
+  const currencyByCode = React.useMemo(() => new Map((currencies || []).map(currency => [currency.code, currency])), [currencies]);
+
   // Las liquidaciones de empleados se expresan siempre en CUP/MN, independientemente de la moneda base del POS.
   const formatSalaryCUP = (value: number) => `${Math.round(Number(value) || 0).toLocaleString('es-ES')} CUP`;
   // CUP/MN siempre visible en el arqueo físico.
@@ -788,66 +792,58 @@ export default function POS() {
       { currencyCode: baseCurrency.code as any, amount: currentSession.openingBalance, exchangeRate: 1, method: 'cash' }
     ];
 
-    // Add all transaction payments from this session
+    // Add all transaction payments from this session. Aggregate with a Map
+    // instead of repeatedly scanning the expected lines.
     const sessionTxs = activeTransactions.filter(t => 
       t.branchId === currentBranchId && 
       t.sessionId === currentSession.id
     );
 
-    sessionTxs.forEach(tx => {
-      (tx.payments || []).forEach(p => {
-        const existing = expected.find(e => e.currencyCode === p.currencyCode && e.method === p.method);
-        if (existing) {
-          existing.amount += p.amount;
-        } else {
-          expected.push({ ...p });
-        }
-      });
-      
-      // Subtract change given in each currency
-      if (tx.changePayments && tx.changePayments.length > 0) {
-        tx.changePayments.forEach(cp => {
-          const existing = expected.find(e => e.currencyCode === cp.currencyCode && e.method === cp.method);
-          if (existing) {
-            existing.amount -= cp.amount;
-          } else {
-            expected.push({ ...cp, amount: -cp.amount });
-          }
+    const expectedMap = new Map<string, Payment>();
+    const addExpected = (payment: Payment, amountDelta?: number) => {
+      const key = payment.currencyCode + '::' + payment.method;
+      const existing = expectedMap.get(key);
+      if (existing) {
+        existing.amount += amountDelta ?? payment.amount;
+      } else {
+        expectedMap.set(key, {
+          ...payment,
+          amount: amountDelta ?? payment.amount
         });
+      }
+    };
+
+    addExpected(expected[0]);
+
+    sessionTxs.forEach(tx => {
+      (tx.payments || []).forEach(p => addExpected(p));
+
+      // Subtract change given in each currency.
+      if (tx.changePayments && tx.changePayments.length > 0) {
+        tx.changePayments.forEach(cp => addExpected(cp, -cp.amount));
       } else if (tx.changeGiven && tx.changeGiven > 0) {
-        // Fallback for activeTransactions with only changeGiven in base currency
-        const existing = expected.find(e => e.currencyCode === baseCurrency.code && e.method === 'cash');
-        if (existing) {
-          existing.amount -= tx.changeGiven;
-        } else {
-          expected.push({ 
-            currencyCode: baseCurrency.code as any, 
-            amount: -tx.changeGiven, 
-            exchangeRate: 1, 
-            method: 'cash' 
-          });
-        }
+        addExpected({
+          currencyCode: baseCurrency.code as any,
+          amount: tx.changeGiven,
+          exchangeRate: 1,
+          method: 'cash'
+        }, -tx.changeGiven);
       }
     });
 
-    // Add cash movements
+    // Add cash movements.
     if (currentSession?.movements) {
       currentSession.movements.forEach(m => {
-        const existing = expected.find(e => e.currencyCode === m.currencyCode && e.method === 'cash');
-        if (existing) {
-          existing.amount += (m.type === 'income' ? m.amount : -m.amount);
-        } else {
-          expected.push({ 
-            currencyCode: m.currencyCode as any, 
-            amount: m.type === 'income' ? m.amount : -m.amount,
-            exchangeRate: currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1,
-            method: 'cash'
-          });
-        }
+        addExpected({
+          currencyCode: m.currencyCode as any,
+          amount: m.amount,
+          exchangeRate: currencyByCode.get(m.currencyCode)?.rateToBase || 1,
+          method: 'cash'
+        }, m.type === 'income' ? m.amount : -m.amount);
       });
     }
 
-    return expected.filter(e => e.amount !== 0);
+    return Array.from(expectedMap.values()).filter(e => e.amount !== 0);
   }, [currentSession, activeTransactions, currentBranchId, baseCurrency, currencies]);
 
   // Liquidación por producto del turno actual.
@@ -871,7 +867,7 @@ export default function POS() {
           const rawItem = item as any;
           const rawProduct = rawItem.product ?? rawItem.productId;
           const product = typeof rawProduct === 'string'
-            ? (products || []).find(p => p.id === rawProduct)
+            ? productById.get(rawProduct)
             : rawProduct;
 
           const productId = product?.id || rawItem.product_id || (typeof rawProduct === 'string' ? rawProduct : '');
@@ -892,7 +888,7 @@ export default function POS() {
           const salaryPerUnit = commissionValue / splitFactor;
 
           sellers.forEach((sellerId: string) => {
-            const employee = (users || []).find(u => u.id === sellerId);
+            const employee = userById.get(sellerId);
             const key = sellerId + '::' + productId;
             const existing = rows.get(key);
 
@@ -918,16 +914,16 @@ export default function POS() {
       String(a.employeeName).localeCompare(String(b.employeeName)) ||
       String(a.productName).localeCompare(String(b.productName))
     );
-  }, [currentSession, activeTransactions, currentBranchId, products, users]);
+  }, [currentSession, activeTransactions, currentBranchId, productById, userById]);
 
   const totalExpectedToDeliver = React.useMemo(() => {
     return expectedBalances.reduce((sum, line) => {
       const rate = line.currencyCode === baseCurrency.code
         ? 1
-        : Number(line.exchangeRate || currencies.find(c => c.code === line.currencyCode)?.rateToBase || 1);
+        : Number(line.exchangeRate || currencyByCode.get(line.currencyCode)?.rateToBase || 1);
       return sum + Number(line.amount || 0) * rate;
     }, 0);
-  }, [expectedBalances, baseCurrency, currencies]);
+  }, [expectedBalances, baseCurrency, currencyByCode]);
 
 
   const handleReturnItem = async () => {
