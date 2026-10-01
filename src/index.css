@@ -71,6 +71,28 @@
   --shadow-lg: none;
 }
 
+/* Automatic low-memory rendering profile. The POS keeps all functionality,
+   * but removes expensive visual work on 2 GB-class tablets. */
+.pos-product-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 170px 180px;
+}
+
+html[data-perf-tier="low"] .pos-product-card {
+  contain-intrinsic-size: 160px 180px;
+}
+
+html[data-perf-tier="ultra"] .pos-product-card {
+  contain-intrinsic-size: 150px 170px;
+  transition: none !important;
+}
+
+html[data-perf-tier="ultra"] .pos-product-card *,
+html[data-perf-tier="ultra"] .pos-product-image {
+  transition: none !important;
+  animation: none !important;
+}
+
 /* Fluid scrolling & touch support for iOS/Android tablets and phones */
 html, body, #root {
   height: 100dvh;
