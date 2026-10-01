@@ -46,6 +46,14 @@ function extractQuantity(text: string): { quantity: number; text: string } {
   if (words.length > 1 && NUMBER_WORDS[words[0]] !== undefined) {
     return { quantity: Math.max(1, NUMBER_WORDS[words[0]]), text: words.slice(1).join(" ") };
   }
+  const last = words[words.length - 1];
+  const trailingNumber = Number(last);
+  if (words.length > 1 && /^\\d{1,4}$/.test(last)) {
+    return { quantity: Math.max(1, trailingNumber), text: words.slice(0, -1).join(" ") };
+  }
+  if (words.length > 1 && NUMBER_WORDS[last] !== undefined) {
+    return { quantity: Math.max(1, NUMBER_WORDS[last]), text: words.slice(0, -1).join(" ") };
+  }
   return { quantity: 1, text };
 }
 
@@ -68,7 +76,12 @@ export function parseVoiceCommand(input: string): VoiceCommand {
   const { action, rest } = findAction(normalized);
   if (action === "clear") return { action, quantity: 1, query: "", raw };
   const extracted = extractQuantity(rest);
-  return { action, quantity: extracted.quantity, query: extracted.text.trim(), raw };
+  const query = extracted.text
+    .replace(/^(de|del|la|el|los|las)\\s+/i, "")
+    .replace(/\\s+(unidades?|uds?|piezas?|productos?)\\s+(de|del)\\s+/i, " ")
+    .replace(/\\s+(al|a la|en el|en la)\\s+(carrito|carro|cesta)(\\s+de\\s+compras?)?$/i, "")
+    .trim();
+  return { action, quantity: extracted.quantity, query, raw };
 }
 
 function scoreProduct(product: Product, query: string): number {
