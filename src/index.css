@@ -314,6 +314,14 @@ body {
     -webkit-backdrop-filter: none !important;
   }
 
+
+  /* Keep offscreen POS cards out of the render/paint path on low-end GPUs. */
+  .pos-product-grid > .pos-product-card {
+    contain: content;
+    content-visibility: auto;
+    contain-intrinsic-size: 150px 180px;
+  }
+
   .custom-scrollbar::-webkit-scrollbar {
     width: 4px;
     height: 4px;
