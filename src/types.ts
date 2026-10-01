@@ -135,6 +135,8 @@ export interface Transaction {
   deletedAt?: string;
   deletedBy?: string;
   deleteReason?: string;
+  /** Local marker: sale exists on this terminal and still requires durable/offline confirmation. */
+  offlinePending?: boolean;
 }
 
 export interface ReturnItem {
