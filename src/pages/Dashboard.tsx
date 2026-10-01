@@ -208,7 +208,7 @@ export default function Dashboard() {
       <div className="flex flex-wrap items-center gap-1">
         {payments.map((p, idx) => {
           const isTransfer = p.method === 'transfer';
-          const curr = currencyByCode.get(p.currencyCode) || { symbol: '
+          const curr = currencyByCode.get(p.currencyCode) || { symbol: '$', code: p.currencyCode };
           const formattedAmount = isCupCode(p.currencyCode)
             ? Math.round(p.amount).toLocaleString('es-CU')
             : p.amount.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
