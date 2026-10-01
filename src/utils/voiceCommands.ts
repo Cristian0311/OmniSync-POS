@@ -138,19 +138,25 @@ function scoreProduct(product: Product, query: string, preferredPrice?: number):
   const barcode = normalize(product.barcode || "");
   const id = normalize(product.id || "");
   if (!q) return 0;
-  if (name === q || sku === q || barcode === q || id === q) return 100;
-  if (name.startsWith(q)) return 90;
-  if (sku.startsWith(q) || barcode.startsWith(q) || id.startsWith(q)) return 88;
-  if (name.includes(q)) return 75;
-  const tokens = q.split(" ").filter(Boolean);
-  const hits = tokens.filter(token => name.includes(token)).length;
-  let score = tokens.length ? Math.round((hits / tokens.length) * 65) : 0;
-  if (preferredPrice !== undefined) {
+
+  let score = 0;
+  if (name === q || sku === q || barcode === q || id === q) score = 100;
+  else if (name.startsWith(q)) score = 90;
+  else if (sku.startsWith(q) || barcode.startsWith(q) || id.startsWith(q)) score = 88;
+  else if (name.includes(q)) score = 75;
+  else {
+    const tokens = q.split(" ").filter(Boolean);
+    const hits = tokens.filter(token => name.includes(token)).length;
+    score = tokens.length ? Math.round((hits / tokens.length) * 65) : 0;
+  }
+
+  if (preferredPrice !== undefined && score > 0) {
     const productPrice = Number((product as Product & { price?: number }).price);
     if (Number.isFinite(productPrice)) {
       score += Math.abs(productPrice - preferredPrice) < 0.0001 ? 45 : -12;
     }
   }
+
   return score;
 }
 
