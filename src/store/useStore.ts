@@ -1558,90 +1558,109 @@ export const useStore = create<AppState>()(
   },
   processTransaction: async (transaction) => {
     // Una liquidación IDN con productos representa una venta física que acaba
-    // de ocurrir y DEBE descontar inventario en el almacén asignado. Se procesa
-    // por la misma RPC atómica e idempotente que una venta normal.
-    // Solo una liquidación IDN sin líneas es un registro administrativo y no toca stock.
+    // de ocurrir y debe usar el mismo flujo atómico de ventas normales.
+    // Una liquidación IDN sin líneas es solo un registro administrativo.
     if (transaction.notes === 'LIQUIDACION_IDN' && (transaction.items || []).length === 0) {
-      const durableTransaction = { ...transaction, offlinePending: true };
-      await enqueueOfflineItem('transaction', durableTransaction, transaction.id);
+      await enqueueOfflineItem('transaction', transaction, transaction.id);
+
       if (typeof navigator !== 'undefined' && navigator.onLine) {
         try {
-          const synced = await pushTransactionToSupabase(durableTransaction);
+          const synced = await pushTransactionToSupabase(transaction);
           if (!synced) throw new Error('Supabase no confirmó la liquidación IDN');
           removeFromOfflineQueueByTransactionId(transaction.id);
         } catch (err) {
-          console.warn('[processTransaction] Liquidación IDN sin ventas no confirmada; queda durable para reintento:', err);
-          return false;
+          // La operación ya quedó en la cola durable. También debe quedar en el
+          // estado local para que una recarga con conexión inestable no la haga
+          // desaparecer de la pantalla.
+          console.warn('[processTransaction] Liquidación IDN pendiente; conservada localmente para reintento:', err);
         }
       }
+
       set((state) => ({
         transactions: [{ ...transaction }, ...state.transactions.filter(t => t.id !== transaction.id)],
         cart: [],
         currentCustomerId: undefined
       }));
+      await flushLocalStateStorage();
       return true;
     }
 
-    // Online: Supabase is the single authority for stock mutation. Only after the
-    // atomic RPC commits do we mirror the result locally. This prevents the old
-    // double-decrement (local optimistic update + RPC update).
-    if (navigator.onLine) {
-      // Primero hacemos durable la operación. Esto elimina la ventana peligrosa
-      // entre "el cajero confirmó" y "la RPC terminó": si la pestaña muere o la
-      // red cae durante el request, el ticket ya existe en IndexedDB para replay.
-      const durableTransaction = { ...transaction, offlinePending: true };
-      await enqueueOfflineItem('transaction', durableTransaction, transaction.id);
-      let localSaleApplied = false;
-      try {
-        const res = await callProcessTransactionRPC(transaction);
-        if (!res.success) {
-          // Only explicit business/idempotency rejections are definitive.
-          // Verification failures, timeouts, schema-cache issues and unknown
-          // transport failures remain retryable so the sale cannot be lost.
-          const code = String(res.errorCode || '');
-          const permanentCodes = new Set(['P0001', '23503', '23505', '22P02', '22003', '22007', 'IDEMPOTENCY_CONFLICT']);
-          if (permanentCodes.has(code)) {
-            removeFromOfflineQueueByTransactionId(transaction.id);
-            console.error('[processTransaction] Operación rechazada por servidor:', res.error);
-            return false;
-          }
-          throw new Error(res.error || 'No se pudo confirmar la venta');
-        }
+    // Primero persistimos la operación en la cola durable. Así, aunque la
+    // pestaña se cierre durante el cobro, existe una operación reintentable.
+    await enqueueOfflineItem('transaction', transaction, transaction.id);
 
-        // El espejo local se aplica como máximo una vez. Si después falla la
-        // reconciliación remota, la misma venta NO puede volver a descontar stock.
-        applyLocalCompletedSale({ ...transaction, offlinePending: false });
-        localSaleApplied = true;
-        // Las ventas son datos críticos: no esperamos al debounce normal de 250 ms.
-        // Queda persistida en IndexedDB antes de devolver "venta confirmada".
-        await flushLocalStateStorage();
+    // Offline real o conexión inestable: el POS debe conservar inmediatamente
+    // la venta localmente. En una conexión mala navigator.onLine puede seguir
+    // siendo true aunque la RPC falle por timeout/DNS/TLS.
+    const applyLocalPendingSale = async () => {
+      const alreadyLocal = useStore.getState().transactions.some(
+        t => t.id === transaction.id && !t.deletedAt
+      );
+      if (!alreadyLocal) applyLocalCompletedSale(transaction);
+      await flushLocalStateStorage();
+    };
 
-        const inventoryReconciled = await refreshInventoryBranchesFromSupabase([transaction.branchId]);
-        if (!inventoryReconciled) {
-          throw new Error('Venta confirmada, pero el inventario local aún no pudo reconciliarse con Supabase');
-        }
-        removeFromOfflineQueueByTransactionId(transaction.id);
-        return true;
-      } catch (err) {
-        // La operación ya está en la cola durable. Si Supabase no confirma,
-        // NO debemos marcar la venta como completada ni vaciar el carrito:
-        // el usuario debe ver el error y puede reintentar. Si el servidor sí
-        // alcanzó a crearla antes de perderse la respuesta, la RPC es idempotente
-        // por transaction.id y el siguiente intento recuperará ese estado.
-        console.warn('[processTransaction] No hubo confirmación definitiva del servidor; venta preservada en cola para replay idempotente:', err);
-        return false;
-      }
+    if (typeof navigator === 'undefined' || navigator.onLine === false) {
+      await applyLocalPendingSale();
+      return true;
     }
 
-    // Offline: apply once to the local model and persist the exact operation for
-    // later RPC execution. The transaction id is the idempotency key.
-    const durableTransaction = { ...transaction, offlinePending: true };
-    await enqueueOfflineItem('transaction', durableTransaction, transaction.id);
-    applyLocalCompletedSale(durableTransaction);
-    // Persistencia inmediata: una recarga justo después de "Cobrar" debe
-    // encontrar la venta aunque el navegador siga completamente offline.
-    await flushLocalStateStorage();
-    return true;
+    try {
+      const res = await callProcessTransactionRPC(transaction);
+
+      if (!res.success) {
+        const code = String(res.errorCode || '');
+        // Solo rechazos de negocio/consistencia explícitos son definitivos.
+        // Los errores de transporte permanecen pendientes para reintento.
+        const permanentCodes = new Set([
+          'P0001', '23503', '23505', '22P02', '22003', '22007', 'IDEMPOTENCY_CONFLICT'
+        ]);
+
+        if (permanentCodes.has(code)) {
+          removeFromOfflineQueueByTransactionId(transaction.id);
+          console.error('[processTransaction] Operación rechazada por servidor:', res.error);
+          return false;
+        }
+
+        await applyLocalPendingSale();
+        get().addNotification(
+          'Venta guardada localmente. Se sincronizará automáticamente cuando la conexión sea estable.',
+          'info'
+        );
+        return true;
+      }
+
+      // Confirmada en Supabase: reflejarla localmente antes de liberar el
+      // control al POS y hacer durable el estado para una posible recarga.
+      await applyLocalPendingSale();
+
+      // La confirmación remota ya ocurrió. Si este refresh falla, la venta no
+      // vuelve a un estado de error ni se vuelve a cobrar; el sincronizador
+      // reconciliará el inventario en el siguiente ciclo.
+      const inventoryReconciled = await refreshInventoryBranchesFromSupabase([transaction.branchId]);
+      if (!inventoryReconciled) {
+        console.warn('[processTransaction] Venta confirmada; inventario local pendiente de reconciliación.');
+      }
+
+      removeFromOfflineQueueByTransactionId(transaction.id);
+      return true;
+    } catch (err) {
+      // Timeout, DNS, TLS, caída temporal o respuesta perdida: el ticket ya
+      // está protegido en la cola durable, pero también debe verse localmente.
+      // Si la RPC alcanzó a confirmar la venta antes de perder la respuesta,
+      // el siguiente replay será idempotente por transaction.id.
+      console.warn('[processTransaction] Conexión inestable durante el cobro; venta conservada localmente:', err);
+      try {
+        await applyLocalPendingSale();
+      } catch (persistError) {
+        console.error('[processTransaction] No se pudo persistir el espejo local de la venta:', persistError);
+      }
+      get().addNotification(
+        'Venta guardada localmente. Se sincronizará automáticamente cuando la conexión sea estable.',
+        'info'
+      );
+      return true;
+    }
   },
 
   deleteTransaction: async (id: string, reason?: string) => {
