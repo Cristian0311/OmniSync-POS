@@ -290,10 +290,16 @@ export default function POS() {
   const independentUsers = (users || []).filter(u => u.isIndependent);
 
   useEffect(() => {
+    // El selector solo tiene sentido para administradores. Un vendedor IDN
+    // autenticado queda bloqueado a su propia identidad y almacén.
+    if (currentUser?.role !== 'admin' || isCurrentUserIndependent || isSessionIndependent) {
+      setSelectedAdminIDNUserId('');
+      return;
+    }
     if (!selectedAdminIDNUserId && independentUsers.length > 0) {
       setSelectedAdminIDNUserId(independentUsers[0].id);
     }
-  }, [independentUsers, selectedAdminIDNUserId]);
+  }, [currentUser?.role, isCurrentUserIndependent, isSessionIndependent, independentUsers, selectedAdminIDNUserId]);
 
   // When a shift is opened for an independent worker or current user is independent, default view to 'idn'
   useEffect(() => {
@@ -305,15 +311,18 @@ export default function POS() {
   const shouldShowIDNView = isCurrentUserIndependent || isSessionIndependent || posViewMode === 'idn';
 
   const activeIDNWorker = React.useMemo(() => {
-    // En la vista administrativa, la selección explícita del vendedor siempre
-    // tiene prioridad. Así el selector no pierde el valor al cambiar de vendedor.
+    // Un vendedor IDN autenticado o una sesión abierta para un IDN quedan
+    // estrictamente ligados a ese vendedor. Solo el administrador puede
+    // escoger otro IDN desde el selector administrativo.
+    if (isCurrentUserIndependent) return currentUser;
+    if (isSessionIndependent) return currentSessionWorker;
     if (currentUser?.role === 'admin' && selectedAdminIDNUserId) {
       const selected = (users || []).find(u => u.id === selectedAdminIDNUserId && u.isIndependent);
       if (selected) return selected;
     }
-    if (isCurrentUserIndependent) return currentUser;
-    if (isSessionIndependent) return currentSessionWorker;
-    return (users || []).find(u => u.isIndependent) || currentUser;
+    return currentUser?.role === 'admin'
+      ? (users || []).find(u => u.isIndependent) || currentUser
+      : currentUser;
   }, [currentUser?.role, isCurrentUserIndependent, isSessionIndependent, selectedAdminIDNUserId, users, currentUser, currentSessionWorker]);
 
   const activeIDNBranchId = activeIDNWorker?.assignedBranchId || activeIDNWorker?.branchId || currentBranchId;
@@ -2439,7 +2448,7 @@ export default function POS() {
             </button>
 
             {/* Admin worker selector */}
-            {currentUser?.role === 'admin' && independentUsers.length > 0 && (
+            {currentUser?.role === 'admin' && !isCurrentUserIndependent && !isSessionIndependent && independentUsers.length > 0 && (
               <div className="flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded-xl border border-slate-700">
                 <span className="text-[8px] font-bold text-slate-400 uppercase hidden sm:inline">Vendedor:</span>
                 <select
