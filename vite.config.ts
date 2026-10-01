@@ -50,11 +50,28 @@ export default defineConfig(() => {
           skipWaiting: true,
           // Supabase is the source of truth. Never let Workbox cache REST
           // responses or make a reconnect replay a stale API response.
+          globIgnores: [
+            '**/vendor-xlsx-*.js',
+            '**/vendor-charts-*.js',
+            '**/Reports-*.js',
+            '**/Settings-*.js',
+            '**/Inventory-*.js',
+            '**/Transfers-*.js',
+            '**/Banks-*.js',
+            '**/Suppliers-*.js',
+            '**/InventoryAudit-*.js',
+            '**/Dashboard-*.js'
+          ],
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/mszojsqwilfqqcaycxch\.supabase\.co\/(rest|auth|storage|functions)\/.*$/i,
               handler: 'NetworkOnly',
               options: { cacheName: 'supabase-network-only' }
+            },
+            {
+              urlPattern: /\/assets\/.*\.js$/i,
+              handler: 'StaleWhileRevalidate',
+              options: { cacheName: 'omnisync-js-runtime-cache' }
             }
           ]
         }

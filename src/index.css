@@ -314,6 +314,14 @@ body {
     -webkit-backdrop-filter: none !important;
   }
 
+
+  /* Keep offscreen POS cards out of the render/paint path on low-end GPUs. */
+  .pos-product-grid > .pos-product-card {
+    contain: content;
+    content-visibility: auto;
+    contain-intrinsic-size: 150px 180px;
+  }
+
   .custom-scrollbar::-webkit-scrollbar {
     width: 4px;
     height: 4px;
@@ -365,10 +373,28 @@ body {
     -webkit-touch-callout: none !important;
   }
 
-  /* Space reserved around the focused field while the software keyboard is open. */
-  .keyboard-safe-scroll {
-    scroll-padding-bottom: 35vh;
+  /* Keyboard-aware scrolling for every form in the application. The runtime service
+   * updates --keyboard-inset from visualViewport, so the field keeps clearance
+   * from the software keyboard without changing normal desktop/tablet layout. */
+  .keyboard-safe-scroll,
+  [class*="overflow-y-auto"],
+  [class*="overflow-auto"] {
     scroll-padding-top: 12vh;
+    scroll-padding-bottom: calc(var(--keyboard-inset, 0px) + 28px);
+  }
+
+  .keyboard-open input,
+  .keyboard-open textarea,
+  .keyboard-open select,
+  .keyboard-open [contenteditable="true"] {
+    scroll-margin-top: 18px;
+    scroll-margin-bottom: calc(var(--keyboard-inset, 0px) + 28px);
+  }
+
+  /* Centered modal bodies must shrink to the actual visual viewport while the
+   * keyboard is open, otherwise the lower part can remain behind the keyboard. */
+  .keyboard-open .keyboard-modal-surface {
+    max-height: calc(var(--keyboard-viewport-height, 100dvh) - 24px) !important;
   }
 
   /* Hardware accelerated scrolling helper */

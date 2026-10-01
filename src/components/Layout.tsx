@@ -323,7 +323,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             onClick={() => setSidebarOpen(false)}
           />
         )}
-        <div className={cn("flex-1 min-w-0 h-full flex flex-col scroll-touch", isPosPage ? "overflow-hidden p-0" : "overflow-y-auto p-4 md:p-6 pb-20 md:pb-12")}>
+        <div className={cn("flex-1 min-w-0 h-full flex flex-col scroll-touch keyboard-safe-scroll", isPosPage ? "overflow-hidden p-0" : "overflow-y-auto p-4 md:p-6 pb-20 md:pb-12")}>
           {children}
         </div>
       </main>

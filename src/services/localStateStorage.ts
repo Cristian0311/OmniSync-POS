@@ -12,17 +12,24 @@ const KEY = 'zustand';
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingValue: string | null = null;
 let writeChain: Promise<void> = Promise.resolve();
+let dbPromise: Promise<IDBDatabase | null> | null = null;
 
 function openDb(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
-  return new Promise(resolve => {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise(resolve => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => resolve(null);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => { db.close(); dbPromise = null; };
+      resolve(db);
+    };
+    req.onerror = () => { dbPromise = null; resolve(null); };
   });
+  return dbPromise;
 }
 
 async function read(): Promise<string | null> {
@@ -43,7 +50,6 @@ async function read(): Promise<string | null> {
       resolve(value ?? fallback());
     };
     req.onerror = () => resolve(fallback());
-    tx.oncomplete = () => db.close();
   });
 }
 
@@ -61,7 +67,6 @@ async function writeNow(value: string): Promise<void> {
       tx.onerror = () => resolve();
       tx.onabort = () => resolve();
     });
-    db.close();
   });
 
   // Mantener la cadena reutilizable aunque una escritura concreta falle.
@@ -116,7 +121,6 @@ export const localStateStorage: StateStorage = {
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     });
-    db.close();
   }
 };
 
@@ -140,7 +144,6 @@ export async function clearLocalStateStorage(): Promise<void> {
       tx.onerror = () => resolve();
       tx.onabort = () => resolve();
     });
-    db.close();
   }
 
   // El respaldo legacy debe limpiarse siempre, incluso cuando IndexedDB no esté

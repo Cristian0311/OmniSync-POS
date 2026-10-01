@@ -1,6 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { useState, useEffect } from "react";
-import { useShallow } from "zustand/react/shallow";
+import React, { useMemo, useState, useEffect } from "react";
 import { 
   ArrowLeftRight, 
   Search, 
@@ -74,10 +73,11 @@ export default function Transfers() {
 
   const effectiveFromBranchId = formData.fromBranchId || (branches.length > 0 ? branches[0].id : '');
   const effectiveToBranchId = formData.toBranchId;
-
-  const selectedProduct = products.find(p => p.id === formData.productId);
-  const fromBranch = branches.find(b => b.id === effectiveFromBranchId);
-  const toBranch = branches.find(b => b.id === effectiveToBranchId);
+  const productById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
+  const branchById = useMemo(() => new Map(branches.map(branch => [branch.id, branch])), [branches]);
+  const selectedProduct = productById.get(formData.productId);
+  const fromBranch = branchById.get(effectiveFromBranchId);
+  const toBranch = branchById.get(effectiveToBranchId);
 
   useEffect(() => {
     if (showAddModal) {

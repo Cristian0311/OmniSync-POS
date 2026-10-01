@@ -42,6 +42,7 @@ let queueReady = false;
 let persistenceChain: Promise<void> = Promise.resolve();
 let persistenceError: Error | null = null;
 let queueInitPromise: Promise<void>;
+let dbPromise: Promise<IDBDatabase | null> | null = null;
 let removedDuringQueueProcess = new Set<string>();
 
 class PermanentSyncError extends Error {
@@ -96,7 +97,8 @@ function clearQueueTombstones(): void {
 
 function openDb(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
-  return new Promise((resolve, reject) => {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
@@ -107,9 +109,14 @@ function openDb(): Promise<IDBDatabase | null> {
         store.createIndex('timestamp', 'timestamp', { unique: false });
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('IndexedDB open failed'));
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => { db.close(); dbPromise = null; };
+      resolve(db);
+    };
+    request.onerror = () => { dbPromise = null; reject(request.error || new Error('IndexedDB open failed')); };
   });
+  return dbPromise;
 }
 
 async function idbGetAll(): Promise<OfflineQueueItem[] | null> {
@@ -138,7 +145,6 @@ async function idbReplaceAll(queue: OfflineQueueItem[]): Promise<void> {
     tx.onerror = () => reject(tx.error || new Error('IndexedDB write failed'));
     tx.onabort = () => reject(tx.error || new Error('IndexedDB write aborted'));
   });
-  db.close();
 }
 
 async function idbPut(item: OfflineQueueItem): Promise<void> {
@@ -151,7 +157,6 @@ async function idbPut(item: OfflineQueueItem): Promise<void> {
     tx.onerror = () => reject(tx.error || new Error('IndexedDB put failed'));
     tx.onabort = () => reject(tx.error || new Error('IndexedDB put aborted'));
   });
-  db.close();
 }
 
 async function idbDelete(id: string): Promise<void> {
@@ -164,7 +169,6 @@ async function idbDelete(id: string): Promise<void> {
     tx.onerror = () => reject(tx.error || new Error('IndexedDB delete failed'));
     tx.onabort = () => reject(tx.error || new Error('IndexedDB delete aborted'));
   });
-  db.close();
 }
 
 async function idbClear(): Promise<void> {
@@ -177,7 +181,6 @@ async function idbClear(): Promise<void> {
     tx.onerror = () => reject(tx.error || new Error('IndexedDB clear failed'));
     tx.onabort = () => reject(tx.error || new Error('IndexedDB clear aborted'));
   });
-  db.close();
 }
 
 async function migrateLegacyQueue(): Promise<void> {

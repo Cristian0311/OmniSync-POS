@@ -1,5 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useStore } from "../store/useStore";
 import { Supplier, SupplierOrder } from "../types";
 import { 
@@ -81,10 +81,14 @@ export default function Suppliers() {
     setShowOrderModal(true);
   };
 
-  const filteredSuppliers = suppliers.filter(s => 
-    s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (s.typeOfMerchandise || "").toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredSuppliers = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    if (!query) return suppliers;
+    return suppliers.filter(s => 
+      s.name.toLowerCase().includes(query) ||
+      (s.typeOfMerchandise || "").toLowerCase().includes(query)
+    );
+  }, [suppliers, searchTerm]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

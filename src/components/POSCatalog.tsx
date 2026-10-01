@@ -5,6 +5,8 @@ import { cn } from "../lib/utils";
 import { useStore } from "../store/useStore";
 import { Product } from "../types";
 import { normalizeSemanticText } from "../utils/textUtils";
+import { VoiceCommandButton } from "./VoiceCommandButton";
+import { matchVoiceProducts, parseVoiceCommand } from "../utils/voiceCommands";
 
 type POSCatalogProps = {
   baseCurrencySymbol: string;
@@ -42,14 +44,30 @@ export const POSCatalog = React.memo(function POSCatalog({
     return map;
   }, [inventory, currentBranchId]);
 
+  const productSearchIndex = useMemo(() => {
+    const index = new Map<string, { product: Product; name: string; sku: string; barcode: string; id: string }>();
+    for (const product of products || []) {
+      if (!product?.id) continue;
+      index.set(product.id, {
+        product,
+        name: normalizeSemanticText(product.name),
+        sku: normalizeSemanticText(product.sku),
+        barcode: normalizeSemanticText(product.barcode),
+        id: normalizeSemanticText(product.id),
+      });
+    }
+    return index;
+  }, [products]);
+
   const filteredProducts = useMemo(() => {
     const query = normalizeSemanticText(debouncedSearchQuery);
-    const filtered = (products || []).filter(p => {
+    const filtered = Array.from(productSearchIndex.values()).filter(entry => {
+      const p = entry.product;
       if (!p) return false;
-      const normName = normalizeSemanticText(p.name);
-      const normSku = normalizeSemanticText(p.sku);
-      const normBarcode = normalizeSemanticText(p.barcode);
-      const normId = normalizeSemanticText(p.id);
+      const normName = entry.name;
+      const normSku = entry.sku;
+      const normBarcode = entry.barcode;
+      const normId = entry.id;
       const isCodeMatch = !!query && (
         normSku === query || normBarcode === query || normId === query ||
         (query.length >= 3 && (normSku.includes(query) || normBarcode.includes(query)))
@@ -61,11 +79,60 @@ export const POSCatalog = React.memo(function POSCatalog({
       return (currentBranchStockMap.get(p.id) || 0) > 0;
     });
     const uniqueMap = new Map<string, Product>();
-    filtered.forEach(p => { if (p?.id && !uniqueMap.has(p.id)) uniqueMap.set(p.id, p); });
-    return Array.from(uniqueMap.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "")).slice(0, 150);
-  }, [products, debouncedSearchQuery, activeCategoryId, currentBranchStockMap]);
+    filtered.forEach(entry => { const p = entry.product; if (p?.id && !uniqueMap.has(p.id)) uniqueMap.set(p.id, p); });
+    return Array.from(uniqueMap.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "")).slice(0, 80);
+  }, [productSearchIndex, debouncedSearchQuery, activeCategoryId, currentBranchStockMap]);
 
   const getProductStock = (productId: string) => currentBranchStockMap.get(productId) || 0;
+
+  const handleVoiceCommand = (spokenText: string) => {
+    const command = parseVoiceCommand(spokenText);
+    if (command.action === "search") {
+      setSearchQuery(command.query);
+      return;
+    }
+    if (command.action === "clear") {
+      setSearchQuery("");
+      return;
+    }
+
+    const matches = matchVoiceProducts(products || [], command.query, 3);
+    if (!matches.length) {
+      setSearchQuery(command.query);
+      return;
+    }
+
+    const first = matches[0];
+    const normalizedQuery = normalizeSemanticText(command.query);
+    const exact = [first.name, first.sku, first.barcode, first.id]
+      .map(value => normalizeSemanticText(value || ""))
+      .includes(normalizedQuery);
+
+    if (!exact && matches.length > 1) {
+      setSearchQuery(command.query);
+      return;
+    }
+
+    const stock = getProductStock(first.id);
+    if (stock <= 0) {
+      onOutOfStock();
+      return;
+    }
+
+    if (command.action === "add") {
+      const needsConfig = first.hasSerial || !!first.availableSizes?.length || !!first.availableColors?.length;
+      if (needsConfig) {
+        onSelectConfiguredProduct(first);
+        return;
+      }
+      const quantity = Math.min(command.quantity, stock);
+      for (let i = 0; i < quantity; i++) addToCart(first);
+      return;
+    }
+
+    setSearchQuery(command.query);
+  };
+
   const handleProductClick = (product: Product) => {
     if (getProductStock(product.id) <= 0) {
       onOutOfStock();
@@ -133,16 +200,21 @@ export const POSCatalog = React.memo(function POSCatalog({
   </div>
 </div>
 
+    <div className="px-3 pb-2 flex items-center justify-end gap-2">
+      <span className="text-[10px] font-bold text-slate-400">Di: “agrega 15 tenis”</span>
+      <VoiceCommandButton onCommand={handleVoiceCommand} />
+    </div>
+
 {/* Product Grid */}
 <div className="flex-1 overflow-y-auto p-2 sm:p-3 lg:p-4 bg-primary">
-  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 pb-24 md:pb-6">
+  <div className="pos-product-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 pb-24 md:pb-6">
     {filteredProducts.map(product => {
       const stock = getProductStock(product.id);
       return (
         <button
           key={product.id}
           onClick={() => handleProductClick(product)}
-          className="flex flex-col p-2 rounded-xl border border-base hover:border-indigo-500 hover:shadow-md transition-all active:scale-[0.98] bg-secondary relative overflow-hidden group shadow-2xs text-left"
+          className="pos-product-card flex flex-col p-2 rounded-xl border border-base hover:border-indigo-500 hover:shadow-md transition-all active:scale-[0.98] bg-secondary relative overflow-hidden group shadow-2xs text-left"
         >
           {/* Stock Indicator - Hidden for workers */}
           {currentUserRole === 'admin' && (

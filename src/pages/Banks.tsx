@@ -1,5 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { generateId, cn } from '../lib/utils';
 import { CreditCard, Plus, ArrowUpRight, ArrowDownRight, Activity, Trash2, ShieldCheck, RefreshCw, List, X, CheckCircle2 } from 'lucide-react';
@@ -48,6 +48,13 @@ export default function Banks() {
   });
 
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const bankCardById = useMemo(() => new Map(bankCards.map(card => [card.id, card])), [bankCards]);
+  const filteredBankTransactions = useMemo(
+    () => selectedCardId
+      ? bankTransactions.filter(transaction => transaction.cardId === selectedCardId)
+      : bankTransactions,
+    [bankTransactions, selectedCardId]
+  );
   const [cardToDelete, setCardToDelete] = useState<string | null>(null);
   const [movementToDelete, setMovementToDelete] = useState<BankTransaction | null>(null);
   const [isReconciling, setIsReconciling] = useState(false);
@@ -311,8 +318,7 @@ export default function Banks() {
     setMovementToDelete(null);
   };
 
-  const filteredTransactions = bankTransactions
-    .filter(t => selectedCardId ? t.cardId === selectedCardId : true)
+  const filteredTransactions = filteredBankTransactions
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   return (
@@ -511,7 +517,7 @@ export default function Banks() {
               </thead>
               <tbody className="divide-y divide-base">
                 {filteredTransactions.map(t => {
-                  const card = bankCards.find(c => c.id === t.cardId);
+                  const card = bankCardById.get(t.cardId);
                   const isIncome = t.type === 'deposit' || t.type === 'payment_received';
                   return (
                     <tr key={t.id} className="hover:bg-subtle/50 transition-colors">

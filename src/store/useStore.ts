@@ -3347,11 +3347,11 @@ export const useStore = create<AppState>()(
     }
   },
 
-  refreshBranchOperationalData: async () => {
+  refreshBranchOperationalData: async (options) => {
     const branchId = get().currentBranchId;
     if (!branchId || (typeof navigator !== 'undefined' && !navigator.onLine)) return false;
     try {
-      const res = await pullBranchOperationalDataFromSupabase(branchId);
+      const res = await pullBranchOperationalDataFromSupabase(branchId, options);
       if (!res.success) return false;
       set((state) => {
         // Este refresco es deliberadamente parcial (ventas/sesiones/transferencias
@@ -3949,5 +3949,6 @@ export const useStore = create<AppState>()(
     idnSettlementPrices: state.idnSettlementPrices, receiptConfig: state.receiptConfig,
     fiscalConfigs: state.fiscalConfigs, bankCards: state.bankCards
   })
+  }
 }
 ));
