@@ -3949,6 +3949,5 @@ export const useStore = create<AppState>()(
     idnSettlementPrices: state.idnSettlementPrices, receiptConfig: state.receiptConfig,
     fiscalConfigs: state.fiscalConfigs, bankCards: state.bankCards
   })
-  }
 }
 ));
