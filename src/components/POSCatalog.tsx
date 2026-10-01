@@ -42,14 +42,30 @@ export const POSCatalog = React.memo(function POSCatalog({
     return map;
   }, [inventory, currentBranchId]);
 
+  const productSearchIndex = useMemo(() => {
+    const index = new Map<string, { product: Product; name: string; sku: string; barcode: string; id: string }>();
+    for (const product of products || []) {
+      if (!product?.id) continue;
+      index.set(product.id, {
+        product,
+        name: normalizeSemanticText(product.name),
+        sku: normalizeSemanticText(product.sku),
+        barcode: normalizeSemanticText(product.barcode),
+        id: normalizeSemanticText(product.id),
+      });
+    }
+    return index;
+  }, [products]);
+
   const filteredProducts = useMemo(() => {
     const query = normalizeSemanticText(debouncedSearchQuery);
-    const filtered = (products || []).filter(p => {
+    const filtered = Array.from(productSearchIndex.values()).filter(entry => {
+      const p = entry.product;
       if (!p) return false;
-      const normName = normalizeSemanticText(p.name);
-      const normSku = normalizeSemanticText(p.sku);
-      const normBarcode = normalizeSemanticText(p.barcode);
-      const normId = normalizeSemanticText(p.id);
+      const normName = entry.name;
+      const normSku = entry.sku;
+      const normBarcode = entry.barcode;
+      const normId = entry.id;
       const isCodeMatch = !!query && (
         normSku === query || normBarcode === query || normId === query ||
         (query.length >= 3 && (normSku.includes(query) || normBarcode.includes(query)))
@@ -61,9 +77,9 @@ export const POSCatalog = React.memo(function POSCatalog({
       return (currentBranchStockMap.get(p.id) || 0) > 0;
     });
     const uniqueMap = new Map<string, Product>();
-    filtered.forEach(p => { if (p?.id && !uniqueMap.has(p.id)) uniqueMap.set(p.id, p); });
-    return Array.from(uniqueMap.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "")).slice(0, 150);
-  }, [products, debouncedSearchQuery, activeCategoryId, currentBranchStockMap]);
+    filtered.forEach(entry => { const p = entry.product; if (p?.id && !uniqueMap.has(p.id)) uniqueMap.set(p.id, p); });
+    return Array.from(uniqueMap.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "")).slice(0, 80);
+  }, [productSearchIndex, debouncedSearchQuery, activeCategoryId, currentBranchStockMap]);
 
   const getProductStock = (productId: string) => currentBranchStockMap.get(productId) || 0;
   const handleProductClick = (product: Product) => {
