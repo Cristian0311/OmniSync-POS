@@ -30,6 +30,10 @@ import type { Transaction, CartItem, Payment } from "../types";
 export default function Dashboard() {
   const { branches, currentBranchId, setCurrentBranch, transactions, getBaseCurrency, currencies, inventory, products, customers, users, categories } = useStore(useShallow((state) => ({ branches: state.branches, currentBranchId: state.currentBranchId, setCurrentBranch: state.setCurrentBranch, transactions: state.transactions, getBaseCurrency: state.getBaseCurrency, currencies: state.currencies, inventory: state.inventory, products: state.products, customers: state.customers, users: state.users, categories: state.categories })));
   const baseCurrency = getBaseCurrency();
+  const productById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
+  const categoryById = useMemo(() => new Map(categories.map(category => [category.id, category])), [categories]);
+  const currencyByCode = useMemo(() => new Map(currencies.map(currency => [currency.code, currency])), [currencies]);
+  const branchById = useMemo(() => new Map(branches.map(branch => [branch.id, branch])), [branches]);
   const [selectedTxForDetail, setSelectedTxForDetail] = useState<Transaction | null>(null);
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>(currentBranchId || 'all');
   const [showAllSalesModal, setShowAllSalesModal] = useState<boolean>(false);
@@ -79,9 +83,9 @@ export default function Dashboard() {
     todayTransactions.forEach(tx => {
       (tx.items || []).forEach(item => {
         const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
-        const prod = products.find(p => p.id === prodId);
+        const prod = prodId ? productById.get(prodId) : undefined;
         const categoryId = prod?.categoryId || (typeof item.product === 'object' ? item.product?.categoryId : '') || 'unclassified';
-        const category = categories.find(c => c.id === categoryId);
+        const category = categoryById.get(categoryId);
         const categoryName = category?.name || 'Otros';
         data[categoryName] = (data[categoryName] || 0) + (item.total || 0);
       });
@@ -90,7 +94,7 @@ export default function Dashboard() {
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 3);
-  }, [todayTransactions, products, categories]);
+  }, [todayTransactions, productById, categoryById]);
 
   const handleGenerateAI = async () => {
     setIsGeneratingAI(true);
@@ -114,17 +118,20 @@ export default function Dashboard() {
 
   // Chart Data: Sales last 7 days
   const last7DaysData = useMemo(() => {
+    const totalsByDay = new Map<string, number>();
+    for (const tx of filteredTransactions) {
+      const dayKey = tx.date.slice(0, 10);
+      totalsByDay.set(dayKey, (totalsByDay.get(dayKey) || 0) + (tx.total || 0));
+    }
+
     const data = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const dayStr = d.toISOString().split('T')[0];
-      const dayTotal = filteredTransactions
-        .filter(t => t.date.startsWith(dayStr))
-        .reduce((sum, t) => sum + (t.total || 0), 0);
       data.push({
         name: d.toLocaleDateString('es-DO', { weekday: 'short' }),
-        total: dayTotal
+        total: totalsByDay.get(dayStr) || 0
       });
     }
     return data;
@@ -156,7 +163,7 @@ export default function Dashboard() {
     todayTransactions.forEach(tx => {
       (tx.payments || []).forEach(p => {
         if (!totals[p.currencyCode]) {
-          const curr = currencies.find(c => c.code === p.currencyCode);
+          const curr = currencyByCode.get(p.currencyCode);
           totals[p.currencyCode] = {
             total: 0,
             cash: 0,
@@ -181,9 +188,9 @@ export default function Dashboard() {
         baseEquivalent: code === baseCurrency.code ? data.total : data.total * (data.rateToBase || 1)
       }))
       .filter(item => item.total > 0 || item.code === baseCurrency.code);
-  }, [todayTransactions, currencies, baseCurrency]);
+  }, [todayTransactions, currencies, currencyByCode, baseCurrency]);
 
-  const secondaryCurrencies = currencies.filter(c => !c.isBase);
+  const secondaryCurrencies = useMemo(() => currencies.filter(c => !c.isBase), [currencies]);
 
   // Helper function to render payment currency badges for a transaction
   const renderPaymentBadges = (tx: Transaction) => {
@@ -249,7 +256,7 @@ export default function Dashboard() {
               <p className="text-[9px] font-black uppercase tracking-widest">
                 {selectedBranchFilter === 'all' 
                   ? 'Todas las Sucursales' 
-                  : (branches.find(b => b.id === selectedBranchFilter)?.name || 'Sucursal')}
+                  : (branchById.get(selectedBranchFilter)?.name || 'Sucursal')}
               </p>
             </div>
             <span className="text-slate-300 dark:text-slate-700">·</span>
