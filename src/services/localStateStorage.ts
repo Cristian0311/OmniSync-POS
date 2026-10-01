@@ -12,6 +12,7 @@ const KEY = 'zustand';
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingValue: string | null = null;
 let writeChain: Promise<void> = Promise.resolve();
+let lastWriteError: Error | null = null;
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
 function openDb(): Promise<IDBDatabase | null> {
@@ -56,23 +57,53 @@ async function read(): Promise<string | null> {
 async function writeNow(value: string): Promise<void> {
   const operation = writeChain.then(async () => {
     const db = await openDb();
+
     if (!db) {
-      try { localStorage.setItem('pos-store-storage', value); } catch {}
-      return;
+      try {
+        localStorage.setItem('pos-store-storage', value);
+        lastWriteError = null;
+        return;
+      } catch (localError) {
+        const error = new Error(`No se pudo persistir el estado local: ${String(localError)}`);
+        lastWriteError = error;
+        throw error;
+      }
     }
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put(value, KEY);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error || new Error('IndexedDB state write failed'));
-      tx.onabort = () => reject(tx.error || new Error('IndexedDB state write aborted'));
-    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(value, KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error('IndexedDB state write failed'));
+        tx.onabort = () => reject(tx.error || new Error('IndexedDB state write aborted'));
+      });
+      lastWriteError = null;
+    } catch (idbError) {
+      // Respaldo inmediato: una venta cobrada offline nunca debe depender de
+      // una única implementación de almacenamiento del navegador.
+      try {
+        localStorage.setItem('pos-store-storage', value);
+        lastWriteError = null;
+        console.warn('[localStateStorage] IndexedDB falló; se guardó el estado en localStorage:', idbError);
+      } catch (localError) {
+        const error = new Error(
+          `No se pudo persistir el estado local ni en IndexedDB ni en localStorage: ${String(localError)}`
+        );
+        lastWriteError = error;
+        throw error;
+      }
+    }
   });
 
-  // Mantener la cadena reutilizable aunque una escritura concreta falle.
+  // La cadena queda siempre reutilizable para las siguientes escrituras, pero
+  // conservamos el último error para que flushLocalStateStorage pueda reportar
+  // correctamente una pérdida de persistencia.
   writeChain = operation.catch(error => {
+    lastWriteError = error instanceof Error ? error : new Error(String(error));
     console.error('[localStateStorage] Error escribiendo estado local:', error);
   });
+
   await operation;
 }
 
@@ -82,10 +113,18 @@ export async function flushLocalStateStorage(): Promise<void> {
     writeTimer = null;
     const next = pendingValue;
     pendingValue = null;
-    if (next != null) await writeNow(next);
-    return;
+    if (next != null) {
+      await writeNow(next);
+      return;
+    }
   }
-  try { await writeChain; } catch {}
+
+  await writeChain;
+  if (lastWriteError) {
+    const error = lastWriteError;
+    lastWriteError = null;
+    throw error;
+  }
 }
 
 export const localStateStorage: StateStorage = {
