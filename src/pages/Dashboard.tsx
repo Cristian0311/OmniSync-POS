@@ -974,7 +974,7 @@ function MetricCard({ title, value, subtitle, icon: Icon, trend, positive, color
   );
 }
 
-, code: p.currencyCode };
+          const curr = currencyByCode.get(p.currencyCode) || { symbol: ', code: p.currencyCode };
           const formattedAmount = isCupCode(p.currencyCode)
             ? Math.round(p.amount).toLocaleString('es-CU')
             : p.amount.toLocaleString('es-CU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
