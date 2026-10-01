@@ -8,7 +8,7 @@ import { useStore } from "../store/useStore";
 import { Product, Payment, Transaction, CashRegisterSession } from "../types";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { InfoTooltip } from "../components/InfoTooltip";
-import { getOfflineQueueCount, getOfflineConflictCount } from "../services/offlineQueue";
+import { getOfflineQueueCount, getOfflineConflictCount, waitForOfflineQueueReady } from "../services/offlineQueue";
 import { normalizeSemanticText } from "../utils/textUtils";
 import { POSCatalog } from "../components/POSCatalog";
 import { printThermalReceipt as printThermalReceiptDirect } from "../lib/escpos";
@@ -171,6 +171,12 @@ export default function POS() {
     if (!currentUser || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
     const run = async () => {
       try {
+        // La cola offline debe estar completamente hidratada antes de cualquier
+        // pull remoto. De lo contrario, una recarga puede traer transactions
+        // antiguas desde Supabase y sobrescribir temporalmente una venta que
+        // todavía vive únicamente en el outbox local.
+        await waitForOfflineQueueReady();
+        await useStore.getState().restoreTransactionsFromBackup();
         await useStore.getState().refreshGlobalCatalogData();
         await useStore.getState().refreshBranchOperationalData(
           currentSession?.id ? { sessionId: currentSession.id, transactionLimit: 250, transferLimit: 100 } : { transactionLimit: 250, transferLimit: 100 }
