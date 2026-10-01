@@ -1722,18 +1722,24 @@ export default function POS() {
 
   const getClosureReceiptLines = (session: CashRegisterSession): string[] => {
     const receiptConfig = useStore.getState().receiptConfig;
-    const sessionTx = activeTransactions.filter(t => 
+    const sessionTx = useStore.getState().transactions.filter(t =>
       t.sessionId === session.id && !t.deletedAt
     );
 
     const soldMap: { [name: string]: { name: string, qty: number, total: number } } = {};
     sessionTx.forEach(tx => {
       tx.items.forEach(item => {
-        const name = typeof item.product === 'string' ? item.product : (item.product?.name || 'Producto');
+        const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
+        const catalogProduct = prodId ? products.find(p => p.id === prodId) : undefined;
+        const name = typeof item.product === 'object'
+          ? (item.product?.name || catalogProduct?.name || 'Producto')
+          : (catalogProduct?.name || item.product || 'Producto');
         if (!soldMap[name]) soldMap[name] = { name, qty: 0, total: 0 };
-        const price = typeof item.product === 'object' ? (item.product?.price || 0) : 0;
-        soldMap[name].qty += item.quantity;
-        soldMap[name].total += (price * item.quantity);
+        const price = typeof item.product === 'object'
+          ? Number(item.product?.price ?? item.price ?? catalogProduct?.price ?? 0)
+          : Number(item.price ?? catalogProduct?.price ?? 0);
+        soldMap[name].qty += Number(item.quantity || 0);
+        soldMap[name].total += price * Number(item.quantity || 0);
       });
     });
     const soldList = Object.values(soldMap);
@@ -1859,15 +1865,41 @@ export default function POS() {
     lines.push("BOLD|ARQUEO DE FONDOS:");
     const fondoLabel = "Fondo Inicial:";
     const fondoVal = formatMoney(session.openingBalance, baseCurrency.symbol);
-    lines.push(`${fondoLabel}${" ".repeat(Math.max(1, 32 - fondoLabel.length - fondoVal.length))}${fondoVal}`);
+    lines.push(fondoLabel + " ".repeat(Math.max(1, 32 - fondoLabel.length - fondoVal.length)) + fondoVal);
+    const physicalBalances = Array.isArray(session.closingBalances) ? session.closingBalances : [];
+    lines.push("BOLD|ARQUEO FISICO:");
+    if (physicalBalances.length === 0) {
+      lines.push("Arqueo físico: no registrado");
+    } else {
+      physicalBalances.forEach(p => {
+        const symbol = currencies.find(c => c.code === p.currencyCode)?.symbol || "";
+        const methodLabel = p.method === "transfer" ? "Transf" : "Efec";
+        const label = methodLabel + " (" + p.currencyCode + "):";
+        const val = formatMoney(Number(p.amount || 0), symbol);
+        lines.push(label + " ".repeat(Math.max(1, 32 - label.length - val.length)) + val);
+      });
+    }
+    if (session.expectedBalance !== undefined) {
+      const expectedLabel = "Total esperado:";
+      const expectedVal = formatMoney(Number(session.expectedBalance || 0), baseCurrency.symbol);
+      lines.push(expectedLabel + " ".repeat(Math.max(1, 32 - expectedLabel.length - expectedVal.length)) + expectedVal);
+    }
+    if (session.hasDiscrepancy && Array.isArray(session.discrepancyDetails) && session.discrepancyDetails.length > 0) {
+      lines.push("BOLD|DESCUADRE:");
+      session.discrepancyDetails.forEach(d => {
+        const label = d.currencyCode + " " + (d.method === "transfer" ? "Transf" : "Efec") + ":";
+        const val = formatMoney(Number(d.difference || 0), currencies.find(c => c.code === d.currencyCode)?.symbol || "");
+        lines.push(label + " ".repeat(Math.max(1, 32 - label.length - val.length)) + val);
+      });
+    }
     lines.push("---");
     lines.push("BOLD|LIQUIDACION SALARIO:");
     const baseLabel = "Salario Base:";
     const baseVal = formatMoney(baseSalary, baseCurrency.symbol);
     lines.push(`${baseLabel}${" ".repeat(Math.max(1, 32 - baseLabel.length - baseVal.length))}${baseVal}`);
     const comLabel = "Comisiones:";
-    const comVal = `+${formatMoney(commissions, baseCurrency.symbol)}`;
-    lines.push(`${comLabel}${" ".repeat(Math.max(1, 32 - comLabel.length - comVal.length))}${comVal}`);
+    const comVal = "+" + formatMoney(commissions, baseCurrency.symbol);
+    lines.push(comLabel + " ".repeat(Math.max(1, 32 - comLabel.length - comVal.length)) + comVal);
     const totSalLabel = "TOTAL SALARIO:";
     const totSalVal = formatSalaryCUP(totalSalary);
     lines.push(`BOLD|${totSalLabel}${" ".repeat(Math.max(1, 32 - totSalLabel.length - totSalVal.length))}${totSalVal}`);
