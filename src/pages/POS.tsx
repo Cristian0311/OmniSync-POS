@@ -1918,9 +1918,8 @@ export default function POS() {
 
   const handleThermalPrint = async (tx: import("../types").Transaction, options?: { silent?: boolean }) => {
     try {
-      const { printThermalReceipt } = await import("../lib/escpos");
       const lines = getTransactionReceiptLines(tx);
-      await printThermalReceipt({
+      await printThermalReceiptDirect({
         lines,
         openDrawer: receiptConfig.openDrawer ?? true,
         width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
@@ -1949,9 +1948,8 @@ export default function POS() {
   const handlePrintClosureThermal = async (session: CashRegisterSession | null, options?: { silent?: boolean }) => {
     if (!session) return;
     try {
-      const { printThermalReceipt } = await import("../lib/escpos");
       const lines = getClosureReceiptLines(session);
-      await printThermalReceipt({
+      await printThermalReceiptDirect({
         lines,
         openDrawer: false,
         width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm',
