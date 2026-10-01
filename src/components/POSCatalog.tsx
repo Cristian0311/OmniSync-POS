@@ -151,14 +151,14 @@ export const POSCatalog = React.memo(function POSCatalog({
 
 {/* Product Grid */}
 <div className="flex-1 overflow-y-auto p-2 sm:p-3 lg:p-4 bg-primary">
-  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 pb-24 md:pb-6">
+  <div className="pos-product-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 pb-24 md:pb-6">
     {filteredProducts.map(product => {
       const stock = getProductStock(product.id);
       return (
         <button
           key={product.id}
           onClick={() => handleProductClick(product)}
-          className="flex flex-col p-2 rounded-xl border border-base hover:border-indigo-500 hover:shadow-md transition-all active:scale-[0.98] bg-secondary relative overflow-hidden group shadow-2xs text-left"
+          className="pos-product-card flex flex-col p-2 rounded-xl border border-base hover:border-indigo-500 hover:shadow-md transition-all active:scale-[0.98] bg-secondary relative overflow-hidden group shadow-2xs text-left"
         >
           {/* Stock Indicator - Hidden for workers */}
           {currentUserRole === 'admin' && (
