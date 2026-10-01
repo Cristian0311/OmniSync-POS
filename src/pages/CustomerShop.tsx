@@ -32,8 +32,7 @@ import { cn } from "../lib/utils";
 export default function CustomerShop() {
   const {
     products,
-    categoryById,
-    stockByProductBranch,
+    categories,
     getBaseCurrency,
     inventory,
     branches,
