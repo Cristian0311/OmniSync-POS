@@ -1426,72 +1426,79 @@ export const useStore = create<AppState>()(
   cart: [],
   currentCustomerId: undefined,
   setCartCustomer: (customerId) => set({ currentCustomerId: customerId }),
-  addToCart: (product, serialNumber, attributes) => set((state) => {
-    // Auto-generate serial if enabled and not provided
-    let finalSerial = serialNumber;
-    let updatedProducts = state.products;
+  addToCart: (product, serialNumber, attributes, requestedQuantity = 1) => set((state) => {
+    const quantity = Math.max(1, Math.floor(Number(requestedQuantity) || 1));
+    const variantLabel = attributes?.variantLabel || attributes?.size || attributes?.color;
 
-    if (product.hasSerial && !finalSerial) {
-      const currentProduct = state.products.find(p => p.id === product.id);
-      const nextNum = currentProduct?.nextSerial || 1;
-      finalSerial = `SN-${product.sku || product.id.slice(-4)}-${nextNum.toString().padStart(4, '0')}`;
-      
-      // Increment nextSerial in the products list
-      updatedProducts = state.products.map(p => 
-        p.id === product.id ? { ...p, nextSerial: nextNum + 1 } : p
+    // Batch normal-product additions into one state update. This is especially
+    // important for voice commands like "agrega 15 blusas": one set() instead
+    // of 15 React/store updates keeps low-end tablets responsive.
+    if (!product.hasSerial && !serialNumber) {
+      const existing = state.cart.find(item =>
+        item.product.id === product.id &&
+        !item.serialNumber &&
+        item.selectedSize === attributes?.size &&
+        item.selectedColor === attributes?.color &&
+        (item.variantLabel || '') === (variantLabel || '')
       );
-    }
 
-    // Para productos con número de serie, siempre agregamos una fila nueva (qty=1)
-    if (product.hasSerial || finalSerial) {
-      const prod = updatedProducts.find(p => p.id === product.id) || product;
+      if (existing) {
+        const nextQuantity = existing.quantity + quantity;
+        return {
+          cart: state.cart.map(item =>
+            item.id === existing.id
+              ? { ...item, quantity: nextQuantity, total: nextQuantity * item.price }
+              : item
+          )
+        };
+      }
+
       return {
-        products: updatedProducts,
-        cart: [...state.cart, { 
-          id: crypto.randomUUID(), 
-          product: prod, 
-          quantity: 1, 
-          price: prod.price,
-          total: prod.price,
-          serialNumber: finalSerial,
+        cart: [...state.cart, {
+          id: crypto.randomUUID(),
+          product,
+          quantity,
+          price: product.price,
+          total: quantity * product.price,
           selectedSize: attributes?.size,
           selectedColor: attributes?.color,
-          variantLabel: attributes?.variantLabel || attributes?.size || attributes?.color
+          variantLabel
         }]
       };
     }
 
-    // Para productos normales, aumentamos cantidad si ya existe (considerando atributos)
-    const existing = state.cart.find(item => 
-      item.product.id === product.id && 
-      !item.serialNumber &&
-      item.selectedSize === attributes?.size &&
-      item.selectedColor === attributes?.color &&
-      (item.variantLabel || '') === ((attributes?.variantLabel || attributes?.size || attributes?.color) || '')
-    );
-    
-    if (existing) {
+    // Serialised products still receive one row per unit, but all rows are
+    // generated in the same state update.
+    let updatedProducts = state.products;
+    const currentProduct = state.products.find(p => p.id === product.id);
+    let nextSerial = currentProduct?.nextSerial || 1;
+    const rows = Array.from({ length: quantity }, () => {
+      let finalSerial = serialNumber;
+      if (product.hasSerial && !finalSerial) {
+        finalSerial = `SN-${product.sku || product.id.slice(-4)}-${nextSerial.toString().padStart(4, '0')}`;
+        nextSerial += 1;
+      }
+      const prod = updatedProducts.find(p => p.id === product.id) || product;
       return {
-        cart: state.cart.map(item => 
-          item.id === existing.id
-            ? { ...item, quantity: item.quantity + 1, total: (item.quantity + 1) * item.price } 
-            : item
-        )
-      };
-    }
-    
-    return {
-      cart: [...state.cart, { 
-        id: crypto.randomUUID(), 
-        product, 
+        id: crypto.randomUUID(),
+        product: prod,
         quantity: 1,
-        price: product.price,
-        total: product.price,
+        price: prod.price,
+        total: prod.price,
+        serialNumber: finalSerial,
         selectedSize: attributes?.size,
         selectedColor: attributes?.color,
-        variantLabel: attributes?.variantLabel || attributes?.size || attributes?.color
-      }]
-    };
+        variantLabel
+      };
+    });
+
+    if (product.hasSerial && nextSerial !== (currentProduct?.nextSerial || 1)) {
+      updatedProducts = state.products.map(p =>
+        p.id === product.id ? { ...p, nextSerial } : p
+      );
+    }
+
+    return { products: updatedProducts, cart: [...state.cart, ...rows] };
   }),
   
   updateCartQty: (cartItemId, delta) => set((state) => ({
