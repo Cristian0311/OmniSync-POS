@@ -25,7 +25,7 @@ window.addEventListener('vite:preloadError', (event) => {
 // the user to manually clear the browser cache.
 import { registerSW } from 'virtual:pwa-register';
 
-const SW_CHECK_INTERVAL_MS = 60_000;
+const SW_CHECK_INTERVAL_MS = 300_000;
 let swCheckTimer: ReturnType<typeof setInterval> | null = null;
 
 const updateSW = registerSW({
