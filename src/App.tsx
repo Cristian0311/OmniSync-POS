@@ -13,6 +13,7 @@ import { initMultiDeviceRealtimeSync } from "./services/realtimeSync";
 import { initKeyboardViewport } from "./services/keyboardViewport";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getDevicePerformanceTier, scheduleIdleTask } from "./utils/devicePerformance";
+import { flushLocalStateStorage } from "./services/localStateStorage";
 
 // Code-splitting de rutas para acelerar inicio en tablets y reducir consumo de memoria
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -66,24 +67,51 @@ export default function App() {
 
   useEffect(() => {
     if (!isInitialized) return;
-
-    // Esperar a que IndexedDB termine de hidratar el outbox antes de recuperar
-    // ventas offline. Así una recarga no puede llegar a Zustand antes de que
-    // la cola durable esté disponible.
     let active = true;
-    void import("./services/offlineQueue")
-      .then(async ({ waitForOfflineQueueReady }) => {
-        await waitForOfflineQueueReady();
-        if (active) restoreTransactionsFromBackup();
-      })
-      .catch((error) => {
-        console.warn("[App] No se pudo esperar la cola offline para recuperar ventas:", error);
-        if (active) restoreTransactionsFromBackup();
-      });
 
-    return () => {
-      active = false;
+    const recoverOfflineSales = async () => {
+      try {
+        const { getOfflineQueue, waitForOfflineQueueReady } = await import("./services/offlineQueue");
+        await waitForOfflineQueueReady();
+        if (!active) return;
+
+        const queue = getOfflineQueue();
+        const voidIds = new Set(
+          queue
+            .filter(item => item.type === 'void_transaction' && item.status !== 'conflict')
+            .map(item => String(item.data?.id || item.actionId))
+        );
+        const pendingSales = queue
+          .filter(item =>
+            item.type === 'transaction' &&
+            item.status !== 'conflict' &&
+            item.data?.id &&
+            !voidIds.has(String(item.data.id))
+          )
+          .map(item => item.data)
+          .filter(Boolean);
+
+        if (pendingSales.length > 0) {
+          useStore.setState(state => {
+            const existingIds = new Set((state.transactions || []).map(tx => String(tx.id)));
+            const missing = pendingSales.filter(tx => !existingIds.has(String(tx.id)));
+            return missing.length
+              ? { transactions: [...missing, ...(state.transactions || [])] }
+              : state;
+          });
+          await flushLocalStateStorage();
+        }
+
+        // Mantener también la recuperación legacy ya existente.
+        if (active) restoreTransactionsFromBackup();
+      } catch (error) {
+        console.warn("[App] No se pudieron recuperar ventas pendientes del outbox offline:", error);
+        if (active) restoreTransactionsFromBackup();
+      }
     };
+
+    void recoverOfflineSales();
+    return () => { active = false; };
   }, [isInitialized, restoreTransactionsFromBackup]);
 
   useEffect(() => {
