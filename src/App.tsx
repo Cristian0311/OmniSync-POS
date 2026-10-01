@@ -65,10 +65,25 @@ export default function App() {
   const { currentUser, isInitialized, restoreTransactionsFromBackup, currentBranchId } = useStore(useShallow((state) => ({ currentUser: state.currentUser, isInitialized: state.isInitialized, restoreTransactionsFromBackup: state.restoreTransactionsFromBackup, currentBranchId: state.currentBranchId })));
 
   useEffect(() => {
-    if (isInitialized) {
-      // Garantizar la recuperación automática de cualquier ticket cobrado en segundo plano
-      restoreTransactionsFromBackup();
-    }
+    if (!isInitialized) return;
+
+    // Esperar a que IndexedDB termine de hidratar el outbox antes de recuperar
+    // ventas offline. Así una recarga no puede llegar a Zustand antes de que
+    // la cola durable esté disponible.
+    let active = true;
+    void import("./services/offlineQueue")
+      .then(async ({ waitForOfflineQueueReady }) => {
+        await waitForOfflineQueueReady();
+        if (active) restoreTransactionsFromBackup();
+      })
+      .catch((error) => {
+        console.warn("[App] No se pudo esperar la cola offline para recuperar ventas:", error);
+        if (active) restoreTransactionsFromBackup();
+      });
+
+    return () => {
+      active = false;
+    };
   }, [isInitialized, restoreTransactionsFromBackup]);
 
   useEffect(() => {
