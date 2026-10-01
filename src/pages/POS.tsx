@@ -8,6 +8,7 @@ import { useStore } from "../store/useStore";
 import { Product, Payment, Transaction, CashRegisterSession } from "../types";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { InfoTooltip } from "../components/InfoTooltip";
+import { getOfflineQueueCount, getOfflineConflictCount } from "../services/offlineQueue";
 import { normalizeSemanticText } from "../utils/textUtils";
 import { POSCatalog } from "../components/POSCatalog";
 const CheckoutModal = lazy(() => import("../components/pos/CheckoutModal"));
@@ -72,19 +73,330 @@ export default function POS() {
 
 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [pendingOfflineCount, setPendingOfflineCount] = useState(getOfflineQueueCount());
+  const [offlineConflictCount, setOfflineConflictCount] = useState(getOfflineConflictCount());
+  const [isSyncingOffline, setIsSyncingOffline] = useState(false);
   const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const updateCount = () => {
+      setPendingOfflineCount(getOfflineQueueCount());
+      setOfflineConflictCount(getOfflineConflictCount());
+    };
+    const handleOnline = () => {
+      setIsOnline(true);
+      updateCount();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      updateCount();
+    };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('offline_queue_updated', updateCount);
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('offline_queue_updated', updateCount);
     };
   }, []);
 
+  const handleManualSync = async () => {
+    if (!isOnline) {
+      addNotification('No hay conexión a internet actualmente.', 'warning');
+      return;
+    }
+    setIsSyncingOffline(true);
+    try {
+      const { processOfflineQueue } = await import("../services/offlineSync");
+      const res = await processOfflineQueue();
+      setPendingOfflineCount(res.remaining);
+      setOfflineConflictCount(getOfflineConflictCount());
+      if (res.remaining > 0 || getOfflineConflictCount() > 0) {
+        addNotification(`Sincronización incompleta: ${res.processed} operaciones procesadas y ${res.remaining} siguen pendientes.`, 'warning');
+      } else if (res.processed > 0) {
+        addNotification(`Sincronización manual completada: ${res.processed} operaciones confirmadas.`, 'success');
+      } else if (getOfflineConflictCount() > 0) {
+        addNotification('La cola tiene ' + getOfflineConflictCount() + ' conflicto(s) que requieren revisión.', 'warning');
+      } else {
+        addNotification('Todo está al día y sincronizado con Supabase.', 'info');
+      }
+    } finally {
+      setIsSyncingOffline(false);
+    }
+  };
+  
+  // Cash Management State
+  const [cashManagementTab, setCashManagementTab] = useState<'movements' | 'close' | 'sales'>('movements');
+  const [closingBalances, setClosingBalances] = useState<{ [key: string]: number }>({});
+  const [showDiscrepancyModal, setShowDiscrepancyModal] = useState(false);
+  const [finalBalancesToClose, setFinalBalancesToClose] = useState<Payment[]>([]);
+  const [movementData, setMovementData] = useState({ type: 'expense' as 'income' | 'expense', amount: '', currencyCode: 'CUP', description: '' });
+
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [showCameraScanner, setShowCameraScanner] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', email: '', taxId: '' });
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [configData, setConfigData] = useState<{ serialNumber?: string, selectedSize?: string, selectedColor?: string }>({});
+  const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
+  
+  const [showMobileCart, setShowMobileCart] = useState(false);
+  const [isBottomBarMinimized, setIsBottomBarMinimized] = useState(false);
+  
+  const queryParams = new URLSearchParams(window.location.search);
+  
+  
+  const navigate = useNavigate();
+  const fallbackSessionBranchId = currentBranchId || (currentUser?.branchId || currentUser?.assignedBranchId || branches[0]?.id || '');
+  const currentSession = useMemo(() => {
+    if (activeSessionId) {
+      const active = cashSessions.find(s => s.id === activeSessionId && s.status === 'open' && !s.deletedAt);
+      if (active) return active;
+    }
+    // Recuperación automática para cuentas que son propietarias del turno.
+    return getCurrentSession(fallbackSessionBranchId, currentUser?.id || '');
+  }, [activeSessionId, cashSessions, fallbackSessionBranchId, currentUser?.id, getCurrentSession]);
+
+  useEffect(() => {
+    if (activeSessionId) return;
+    if (!currentUser?.id) return;
+    const own = getCurrentSession(fallbackSessionBranchId, currentUser.id);
+    if (own?.id && activeSessionId !== own.id) setActiveSessionId(own.id);
+  }, [activeSessionId, currentUser?.id, fallbackSessionBranchId, cashSessions, getCurrentSession, setActiveSessionId]);
+
+  // Al entrar al POS/volver al foco, actualizar operaciones de caja y catálogo.
+  // Esto evita que un selector abierto durante horas conserve una lista vieja.
+  useEffect(() => {
+    if (!currentUser || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
+    const run = async () => {
+      try {
+        await useStore.getState().refreshGlobalCatalogData();
+        await useStore.getState().refreshBranchOperationalData(
+          currentSession?.id ? { sessionId: currentSession.id, transactionLimit: 250, transferLimit: 100 } : { transactionLimit: 250, transferLimit: 100 }
+        );
+      } catch (error) {
+        console.warn('[POS] No se pudo refrescar el estado operativo al entrar:', error);
+      }
+    };
+    void run();
+  }, [currentUser?.id, fallbackSessionBranchId]);
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [showSalarySummary, setShowSalarySummary] = useState(false);
+  const [connectedPrinterName, setConnectedPrinterName] = useState<string | null>(null);
+  const [showPrinterSetupModal, setShowPrinterSetupModal] = useState(false);
+  const [isConnectingPrinter, setIsConnectingPrinter] = useState(false);
+  const [printerStatusMsg, setPrinterStatusMsg] = useState("");
+
+  useEffect(() => {
+    import('../lib/escpos').then(async ({ getConnectedDeviceName }) => {
+      const name = await getConnectedDeviceName();
+      if (name) setConnectedPrinterName(name);
+    }).catch(() => {});
+  }, []);
+  
+  type PaymentLine = { id: string, code: string, amount: number, method: 'cash' | 'transfer', bankCardId?: string };
+  const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([]);
+  const [showReceiptModal, setShowReceiptModal] = useState<Transaction | null>(null);
+  const [returnConfirm, setReturnConfirm] = useState<{ tx: Transaction, item: any } | null>(null);
+
+  const [activePaymentLineId, setActivePaymentLineId] = useState<string | null>(null);
+
+  const [salesFilter, setSalesFilter] = useState<'all' | 'usd' | 'transfer' | 'cash_cup' | 'mixed'>('all');
+  const [salesSubTab, setSalesSubTab] = useState<'tickets' | 'products'>('tickets');
+
+  const [posError, setPosError] = useState("");
+  const [posSuccess, setPosSuccess] = useState("");
+  const [openingAmount, setOpeningAmount] = useState("");
+  const [sessionWorkerName, setSessionWorkerName] = useState("");
+  const [sessionWorkerId, setSessionWorkerId] = useState("");
+  // La identidad del trabajador debe reconstruirse desde la sesión persistida
+  // después de cambiar de módulo, recargar la página o rehidratar Zustand.
+  useEffect(() => {
+    // Mantener la selección manual del vendedor mientras se prepara la apertura.
+    // No hay sesión abierta todavía, por lo que currentSession es null y no debe
+    // borrar sessionWorkerName justo después de que el usuario lo selecciona.
+    if (!currentSession) return;
+    if (sessionWorkerName !== (currentSession.workerName || "")) {
+      setSessionWorkerName(currentSession.workerName || "");
+    }
+    if (sessionWorkerId !== (currentSession.userId || "")) {
+      setSessionWorkerId(currentSession.userId || "");
+    }
+    if (currentBranchId !== currentSession.branchId) {
+      setCurrentBranch(currentSession.branchId);
+    }
+  }, [currentSession?.id, currentSession?.userId, currentSession?.workerName, currentSession?.branchId, sessionWorkerName, sessionWorkerId, currentBranchId, setCurrentBranch]);
+  const [employeePickerOpen, setEmployeePickerOpen] = useState(false);
+  const [employeePickerSearch, setEmployeePickerSearch] = useState("");
+  const employeePickerRef = useRef<HTMLDivElement>(null);
+  const [sessionPassword, setSessionPassword] = useState("");
+
+  useEffect(() => {
+    if (!employeePickerOpen) return;
+
+    const handleOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && employeePickerRef.current?.contains(target)) return;
+      setEmployeePickerOpen(false);
+      setEmployeePickerSearch("");
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setEmployeePickerOpen(false);
+      setEmployeePickerSearch("");
+    };
+
+    document.addEventListener("pointerdown", handleOutsidePointer);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("pointerdown", handleOutsidePointer);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [employeePickerOpen]);
+  const [isOpeningSession, setIsOpeningSession] = useState(false);
+  const [isClosingSession, setIsClosingSession] = useState(false);
+
+  const [joiningSessionPassword, setJoiningSessionPassword] = useState("");
+  const [isNewEmployee, setIsNewEmployee] = useState(false);
+
+  // Worker detection for shift opening and branch locking
+  const detectedWorker = React.useMemo(() => {
+    if (sessionWorkerId) {
+      const byId = (users || []).find(u => u.id === sessionWorkerId);
+      if (byId) return byId;
+    }
+    const trimmed = (sessionWorkerName || '').toLowerCase().trim();
+    if (trimmed) {
+      return (users || []).find(u => (u.name || '').toLowerCase() === trimmed) || null;
+    }
+    return null;
+  }, [sessionWorkerId, sessionWorkerName, users]);
+
+  const isWorkerIndependent = detectedWorker?.isIndependent === true;
+  const workerAssignedBranchId = detectedWorker?.assignedBranchId || (
+    detectedWorker?.allowedBranches && detectedWorker.allowedBranches.length === 1 ? detectedWorker.allowedBranches[0] : null
+  );
+
+  const [posViewMode, setPosViewMode] = useState<'standard' | 'idn'>('standard');
+  const [selectedAdminIDNUserId, setSelectedAdminIDNUserId] = useState<string>('');
+
+  const isCurrentUserIndependent = currentUser?.isIndependent === true;
+  const currentSessionWorker = currentSession ? (
+    (users || []).find(u => u.id === currentSession.userId || (u.name && currentSession.workerName && u.name.toLowerCase() === currentSession.workerName.toLowerCase()))
+  ) : null;
+  const isSessionIndependent = currentSessionWorker?.isIndependent === true;
+
+  const independentUsers = (users || []).filter(u => u.isIndependent);
+
+  useEffect(() => {
+    // El selector solo tiene sentido para administradores. Un vendedor IDN
+    // autenticado queda bloqueado a su propia identidad y almacén.
+    if (currentUser?.role !== 'admin' || isCurrentUserIndependent || isSessionIndependent) {
+      setSelectedAdminIDNUserId('');
+      return;
+    }
+    if (!selectedAdminIDNUserId && independentUsers.length > 0) {
+      setSelectedAdminIDNUserId(independentUsers[0].id);
+    }
+  }, [currentUser?.role, isCurrentUserIndependent, isSessionIndependent, independentUsers, selectedAdminIDNUserId]);
+
+  // When a shift is opened for an independent worker or current user is independent, default view to 'idn'
+  useEffect(() => {
+    if (isSessionIndependent || isCurrentUserIndependent) {
+      setPosViewMode('idn');
+    }
+  }, [isSessionIndependent, isCurrentUserIndependent]);
+
+  const shouldShowIDNView = isCurrentUserIndependent || isSessionIndependent || posViewMode === 'idn';
+
+  const activeIDNWorker = React.useMemo(() => {
+    // Un vendedor IDN autenticado o una sesión abierta para un IDN quedan
+    // estrictamente ligados a ese vendedor. Solo el administrador puede
+    // escoger otro IDN desde el selector administrativo.
+    if (isCurrentUserIndependent) return currentUser;
+    if (isSessionIndependent) return currentSessionWorker;
+    if (currentUser?.role === 'admin' && selectedAdminIDNUserId) {
+      const selected = (users || []).find(u => u.id === selectedAdminIDNUserId && u.isIndependent);
+      if (selected) return selected;
+    }
+    return currentUser?.role === 'admin'
+      ? (users || []).find(u => u.isIndependent) || currentUser
+      : currentUser;
+  }, [currentUser?.role, isCurrentUserIndependent, isSessionIndependent, selectedAdminIDNUserId, users, currentUser, currentSessionWorker]);
+
+  const activeIDNBranchId = activeIDNWorker?.assignedBranchId || activeIDNWorker?.branchId || currentBranchId;
+
+  // Una cuenta IDN autenticada queda fijada a su propio vendedor y almacén.
+  useEffect(() => {
+    if (!isCurrentUserIndependent || !currentUser?.id) return;
+    setSessionWorkerId(currentUser.id);
+    setSessionWorkerName(currentUser.name || '');
+    const assignedBranch = currentUser.assignedBranchId || currentUser.branchId ||
+      (currentUser.allowedBranches?.length === 1 ? currentUser.allowedBranches[0] : '');
+    if (assignedBranch) setSessionBranchId(assignedBranch);
+    setPosViewMode('idn');
+  }, [isCurrentUserIndependent, currentUser?.id, currentUser?.name, currentUser?.assignedBranchId, currentUser?.branchId]);
+
+  // Auto-lock sessionBranchId if worker has an assigned branch
+  useEffect(() => {
+    if (workerAssignedBranchId) {
+      setSessionBranchId(workerAssignedBranchId);
+    }
+  }, [workerAssignedBranchId]);
+
+  useEffect(() => {
+    if (sessionWorkerName) {
+      const exists = users.find(u => (u.name || '').toLowerCase() === sessionWorkerName.toLowerCase().trim());
+      setIsNewEmployee(!exists);
+    } else {
+      setIsNewEmployee(false);
+    }
+  }, [sessionWorkerName, users]);
+  
+  const isBranchLocked = Boolean(
+    workerAssignedBranchId ||
+    (currentUser?.role !== 'admin' && currentUser?.assignedBranchId) ||
+    (currentSession && ((users || []).find(u => u.id === currentSession.userId)?.assignedBranchId))
+  );
+
+  const allowedBranches = React.useMemo(() => {
+    // Administradores pueden operar todas las sucursales.
+    if (currentUser?.role === 'admin') return branches || [];
+
+    // En el flujo trabajador -> seleccionar empleado -> contraseña, el alcance
+    // de sucursal debe corresponder al trabajador seleccionado, no a la cuenta
+    // que inició sesión.
+    const scopeUser = detectedWorker || currentUser;
+    const assignedId = scopeUser?.assignedBranchId || scopeUser?.branchId;
+    if (assignedId) {
+      return (branches || []).filter(b => b.id === assignedId);
+    }
+    if (scopeUser?.allowedBranches && scopeUser.allowedBranches.length > 0) {
+      return (branches || []).filter(b => scopeUser.allowedBranches!.includes(b.id));
+    }
+    return [];
+  }, [currentUser, detectedWorker, branches, workerAssignedBranchId]);
+    
+  const [showConfirmIDNModal, setShowConfirmIDNModal] = useState(false);
+
+  const [sessionBranchId, setSessionBranchId] = useState<string>(
+    currentBranchId || ((allowedBranches || []).length > 0 ? allowedBranches[0].id : "")
+  );
+
+  const handleCloseIDNAccount = () => {
+    const targetWorker = activeIDNWorker;
+    const branchId = activeIDNBranchId;
+    if (!targetWorker) {
+      setPosError("No se ha seleccionado ningún vendedor independiente.");
+      return;
+    }
+    if (!branchId) {
+      setPosError("El vendedor no tiene un almacén asignado para liquidar.");
+      return;
+    }
+    setShowConfirmIDNModal(true);
+  };
 
   const handleExecuteIDNSettlement = async () => {
     const targetWorker = activeIDNWorker;
@@ -1871,10 +2183,12 @@ export default function POS() {
         return;
       }
 
-      const workerToAssign = (sessionWorkerId && users.find(u => u.id === sessionWorkerId)) ||
-        detectedWorker ||
-        users.find(u => (u.name || '').trim().toLowerCase() === trimmedWorkerName.toLowerCase()) ||
-        null;
+      const workerToAssign = isCurrentUserIndependent
+        ? users.find(u => u.id === currentUser?.id && u.isIndependent === true) || currentUser
+        : ((sessionWorkerId && users.find(u => u.id === sessionWorkerId)) ||
+          detectedWorker ||
+          users.find(u => (u.name || '').trim().toLowerCase() === trimmedWorkerName.toLowerCase()) ||
+          null);
 
       if (!workerToAssign || workerToAssign.isActive === false) {
         setPosError("No se encontró un empleado activo con ese nombre. Actualiza el directorio y vuelve a seleccionar.");
@@ -2106,8 +2420,8 @@ export default function POS() {
         {/* Header IDN */}
         <header className="bg-secondary text-primary p-3 sm:p-4 flex items-center justify-between shadow-lg flex-wrap gap-3 border-b border-base">
           <div 
-            onClick={handleCancelAndReturnToEmployeeSelector}
-            className="flex items-center gap-3 cursor-pointer hover:bg-slate-800/80 p-1.5 -m-1.5 rounded-2xl transition-all border border-transparent hover:border-amber-500/30 group select-none"
+            onClick={currentUser?.isIndependent ? undefined : handleCancelAndReturnToEmployeeSelector}
+            className={cn("flex items-center gap-3", !currentUser?.isIndependent && "cursor-pointer hover:bg-slate-800/80 p-1.5 -m-1.5 rounded-2xl transition-all border border-transparent hover:border-amber-500/30 group select-none"
             title="Hacer clic para cancelar punto de venta y volver al selector de empleado (sin contar ni descontar nada)"
           >
             <div className="bg-amber-500 p-2 rounded-xl text-white shadow-md shadow-amber-500/30 group-hover:bg-rose-600 transition-colors">
@@ -2134,7 +2448,8 @@ export default function POS() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Cancel and return to Employee selector button */}
+            {{!isCurrentUserIndependent && (
+            /* Cancel and return to Employee selector button */}
             <button
               type="button"
               onClick={handleCancelAndReturnToEmployeeSelector}
@@ -2145,6 +2460,7 @@ export default function POS() {
               {isExitingIDN ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
               <span>{isExitingIDN ? "Saliendo..." : "Cancelar / Salir"}</span>
             </button>
+            )}
 
             {/* Admin worker selector */}
             {currentUser?.role === 'admin' && !isCurrentUserIndependent && !isSessionIndependent && independentUsers.length > 0 && (
@@ -2174,7 +2490,7 @@ export default function POS() {
             )}
 
             {/* Back to standard POS button for Admin */}
-            {currentUser?.role === 'admin' && (
+            {currentUser?.role === 'admin' && !isCurrentUserIndependent && (
               <button
                 type="button"
                 onClick={() => setPosViewMode('standard')}
@@ -2778,6 +3094,7 @@ export default function POS() {
 
                   <form onSubmit={handleOpenSession} className="space-y-2.5">
                     <div className="text-left space-y-2">
+                      {!isCurrentUserIndependent && (
                       <div>
                         <label className="block text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">
                           Seleccionar Vendedor / Empleado del Turno
@@ -2910,10 +3227,11 @@ export default function POS() {
                           </div>
                         </div>
                       </div>
+                      )}
 
                       <div>
                         <label className="block text-[7px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                          Contraseña del Vendedor Seleccionado
+                          {isCurrentUserIndependent ? 'Contraseña de tu cuenta IDN' : 'Contraseña del Vendedor Seleccionado'}
                         </label>
                         <input
                           type="password"
