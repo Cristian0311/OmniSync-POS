@@ -49,13 +49,18 @@ export default function App() {
 
   useEffect(() => {
     // Keep the active form field visible when Android/iOS opens the software keyboard.
+    let scrollTimer: ReturnType<typeof setTimeout> | null = null;
     const scrollFocusedField = () => {
+      if (scrollTimer) return;
       const active = document.activeElement;
       if (!(active instanceof HTMLElement)) return;
       if (!active.matches('input, textarea, select')) return;
-      window.setTimeout(() => {
-        active.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-      }, 80);
+      scrollTimer = setTimeout(() => {
+        scrollTimer = null;
+        const focused = document.activeElement;
+        if (!(focused instanceof HTMLElement) || !focused.matches('input, textarea, select')) return;
+        focused.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
+      }, 100);
     };
 
     const handleContextMenu = (event: MouseEvent) => {
@@ -69,12 +74,11 @@ export default function App() {
     document.addEventListener('contextmenu', handleContextMenu);
     const viewport = window.visualViewport;
     viewport?.addEventListener('resize', scrollFocusedField);
-    viewport?.addEventListener('scroll', scrollFocusedField);
     return () => {
       document.removeEventListener('focusin', scrollFocusedField);
       document.removeEventListener('contextmenu', handleContextMenu);
       viewport?.removeEventListener('resize', scrollFocusedField);
-      viewport?.removeEventListener('scroll', scrollFocusedField);
+      if (scrollTimer) clearTimeout(scrollTimer);
     };
   }, []);
 
