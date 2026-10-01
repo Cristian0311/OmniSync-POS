@@ -12,6 +12,7 @@ import { useStore } from "./store/useStore";
 import { initMultiDeviceRealtimeSync } from "./services/realtimeSync";
 import { initKeyboardViewport } from "./services/keyboardViewport";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { getDevicePerformanceTier, scheduleIdleTask } from "./utils/devicePerformance";
 
 // Code-splitting de rutas para acelerar inicio en tablets y reducir consumo de memoria
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -51,6 +52,15 @@ export default function App() {
   useEffect(() => {
     return initKeyboardViewport();
   }, []);
+
+  useEffect(() => {
+    if (!currentUser || getDevicePerformanceTier() === "ultra") return;
+    // Precalentar solo la ruta POS en dispositivos que no estén en el perfil
+    // de 2 GB. En ultra se evita consumir memoria antes de necesitar el POS.
+    return scheduleIdleTask(() => {
+      void import("./pages/POS");
+    }, 1200, 1600);
+  }, [currentUser?.id]);
 
   useEffect(() => {
     if (!currentUser) return;
