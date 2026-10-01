@@ -26,7 +26,7 @@ import {
   ChevronRight,
   RefreshCw
 } from "lucide-react";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { cn } from "../lib/utils";
 import { useStore } from "../store/useStore";
 import { getOfflineQueueCount } from "../services/offlineQueue";
@@ -63,9 +63,61 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [pendingOfflineCount, setPendingOfflineCount] = useState(getOfflineQueueCount());
   const [isSyncingOffline, setIsSyncingOffline] = useState(false);
   const [expandedNotificationId, setExpandedNotificationId] = useState<string | null>(null);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const navigationTimerRef = useRef<number | null>(null);
   const { currentUser, logout, notifications, removeNotification, storeConfig, syncWithSupabase, addNotification } = useStore(useShallow((state) => ({ currentUser: state.currentUser, logout: state.logout, notifications: state.notifications, removeNotification: state.removeNotification, storeConfig: state.storeConfig, syncWithSupabase: state.syncWithSupabase, addNotification: state.addNotification })));
   const location = useLocation();
   const isPosPage = location.pathname === "/pos";
+
+  const loadingLabelByPath: Record<string, string> = {
+    "/": "Cargando Dashboard…",
+    "/pos": "Cargando Punto de Venta…",
+    "/inventory": "Cargando Inventario…",
+    "/inventory-audit": "Cargando Auditoría de Stock…",
+    "/transfers": "Cargando Transferencias…",
+    "/customers": "Cargando Clientes…",
+    "/suppliers": "Cargando Proveedores…",
+    "/banks": "Cargando Cuentas Bancarias…",
+    "/returns": "Cargando Devoluciones…",
+    "/reports": "Cargando Reportes…",
+    "/settings": "Cargando Configuración…",
+  };
+
+  const startNavigationFeedback = (targetPath: string) => {
+    if (targetPath === location.pathname) return;
+    if (navigationTimerRef.current !== null) {
+      window.clearTimeout(navigationTimerRef.current);
+    }
+    setIsNavigating(true);
+    // Mantener la burbuja visible unos cientos de ms aunque la ruta cargue
+    // demasiado rápido para que el usuario vea una respuesta inmediata.
+    navigationTimerRef.current = window.setTimeout(() => {
+      setIsNavigating(false);
+      navigationTimerRef.current = null;
+    }, 900);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (navigationTimerRef.current !== null) {
+        window.clearTimeout(navigationTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    // La ruta ya cambió: dejamos que el contenido termine de pintar y luego
+    // quitamos el indicador. Si la carga real tarda más, Suspense mantiene
+    // su propio indicador.
+    const timer = window.setTimeout(() => {
+      setIsNavigating(false);
+      if (navigationTimerRef.current !== null) {
+        window.clearTimeout(navigationTimerRef.current);
+        navigationTimerRef.current = null;
+      }
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [location.pathname]);
 
   // Efecto para el Modo Oscuro (Mejorado para Miopía: contraste suave)
   useEffect(() => {
@@ -226,7 +278,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <NavLink
                 key={item.name}
                 to={item.href}
-                onClick={() => setSidebarOpen(false)}
+                onClick={() => {
+                  setSidebarOpen(false);
+                  startNavigationFeedback(item.href);
+                }}
                 title={sidebarCollapsed ? item.name : undefined}
               >
                 {({ isActive }) => (
@@ -313,6 +368,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
       </aside>
+
+      {/* Indicador global de navegación: aparece al tocar una sección,
+          no depende de que React.lazy llegue a Suspense. */}
+      {isNavigating && (
+        <div className="fixed inset-x-0 bottom-5 z-[9998] flex justify-center pointer-events-none px-4" aria-live="polite" aria-busy="true">
+          <div className="omni-loading-bubble">
+            <span className="omni-loading-spinner" aria-hidden="true" />
+            <span className="min-w-0">{loadingLabelByPath[location.pathname] || "Cargando sección…"}</span>
+            <span className="omni-loading-dots" aria-hidden="true">•••</span>
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="flex-1 min-w-0 overflow-hidden flex flex-col relative h-full">
