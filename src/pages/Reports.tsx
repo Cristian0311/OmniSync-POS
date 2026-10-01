@@ -52,8 +52,10 @@ export default function Reports() {
     warranties: state.warranties,
   })));
 
-  const transactions = (store.transactions || []).filter(t => !t.deletedAt);
-  const cashSessions = (store.cashSessions || []).filter(s => !s.deletedAt);
+  // Keep stable references on local state changes so heavy report analytics do not
+  // recompute merely because a modal, filter or input changed.
+  const transactions = useMemo(() => (store.transactions || []).filter(t => !t.deletedAt), [store.transactions]);
+  const cashSessions = useMemo(() => (store.cashSessions || []).filter(s => !s.deletedAt), [store.cashSessions]);
   const users = store.users || [];
   const branches = store.branches || [];
   const currencies = store.currencies || [];
@@ -68,6 +70,11 @@ export default function Reports() {
   const customers = store.customers || [];
   const categories = store.categories || [];
   const salarySettlements = store.salarySettlements || [];
+
+  const currencyByCode = useMemo(() => new Map(currencies.map(currency => [currency.code, currency])), [currencies]);
+  const userById = useMemo(() => new Map(users.map(user => [user.id, user])), [users]);
+  const productById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
+  const branchById = useMemo(() => new Map(branches.map(branch => [branch.id, branch])), [branches]);
   const addSalarySettlement = store.addSalarySettlement;
   const updateSalarySettlement = store.updateSalarySettlement;
   const updateCashSession = store.updateCashSession;
@@ -114,7 +121,7 @@ export default function Reports() {
   
   // Calculate cash movements total
   const allMovements = cashSessions.flatMap(s => s.movements || []);
-  const totalCashIncomes = allMovements.filter(m => m.type === 'income').reduce((s, m) => s + (m.amount * (currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1)), 0);
+  const totalCashIncomes = allMovements.filter(m => m.type === 'income').reduce((s, m) => s + (m.amount * (currencyByCode.get(m.currencyCode)?.rateToBase || 1)), 0);
   const totalCashExpenses = allMovements.filter(m => m.type === 'expense').reduce((s, m) => s + (m.amount * (currencies.find(c => c.code === m.currencyCode)?.rateToBase || 1)), 0);
   
   // Bank movements breakdown
