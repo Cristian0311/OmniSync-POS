@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { RefreshCw, Database, CheckCircle2, AlertCircle, Sparkles, X, Package, Layers, Store, Users, ShoppingCart, CreditCard, ShieldCheck } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { cn } from '../lib/utils';
@@ -19,7 +20,7 @@ export function SupabaseRefreshModal({ buttonClassName, variant = 'primary', lab
     errors?: string[];
   } | null>(null);
 
-  const { syncWithSupabase, addNotification } = useStore();
+  const { syncWithSupabase, addNotification } = useStore(useShallow((state) => ({ syncWithSupabase: state.syncWithSupabase, addNotification: state.addNotification })));
 
   const handleExecuteRefresh = async () => {
     setIsLoading(true);
