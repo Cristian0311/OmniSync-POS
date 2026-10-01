@@ -50,17 +50,12 @@ export default defineConfig(() => {
           skipWaiting: true,
           // Supabase is the source of truth. Never let Workbox cache REST
           // responses or make a reconnect replay a stale API response.
+          // Los chunks de las rutas deben quedar precacheados. Excluirlos
+          // provoca "Failed to fetch dynamically imported module" cuando el
+          // dispositivo pierde conexión antes de abrir una sección.
           globIgnores: [
             '**/vendor-xlsx-*.js',
-            '**/vendor-charts-*.js',
-            '**/Reports-*.js',
-            '**/Settings-*.js',
-            '**/Inventory-*.js',
-            '**/Transfers-*.js',
-            '**/Banks-*.js',
-            '**/Suppliers-*.js',
-            '**/InventoryAudit-*.js',
-            '**/Dashboard-*.js'
+            '**/vendor-charts-*.js'
           ],
           runtimeCaching: [
             {
@@ -70,8 +65,11 @@ export default defineConfig(() => {
             },
             {
               urlPattern: /\/assets\/.*\.js$/i,
-              handler: 'StaleWhileRevalidate',
-              options: { cacheName: 'omnisync-js-runtime-cache' }
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'omnisync-js-runtime-cache',
+                expiration: { maxEntries: 120, maxAgeSeconds: 60 * 60 * 24 * 30 }
+              }
             }
           ]
         }
