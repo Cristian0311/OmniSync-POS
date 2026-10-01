@@ -135,8 +135,7 @@ export default function Reports() {
     return map;
   }, [transactions]);
 
-  const baseCurrency = getBaseCurrency ? getBaseCurrency() : (currencyByCode.get('CUP') || currencies.find(c => c.isBase) || currencies[0] || { code: 'CUP', name: 'Peso Cubano', symbol: '
-
+  const baseCurrency = getBaseCurrency ? getBaseCurrency() : (currencyByCode.get('CUP') || currencies.find(c => c.isBase) || currencies[0] || { code: 'CUP', name: 'Peso Cubano', symbol: '$', rateToBase: 1, isBase: true });
   const totalSales = transactions.reduce((sum, t) => sum + (t?.total || 0), 0);
   
   // Calculate cash movements total
