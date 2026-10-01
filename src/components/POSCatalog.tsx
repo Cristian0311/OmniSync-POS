@@ -264,14 +264,14 @@ export const POSCatalog = React.memo(function POSCatalog({
               <img 
                 src={product.image} 
                 alt={product?.name || "Producto"} 
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
+                className="pos-product-image w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
                 referrerPolicy="no-referrer" 
                 onError={(e) => {
                   e.currentTarget.onerror = null;
                   e.currentTarget.src = '';
                   e.currentTarget.style.display = 'none';
                 }}
-               loading="lazy" decoding="async" className="pos-product-image" />
+               loading="lazy" decoding="async" />
             ) : (
               <div className={cn("w-full h-full opacity-20 flex items-center justify-center font-black text-muted text-xl", product.color)}>
                 {(product?.name || "PR").substring(0, 2).toUpperCase()}
