@@ -2451,7 +2451,7 @@ export default function POS() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            {{!isCurrentUserIndependent && (
+            {!isCurrentUserIndependent && (
             /* Cancel and return to Employee selector button */}
             <button
               type="button"
