@@ -3937,28 +3937,18 @@ export const useStore = create<AppState>()(
     if (error) console.error('[Store] Error hidratando el estado local:', error);
     useStore.setState({ isInitialized: true });
   },
-  partialize: (state) => {
-    const isAdmin = state.currentUser?.role === 'admin';
-    const base = {
-      users: state.users, currentUser: state.currentUser,
-      currencies: state.currencies, storeConfig: state.storeConfig, catalogConfig: state.catalogConfig,
-      branches: state.branches, currentBranchId: state.currentBranchId, activeSessionId: state.activeSessionId, categories: state.categories,
-      products: state.products, inventory: state.inventory, cart: state.cart, currentCustomerId: state.currentCustomerId,
-      transactions: state.transactions, returns: state.returns, warranties: state.warranties,
-      cashSessions: state.cashSessions, salarySettlements: state.salarySettlements,
-      pendingOrders: state.pendingOrders,
-      idnSettlementPrices: state.idnSettlementPrices, receiptConfig: state.receiptConfig,
-      fiscalConfigs: state.fiscalConfigs, bankCards: state.bankCards
-    };
-    if (!isAdmin) {
-      return base;
-    }
-    return {
-      ...base,
-      transfers: state.transfers, suppliers: state.suppliers,
-      supplierOrders: state.supplierOrders, inventoryAudits: state.inventoryAudits,
-      quotes: state.quotes, timeShifts: state.timeShifts
-    };
+  partialize: (state) => ({
+    users: state.users, currentUser: state.currentUser,
+    currencies: state.currencies, storeConfig: state.storeConfig, catalogConfig: state.catalogConfig,
+    branches: state.branches, currentBranchId: state.currentBranchId, activeSessionId: state.activeSessionId, categories: state.categories,
+    products: state.products, inventory: state.inventory, cart: state.cart, currentCustomerId: state.currentCustomerId,
+    transactions: state.transactions, returns: state.returns, warranties: state.warranties,
+    cashSessions: state.cashSessions, transfers: state.transfers, suppliers: state.suppliers,
+    supplierOrders: state.supplierOrders, inventoryAudits: state.inventoryAudits, salarySettlements: state.salarySettlements,
+    quotes: state.quotes, timeShifts: state.timeShifts, pendingOrders: state.pendingOrders,
+    idnSettlementPrices: state.idnSettlementPrices, receiptConfig: state.receiptConfig,
+    fiscalConfigs: state.fiscalConfigs, bankCards: state.bankCards
+  })
   }
 }
 ));
