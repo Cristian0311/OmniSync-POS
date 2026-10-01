@@ -4,12 +4,6 @@ import { Search, Wifi, WifiOff, RefreshCw, Plus, Minus, CreditCard, Receipt, Tra
 import type { Html5QrcodeScanner } from "html5-qrcode";
 import { useNavigate } from "react-router-dom";
 import { cn, generateId } from "../lib/utils";
-import {
-  connectBluetoothPrinter,
-  connectPrinter,
-  getConnectedDeviceName,
-  printThermalReceipt
-} from "../lib/escpos";
 import { useStore } from "../store/useStore";
 import { Product, Payment, Transaction, CashRegisterSession } from "../types";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
@@ -528,6 +522,7 @@ export default function POS() {
       lines.push(`BOLD|TOTAL LIQUIDAR: ${baseCurrency.symbol}${data.totalToPay.toLocaleString()} CUP`);
       lines.push("---");
       lines.push("CENTER|CUADRE REALIZADO CON EXITO");
+      const { printThermalReceipt } = await import("../lib/escpos");
       await printThermalReceipt({
         lines,
         width: (receiptConfig.printerWidth || '58mm') as '58mm' | '80mm'
@@ -1594,6 +1589,7 @@ export default function POS() {
     setIsConnectingPrinter(true);
     setPrinterStatusMsg("Buscando impresora Bluetooth...");
     try {
+      const { connectBluetoothPrinter } = await import("../lib/escpos");
       const device = await connectBluetoothPrinter();
       setConnectedPrinterName(device.name || "Impresora Bluetooth 58mm");
       setPosSuccess(`Impresora "${device.name || 'Bluetooth'}" conectada`);
@@ -1613,6 +1609,7 @@ export default function POS() {
     setIsConnectingPrinter(true);
     setPrinterStatusMsg("Buscando impresora USB...");
     try {
+      const { connectPrinter } = await import("../lib/escpos");
       await connectPrinter();
       setConnectedPrinterName("Impresora USB (Serie)");
       setPosSuccess("Impresora USB conectada correctamente");
