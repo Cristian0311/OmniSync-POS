@@ -63,7 +63,7 @@ export interface AppState {
   // Carrito POS
   cart: CartItem[];
   currentCustomerId?: string;
-  addToCart: (product: Product, serialNumber?: string, attributes?: { size?: string, color?: string, variantLabel?: string }) => void;
+  addToCart: (product: Product, serialNumber?: string, attributes?: { size?: string, color?: string, variantLabel?: string }, quantity?: number) => void;
   updateCartQty: (cartItemId: string, delta: number) => void;
   updateCartSerial: (cartItemId: string, serialNumber: string) => void;
   setCartCustomer: (customerId?: string) => void;
