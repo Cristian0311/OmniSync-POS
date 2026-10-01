@@ -64,6 +64,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [isSyncingOffline, setIsSyncingOffline] = useState(false);
   const [expandedNotificationId, setExpandedNotificationId] = useState<string | null>(null);
   const [isNavigating, setIsNavigating] = useState(false);
+  const [navigationTargetPath, setNavigationTargetPath] = useState<string | null>(null);
   const navigationTimerRef = useRef<number | null>(null);
   const { currentUser, logout, notifications, removeNotification, storeConfig, syncWithSupabase, addNotification } = useStore(useShallow((state) => ({ currentUser: state.currentUser, logout: state.logout, notifications: state.notifications, removeNotification: state.removeNotification, storeConfig: state.storeConfig, syncWithSupabase: state.syncWithSupabase, addNotification: state.addNotification })));
   const location = useLocation();
@@ -88,13 +89,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (navigationTimerRef.current !== null) {
       window.clearTimeout(navigationTimerRef.current);
     }
+    // Guardamos la ruta destino por separado de location.pathname. Así el
+    // texto siempre corresponde al botón que el trabajador acaba de tocar.
+    setNavigationTargetPath(targetPath);
     setIsNavigating(true);
-    // Mantener la burbuja visible unos cientos de ms aunque la ruta cargue
-    // demasiado rápido para que el usuario vea una respuesta inmediata.
+    // Seguro de salida por si una navegación queda interrumpida.
     navigationTimerRef.current = window.setTimeout(() => {
       setIsNavigating(false);
+      setNavigationTargetPath(null);
       navigationTimerRef.current = null;
-    }, 900);
+    }, 1400);
   };
 
   useEffect(() => {
@@ -106,18 +110,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // La ruta ya cambió: dejamos que el contenido termine de pintar y luego
-    // quitamos el indicador. Si la carga real tarda más, Suspense mantiene
-    // su propio indicador.
+    // Solo cerramos la indicación después de confirmar que ya estamos en la
+    // ruta que el usuario solicitó. La mantenemos visible un instante para
+    // que también se perciba en navegaciones rápidas.
+    if (!navigationTargetPath || navigationTargetPath !== location.pathname) return;
     const timer = window.setTimeout(() => {
       setIsNavigating(false);
+      setNavigationTargetPath(null);
       if (navigationTimerRef.current !== null) {
         window.clearTimeout(navigationTimerRef.current);
         navigationTimerRef.current = null;
       }
-    }, 260);
+    }, 450);
     return () => window.clearTimeout(timer);
-  }, [location.pathname]);
+  }, [location.pathname, navigationTargetPath]);
 
   // Efecto para el Modo Oscuro (Mejorado para Miopía: contraste suave)
   useEffect(() => {
@@ -369,20 +375,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Indicador global de navegación: aparece al tocar una sección,
-          no depende de que React.lazy llegue a Suspense. */}
-      {isNavigating && (
-        <div className="fixed inset-x-0 bottom-5 z-[9998] flex justify-center pointer-events-none px-4" aria-live="polite" aria-busy="true">
-          <div className="omni-loading-bubble">
-            <span className="omni-loading-spinner" aria-hidden="true" />
-            <span className="min-w-0">{loadingLabelByPath[location.pathname] || "Cargando sección…"}</span>
-            <span className="omni-loading-dots" aria-hidden="true">•••</span>
-          </div>
-        </div>
-      )}
-
       {/* Main Content */}
       <main className="flex-1 min-w-0 overflow-hidden flex flex-col relative h-full">
+        {/* Indicador de navegación centrado dentro del área principal/POS.
+            Usa la ruta destino para no mostrar el nombre de otra sección. */}
+        {isNavigating && (
+          <div className="absolute inset-0 z-[60] flex items-center justify-center pointer-events-none px-4" aria-live="polite" aria-busy="true">
+            <div className="omni-loading-bubble">
+              <span className="omni-loading-icon" aria-hidden="true">
+                <span className="omni-loading-spinner" />
+              </span>
+              <span className="min-w-0">{loadingLabelByPath[navigationTargetPath || location.pathname] || "Cargando sección…"}</span>
+              <span className="omni-loading-dots" aria-hidden="true">•••</span>
+            </div>
+          </div>
+        )}
         {/* Overlay for mobile sidebar */}
         {sidebarOpen && (
           <div
