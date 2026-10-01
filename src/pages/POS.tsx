@@ -1986,6 +1986,20 @@ export default function POS() {
       setShowOpenShiftModal(true);
       return;
     }
+    // Defensa en profundidad: una cuenta IDN nunca puede vender usando un
+    // turno o almacén que pertenezca a otra identidad/sucursal.
+    if (isCurrentUserIndependent && currentUser?.id) {
+      const assignedBranchId = currentUser.assignedBranchId || currentUser.branchId ||
+        (currentUser.allowedBranches?.length === 1 ? currentUser.allowedBranches[0] : null);
+      const ownsSession = currentSession.userId === currentUser.id ||
+        currentSession.workingEmployeeIds?.includes(currentUser.id);
+      const ownsBranch = !assignedBranchId || currentSession.branchId === assignedBranchId;
+      if (!ownsSession || !ownsBranch) {
+        setPosError('Tu cuenta IDN solo puede vender en tu propio turno y almacén asignado.');
+        setShowOpenShiftModal(true);
+        return;
+      }
+    }
     if (!Number.isFinite(totalBase) || totalBase <= 0) {
       setPosError('El total de la venta no es válido.');
       return;
@@ -2047,10 +2061,18 @@ export default function POS() {
       const match = t.id?.match(/TIKECT ID-MARE(\d+)/i);
       return match ? Math.max(max, parseInt(match[1], 10)) : max;
     }, 0);
-    const activeSellerId = currentSession.userId || currentUser?.id || 'u1';
-    const activeSellerName = currentSession.workerName || currentUser?.name || 'Vendedor';
+    const activeSellerId = isCurrentUserIndependent
+      ? currentUser?.id || currentSession.userId || 'u1'
+      : currentSession.userId || currentUser?.id || 'u1';
+    const activeSellerName = isCurrentUserIndependent
+      ? currentUser?.name || currentSession.workerName || 'Vendedor'
+      : currentSession.workerName || currentUser?.name || 'Vendedor';
     const sellerUser = (users || []).find(u => u.id === activeSellerId) || currentUser;
-    const effectiveBranchId = currentSession.branchId || sellerUser?.assignedBranchId || currentBranchId || (branches[0]?.id || 'b1');
+    const assignedIdnBranch = isCurrentUserIndependent
+      ? (currentUser?.assignedBranchId || currentUser?.branchId ||
+        (currentUser?.allowedBranches?.length === 1 ? currentUser.allowedBranches[0] : null))
+      : null;
+    const effectiveBranchId = assignedIdnBranch || currentSession.branchId || sellerUser?.assignedBranchId || currentBranchId || (branches[0]?.id || 'b1');
 
     // El número visible conserva legibilidad, pero el ID físico del ticket debe
     // ser globalmente único entre dispositivos. Nunca usamos solo el contador local:
@@ -2338,6 +2360,18 @@ export default function POS() {
     if (!targetUser) {
       setPosError("No se pudo identificar al trabajador dueño del turno.");
       return;
+    }
+
+    if (isCurrentUserIndependent) {
+      const assignedBranchId = currentUser?.assignedBranchId || currentUser?.branchId ||
+        (currentUser?.allowedBranches?.length === 1 ? currentUser.allowedBranches[0] : null);
+      const ownIdentity = targetSession.userId === currentUser?.id ||
+        targetSession.workingEmployeeIds?.includes(currentUser?.id || '');
+      const ownBranch = !assignedBranchId || targetSession.branchId === assignedBranchId;
+      if (!ownIdentity || !ownBranch) {
+        setPosError('Una cuenta IDN solo puede reanudar su propio turno en su almacén asignado.');
+        return;
+      }
     }
 
     const targetBranchIds = new Set(
@@ -3384,6 +3418,8 @@ export default function POS() {
 
               {/* Turnos Abiertos en Curso (Evita duplicidad y permite reanudar con contraseña) */}
               {(() => {
+                // Las cuentas IDN no deben ver ni poder escoger turnos de terceros.
+                if (isCurrentUserIndependent) return null;
                 const otherOpenSessions = (activeCashSessions || []).filter(s => s.status === 'open');
                 if (otherOpenSessions.length === 0) return null;
                 return (
