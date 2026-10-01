@@ -129,7 +129,8 @@ async function idbGetAll(): Promise<OfflineQueueItem[] | null> {
     request.onerror = () => reject(request.error || new Error('IndexedDB read failed'));
     tx.onerror = () => reject(tx.error || new Error('IndexedDB transaction read failed'));
     tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction read aborted'));
-    tx.oncomplete = () => db.close();
+    // Mantener abierta la conexión reutilizable reduce aperturas/cierres repetidos
+    // durante sincronizaciones frecuentes en tablets de baja potencia.
   });
 }
 
