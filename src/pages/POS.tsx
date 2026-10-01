@@ -177,7 +177,9 @@ export default function POS() {
     const run = async () => {
       try {
         await useStore.getState().refreshGlobalCatalogData();
-        await useStore.getState().refreshBranchOperationalData();
+        await useStore.getState().refreshBranchOperationalData(
+          currentSession?.id ? { sessionId: currentSession.id, transactionLimit: 250, transferLimit: 100 } : { transactionLimit: 250, transferLimit: 100 }
+        );
       } catch (error) {
         console.warn('[POS] No se pudo refrescar el estado operativo al entrar:', error);
       }
