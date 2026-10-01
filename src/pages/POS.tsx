@@ -2421,7 +2421,10 @@ export default function POS() {
         <header className="bg-secondary text-primary p-3 sm:p-4 flex items-center justify-between shadow-lg flex-wrap gap-3 border-b border-base">
           <div 
             onClick={currentUser?.isIndependent ? undefined : handleCancelAndReturnToEmployeeSelector}
-            className={cn("flex items-center gap-3", !currentUser?.isIndependent && "cursor-pointer hover:bg-slate-800/80 p-1.5 -m-1.5 rounded-2xl transition-all border border-transparent hover:border-amber-500/30 group select-none"
+            className={cn(
+              "flex items-center gap-3",
+              !currentUser?.isIndependent && "cursor-pointer hover:bg-slate-800/80 p-1.5 -m-1.5 rounded-2xl transition-all border border-transparent hover:border-amber-500/30 group select-none"
+            )}
             title="Hacer clic para cancelar punto de venta y volver al selector de empleado (sin contar ni descontar nada)"
           >
             <div className="bg-amber-500 p-2 rounded-xl text-white shadow-md shadow-amber-500/30 group-hover:bg-rose-600 transition-colors">
