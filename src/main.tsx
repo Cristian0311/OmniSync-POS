@@ -18,6 +18,16 @@ window.addEventListener('vite:preloadError', (event) => {
   const now = Date.now();
   const previous = Number(sessionStorage.getItem(CHUNK_RECOVERY_KEY) || '0');
 
+  // Never reload an offline device just because a lazy chunk failed. A reload
+  // cannot download a missing module and can turn a recoverable offline state
+  // into a blank application. Online devices may refresh once to reconcile an
+  // old HTML shell with the current hashed chunks.
+  if (!navigator.onLine) {
+    event.preventDefault();
+    window.dispatchEvent(new CustomEvent('omni:chunk-offline-error'));
+    return;
+  }
+
   if (!previous || now - previous > CHUNK_RECOVERY_TTL_MS) {
     sessionStorage.setItem(CHUNK_RECOVERY_KEY, String(now));
     event.preventDefault();
