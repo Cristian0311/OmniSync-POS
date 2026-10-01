@@ -844,7 +844,7 @@ export default function POS() {
     }
 
     return Array.from(expectedMap.values()).filter(e => e.amount !== 0);
-  }, [currentSession, activeTransactions, currentBranchId, baseCurrency, currencies]);
+  }, [currentSession, activeTransactions, currentBranchId, baseCurrency, currencyByCode]);
 
   // Liquidación por producto del turno actual.
   const turnProductSalaryRows = React.useMemo(() => {
