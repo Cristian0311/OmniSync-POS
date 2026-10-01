@@ -14,6 +14,8 @@ export type VoiceCommand = {
   quantity: number;
   query: string;
   raw: string;
+  price?: number;
+  currencyCode?: "CUP" | "USD" | "EUR" | "MN";
 };
 
 const ACTIONS: Record<VoiceCommandAction, string[]> = {
@@ -48,13 +50,50 @@ function extractQuantity(text: string): { quantity: number; text: string } {
   }
   const last = words[words.length - 1];
   const trailingNumber = Number(last);
-  if (words.length > 1 && /^\\d{1,4}$/.test(last)) {
+  if (words.length > 1 && /^\d{1,4}$/.test(last)) {
     return { quantity: Math.max(1, trailingNumber), text: words.slice(0, -1).join(" ") };
   }
   if (words.length > 1 && NUMBER_WORDS[last] !== undefined) {
     return { quantity: Math.max(1, NUMBER_WORDS[last]), text: words.slice(0, -1).join(" ") };
   }
   return { quantity: 1, text };
+}
+
+function parseSpokenPrice(text: string): { price?: number; currencyCode?: VoiceCommand["currencyCode"]; text: string } {
+  // Price is intentionally parsed only when introduced by a clear phrase such as
+  // "de 3700" / "a 3700" so a trailing quantity is never mistaken for a price.
+  const match = text.match(/\\b(?:de|a|por|precio|valor)\\s+\\$?\\s*(\\d{1,3}(?:[.\\s]\\d{3})*|\\d+(?:[.,]\\d+)?)\\s*(cup|mn|usd|dolares?|euros?)?\\b/i);
+  if (!match) return { text };
+
+  const rawNumber = match[1].replace(/\\s/g, "");
+  const hasDot = rawNumber.includes(".");
+  const hasComma = rawNumber.includes(",");
+  let normalizedNumber = rawNumber;
+
+  if (hasDot && !hasComma && /\\.\\d{3}$/.test(rawNumber)) {
+    normalizedNumber = rawNumber.replace(/\\./g, "");
+  } else if (hasDot && hasComma) {
+    normalizedNumber = rawNumber.replace(/\\./g, "").replace(",", ".");
+  } else {
+    normalizedNumber = rawNumber.replace(",", ".");
+  }
+
+  const price = Number(normalizedNumber);
+  if (!Number.isFinite(price)) return { text };
+
+  const codeRaw = (match[2] || "").toLowerCase();
+  const currencyCode =
+    codeRaw === "usd" || codeRaw.startsWith("dolar") ? "USD" :
+    codeRaw === "eur" || codeRaw.startsWith("euro") ? "EUR" :
+    codeRaw === "mn" ? "MN" :
+    codeRaw === "cup" ? "CUP" :
+    undefined;
+
+  return {
+    price,
+    currencyCode,
+    text: text.replace(match[0], " ").replace(/\\s+/g, " ").trim(),
+  };
 }
 
 function findAction(text: string): { action: VoiceCommandAction; rest: string } {
@@ -75,16 +114,24 @@ export function parseVoiceCommand(input: string): VoiceCommand {
   const normalized = normalize(raw);
   const { action, rest } = findAction(normalized);
   if (action === "clear") return { action, quantity: 1, query: "", raw };
-  const extracted = extractQuantity(rest);
+  const priced = parseSpokenPrice(rest);
+  const extracted = extractQuantity(priced.text);
   const query = extracted.text
     .replace(/^(de|del|la|el|los|las)\\s+/i, "")
     .replace(/\\s+(unidades?|uds?|piezas?|productos?)\\s+(de|del)\\s+/i, " ")
     .replace(/\\s+(al|a la|en el|en la)\\s+(carrito|carro|cesta)(\\s+de\\s+compras?)?$/i, "")
     .trim();
-  return { action, quantity: extracted.quantity, query, raw };
+  return {
+    action,
+    quantity: extracted.quantity,
+    query,
+    raw,
+    ...(priced.price !== undefined ? { price: priced.price } : {}),
+    ...(priced.currencyCode ? { currencyCode: priced.currencyCode } : {}),
+  };
 }
 
-function scoreProduct(product: Product, query: string): number {
+function scoreProduct(product: Product, query: string, preferredPrice?: number): number {
   const q = normalize(query);
   const name = normalize(product.name || "");
   const sku = normalize(product.sku || "");
@@ -97,12 +144,19 @@ function scoreProduct(product: Product, query: string): number {
   if (name.includes(q)) return 75;
   const tokens = q.split(" ").filter(Boolean);
   const hits = tokens.filter(token => name.includes(token)).length;
-  return tokens.length ? Math.round((hits / tokens.length) * 65) : 0;
+  let score = tokens.length ? Math.round((hits / tokens.length) * 65) : 0;
+  if (preferredPrice !== undefined) {
+    const productPrice = Number((product as Product & { price?: number }).price);
+    if (Number.isFinite(productPrice)) {
+      score += Math.abs(productPrice - preferredPrice) < 0.0001 ? 45 : -12;
+    }
+  }
+  return score;
 }
 
-export function matchVoiceProducts(products: Product[], query: string, limit = 5): Product[] {
+export function matchVoiceProducts(products: Product[], query: string, limit = 5, preferredPrice?: number): Product[] {
   return products
-    .map(product => ({ product, score: scoreProduct(product, query) }))
+    .map(product => ({ product, score: scoreProduct(product, query, preferredPrice) }))
     .filter(x => x.score >= 50)
     .sort((a, b) => b.score - a.score || (a.product.name || "").localeCompare(b.product.name || ""))
     .slice(0, limit)
