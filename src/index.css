@@ -552,32 +552,45 @@ body {
 }
 
 
-/* Floating feedback shown while a lazy section is loading. It stays compact
-   and uses transform/opacity only so it remains cheap on low-end tablets. */
+/* Centered loading feedback used by navigation and lazy routes.
+   * Kept compact and GPU-friendly for low-end tablets. */
 .omni-loading-bubble {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
-  max-width: min(92vw, 23rem);
-  padding: 0.65rem 0.9rem;
-  border: 1px solid rgb(226 232 240 / 0.95);
-  border-radius: 999px;
-  background: rgb(255 255 255 / 0.96);
-  color: #0f172a;
-  box-shadow: 0 10px 28px rgb(15 23 42 / 0.16);
+  gap: 0.6rem;
+  min-height: 3rem;
+  max-width: min(90vw, 24rem);
+  padding: 0.7rem 0.95rem;
+  border: 1px solid rgb(99 102 241 / 0.22);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 0.98);
+  color: #111827;
+  box-shadow: 0 10px 24px rgb(15 23 42 / 0.14);
   font-size: 10px;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: 0.055em;
-  backdrop-filter: blur(4px);
-  animation: omni-loading-in 160ms ease-out;
+  contain: layout paint;
+  transform: translateZ(0);
+}
+
+.omni-loading-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: 0 0 auto;
+  border-radius: 0.8rem;
+  background: rgb(99 102 241 / 0.09);
+  border: 1px solid rgb(99 102 241 / 0.14);
 }
 
 .omni-loading-spinner {
-  width: 0.9rem;
-  height: 0.9rem;
+  width: 0.95rem;
+  height: 0.95rem;
   flex: 0 0 auto;
-  border: 2px solid rgb(99 102 241 / 0.2);
+  border: 2px solid rgb(99 102 241 / 0.18);
   border-top-color: rgb(79 70 229);
   border-radius: 999px;
   animation: omni-loading-spin 700ms linear infinite;
@@ -589,15 +602,15 @@ body {
 }
 
 .dark .omni-loading-bubble {
-  border-color: rgb(71 85 105 / 0.8);
-  background: rgb(15 23 42 / 0.95);
+  border-color: rgb(129 140 248 / 0.28);
+  background: rgb(17 24 39 / 0.98);
   color: #f8fafc;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 0.32);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 0.28);
 }
 
-@keyframes omni-loading-in {
-  from { opacity: 0; transform: translate3d(0, 8px, 0); }
-  to { opacity: 1; transform: translate3d(0, 0, 0); }
+.dark .omni-loading-icon {
+  background: rgb(129 140 248 / 0.12);
+  border-color: rgb(129 140 248 / 0.2);
 }
 
 @keyframes omni-loading-spin {
@@ -605,10 +618,15 @@ body {
 }
 
 html[data-perf-tier="ultra"] .omni-loading-bubble {
-  backdrop-filter: none;
-  animation-duration: 100ms;
+  box-shadow: 0 6px 16px rgb(15 23 42 / 0.12);
 }
 
 html[data-perf-tier="ultra"] .omni-loading-spinner {
   animation-duration: 900ms;
 }
+
+html[data-perf-tier="ultra"] .omni-loading-bubble {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
