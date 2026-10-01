@@ -32,7 +32,8 @@ import { cn } from "../lib/utils";
 export default function CustomerShop() {
   const {
     products,
-    categories,
+    categoryById,
+    stockByProductBranch,
     getBaseCurrency,
     inventory,
     branches,
@@ -40,20 +41,30 @@ export default function CustomerShop() {
     storeConfig
   } = useStore(useShallow((state) => ({ products: state.products, categories: state.categories, getBaseCurrency: state.getBaseCurrency, inventory: state.inventory, branches: state.branches, catalogConfig: state.catalogConfig, storeConfig: state.storeConfig })));
   const baseCurrency = getBaseCurrency();
+  const categoryById = useMemo(() => new Map(categories.map(category => [category.id, category])), [categories]);
+  const stockByProductBranch = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const level of inventory || []) {
+      const key = level.productId + '::' + level.branchId;
+      map.set(key, (map.get(key) || 0) + level.quantity);
+    }
+    return map;
+  }, [inventory]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [activeCategoryId, setActiveCategoryId] = useState<string>("Todos");
   const [isLoading, setIsLoading] = useState(false);
 
   const visibleBranches = useMemo(() => {
     if (!catalogConfig.visibleBranches || catalogConfig.visibleBranches.length === 0) return branches;
-    return branches.filter(b => catalogConfig.visibleBranches?.includes(b.id));
+    const allowed = new Set(catalogConfig.visibleBranches);
+    return branches.filter(b => allowed.has(b.id));
   }, [branches, catalogConfig.visibleBranches]);
 
   const [selectedBranchId, setSelectedBranchId] = useState<string>("");
 
   // Sync selected branch if it disappears from visible list, or is initially empty
   useEffect(() => {
-    if (!selectedBranchId || !visibleBranches.find(b => b.id === selectedBranchId)) {
+    if (!selectedBranchId || !visibleBranches.some(b => b.id === selectedBranchId)) {
       if (visibleBranches.length > 0) {
         setSelectedBranchId(visibleBranches[0].id);
       }
@@ -71,26 +82,23 @@ export default function CustomerShop() {
   const [activeTab, setActiveTab] = useState<'catalog' | 'store' | 'contact' | 'faq'>('catalog');
 
   const filteredProducts = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
     return products
       .filter((p) => {
-        const cat = categories.find(c => c.id === p.categoryId);
+        const cat = categoryById.get(p.categoryId);
         const isTestCategory = cat && cat.name.toLowerCase() === 'test';
         if (isTestCategory) return false;
 
         const matchesCategory =
           activeCategoryId === "Todos" || p.categoryId === activeCategoryId;
         const matchesSearch =
-          p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          p.sku.toLowerCase().includes(searchQuery.toLowerCase());
+          !query ||
+          p.name.toLowerCase().includes(query) ||
+          p.sku.toLowerCase().includes(query);
         return matchesCategory && matchesSearch;
       })
       .map((product) => {
-        const totalStock = inventory
-          .filter(
-            (i) =>
-              i.productId === product.id && i.branchId === selectedBranchId,
-          )
-          .reduce((sum, curr) => sum + curr.quantity, 0);
+        const totalStock = stockByProductBranch.get(product.id + '::' + selectedBranchId) || 0;
         return { ...product, totalStock };
       })
       .sort((a, b) => {
@@ -439,7 +447,7 @@ export default function CustomerShop() {
                       <div className="flex-1 flex flex-col">
                         <div className="mb-2">
                           <p className="text-[11px] text-slate-500 font-medium mb-1">
-                            {categories.find((c) => c.id === product.categoryId)?.name || "General"}
+                            {categoryById.get(product.categoryId)?.name || "General"}
                           </p>
                           <h3 className="text-sm font-semibold text-slate-900 leading-snug line-clamp-2">
                             {product.name}
