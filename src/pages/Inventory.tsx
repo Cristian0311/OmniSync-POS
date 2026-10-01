@@ -322,10 +322,25 @@ export default function Inventory() {
 
   const [displayLimit, setDisplayLimit] = useState(200);
 
+  const inventoryByProduct = useMemo(() => {
+    const map = new Map<string, typeof inventory>();
+    for (const level of inventory || []) {
+      const existing = map.get(level.productId);
+      if (existing) existing.push(level);
+      else map.set(level.productId, [level]);
+    }
+    return map;
+  }, [inventory]);
+
   const inventoryData = useMemo(() => {
     if (!products || !inventory) return { full: [], paginated: [] };
+
+    const query = debouncedSearchQuery.trim().toLowerCase();
     let filtered = products.map(product => {
-      const productLevels = inventory.filter(i => i.productId === product.id && (selectedBranch === 'all' || i.branchId === selectedBranch));
+      const allLevels = inventoryByProduct.get(product.id) || [];
+      const productLevels = selectedBranch === 'all'
+        ? allLevels
+        : allLevels.filter(level => level.branchId === selectedBranch);
       
       const totalStock = productLevels.reduce((acc, curr) => acc + curr.quantity, 0);
       const isLowStock = productLevels.some(i => i.quantity <= (product.minStockAlert || i.minQuantity));
@@ -338,12 +353,11 @@ export default function Inventory() {
       };
     });
 
-    if (debouncedSearchQuery) {
-      const query = debouncedSearchQuery.toLowerCase();
+    if (query) {
       filtered = filtered.filter(item => 
-        item.name.toLowerCase().includes(query) || 
-        item.sku.toLowerCase().includes(query) || 
-        (item.barcode && item.barcode.includes(query))
+        (item.name || '').toLowerCase().includes(query) || 
+        (item.sku || '').toLowerCase().includes(query) || 
+        !!item.barcode && item.barcode.toLowerCase().includes(query)
       );
     }
 
@@ -363,7 +377,7 @@ export default function Inventory() {
       full: filtered,
       paginated: filtered.slice(0, displayLimit)
     };
-  }, [products, inventory, debouncedSearchQuery, selectedBranch, selectedCategory, stockFilter, displayLimit]);
+  }, [products, inventory, inventoryByProduct, debouncedSearchQuery, selectedBranch, selectedCategory, stockFilter, displayLimit]);
 
   const inventoryView = inventoryData.paginated;
 
@@ -409,26 +423,32 @@ export default function Inventory() {
   };
 
   const stats = useMemo(() => {
-    // If all branches, show stats for ALL products even if filtered (as requested)
-    const activeProducts = selectedBranch === 'all' ? inventoryData.full : inventoryData.full; 
-    // Wait, if I want ALL products even if NOT filtered by search/category:
-    let baseProducts = products.map(product => {
-      const productLevels = inventory.filter(i => i.productId === product.id && (selectedBranch === 'all' || i.branchId === selectedBranch));
-      const totalStock = productLevels.reduce((acc, curr) => acc + curr.quantity, 0);
-      return { ...product, totalStock };
-    });
+    const totalsByProduct = new Map<string, number>();
+    for (const level of inventory || []) {
+      if (selectedBranch !== 'all' && level.branchId !== selectedBranch) continue;
+      totalsByProduct.set(level.productId, (totalsByProduct.get(level.productId) || 0) + level.quantity);
+    }
 
-    const targetProducts = selectedBranch === 'all' ? baseProducts : inventoryData.full;
+    const targetProducts = selectedBranch === 'all'
+      ? products.map(product => ({ ...product, totalStock: totalsByProduct.get(product.id) || 0 }))
+      : inventoryData.full;
 
     const totalProducts = targetProducts.length;
-    const totalStock = targetProducts.reduce((sum, p) => sum + p.totalStock, 0);
-    const lowStockCount = inventoryData.full.filter(p => p.isLowStock).length;
-    const totalCostValue = targetProducts.reduce((sum, p) => sum + (p.costPrice * p.totalStock), 0);
-    const totalSaleValue = targetProducts.reduce((sum, p) => sum + (p.price * p.totalStock), 0);
+    let totalStock = 0;
+    let totalCostValue = 0;
+    let totalSaleValue = 0;
+
+    for (const product of targetProducts) {
+      totalStock += product.totalStock;
+      totalCostValue += product.costPrice * product.totalStock;
+      totalSaleValue += product.price * product.totalStock;
+    }
+
     const totalProfit = totalSaleValue - totalCostValue;
+    const lowStockCount = inventoryData.full.filter(p => p.isLowStock).length;
 
     return { totalProducts, totalStock, lowStockCount, totalCostValue, totalSaleValue, totalProfit };
-  }, [inventoryData.full, products, inventory, selectedBranch]);
+  }, [inventory, products, inventoryData.full, selectedBranch]);
 
   return (
     <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500 h-full flex flex-col min-h-0">
