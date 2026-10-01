@@ -4441,51 +4441,6 @@ export default function POS() {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Offline / Online Sync Status Badge */}
-          <button
-            type="button"
-            onClick={handleManualSync}
-            disabled={isSyncingOffline}
-            className={cn(
-              "px-2 sm:px-2.5 py-1 rounded-lg text-[10px] sm:text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border active:scale-95",
-              !isOnline
-                ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
-                : pendingOfflineCount > 0
-                ? "bg-indigo-600/30 text-indigo-300 border-indigo-500/40 hover:bg-indigo-600/50 cursor-pointer"
-                : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-            )}
-            title={pendingOfflineCount > 0 ? "Haz clic para sincronizar cambios pendientes con la nube" : (isOnline ? "Conectado a la base de datos" : "Sin conexión - guardando ventas localmente")}
-          >
-            {isSyncingOffline ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-            ) : isOnline ? (
-              <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-            ) : (
-              <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-            )}
-            <span className="hidden sm:inline">
-              {!isOnline ? "Offline" : (pendingOfflineCount > 0 ? (isSyncingOffline ? "Subiendo..." : "Subir") : "Online")}
-            </span>
-            {pendingOfflineCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[8px] font-black bg-amber-500 text-white shrink-0">
-                {pendingOfflineCount}
-              </span>
-            )}
-            {offlineConflictCount > 0 && (
-              <span
-                className="px-1.5 py-0.2 rounded-full text-[8px] font-black bg-rose-600 text-white shrink-0 cursor-pointer"
-                title="Hay operaciones rechazadas que requieren revisión"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setPosError(`${offlineConflictCount} operación(es) quedaron en conflicto y no se volverán a sincronizar automáticamente.`);
-                  setTimeout(() => setPosError(""), 5000);
-                }}
-              >
-                !{offlineConflictCount}
-              </span>
-            )}
-          </button>
-
           {/* Cierre de Caja Button - High Priority & Clearly Visible */}
           <button
             type="button"
