@@ -14,7 +14,7 @@ import {
   deleteBankTransactionFromSupabase, clearSelectedDataFromSupabase, callOpenSessionRPCWithId, callProcessTransactionRPC, callVoidTransactionRPC, callCompleteReturnRPC, callTransferInventoryRPC, callReceiveSupplierOrderRPC, callCompleteInventoryAuditRPC, callCloseSessionRPC, callCancelSessionRPC, callDeleteBankInternalTransferRPC, callDeleteBankTransactionRPC, callDeleteBankCardRPC, callProcessBankTransactionRPC
 } from '../services/supabaseSync';
 import { getSupabaseCredentials } from '../lib/supabase';
-import { getOfflineQueue, enqueueOfflineItem, removeFromOfflineQueue } from '../services/offlineQueue';
+import { getOfflineQueue, enqueueOfflineItem, removeFromOfflineQueue, waitForOfflineQueueReady } from '../services/offlineQueue';
 import { normalizeSemanticText, areSemanticallyEqual } from '../utils/textUtils';
 import { localStateStorage, clearLocalStateStorage, flushLocalStateStorage } from '../services/localStateStorage';
 import type { AppState } from './storeTypes';
@@ -4010,6 +4010,17 @@ export const useStore = create<AppState>()(
   onRehydrateStorage: () => (state, error) => {
     if (error) console.error('[Store] Error hidratando el estado local:', error);
     useStore.setState({ isInitialized: true });
+
+    // Recuperación crítica del POS offline:
+    // la cola durable (IndexedDB/localStorage) puede contener una venta que
+    // todavía no estaba incluida en el último snapshot de Zustand. Debemos
+    // reconstruirla después de que la cola termine de hidratarse y antes de
+    // que el POS haga refrescos remotos que puedan reemplazar el historial local.
+    void waitForOfflineQueueReady()
+      .then(() => useStore.getState().restoreTransactionsFromBackup())
+      .catch((restoreError) => {
+        console.error('[Store] No se pudieron recuperar las ventas offline:', restoreError);
+      });
   },
   partialize: (state) => ({
     users: state.users, currentUser: state.currentUser,
