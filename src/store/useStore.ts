@@ -1610,6 +1610,9 @@ export const useStore = create<AppState>()(
         // reconciliación remota, la misma venta NO puede volver a descontar stock.
         applyLocalCompletedSale(transaction);
         localSaleApplied = true;
+        // Las ventas son datos críticos: no esperamos al debounce normal de 250 ms.
+        // Queda persistida en IndexedDB antes de devolver "venta confirmada".
+        await flushLocalStateStorage();
 
         const inventoryReconciled = await refreshInventoryBranchesFromSupabase([transaction.branchId]);
         if (!inventoryReconciled) {
@@ -1632,6 +1635,9 @@ export const useStore = create<AppState>()(
     // later RPC execution. The transaction id is the idempotency key.
     await enqueueOfflineItem('transaction', transaction, transaction.id);
     applyLocalCompletedSale(transaction);
+    // Persistencia inmediata: una recarga justo después de "Cobrar" debe
+    // encontrar la venta aunque el navegador siga completamente offline.
+    await flushLocalStateStorage();
     return true;
   },
 
@@ -3880,35 +3886,59 @@ export const useStore = create<AppState>()(
 
   restoreTransactionsFromBackup: () => {
     try {
+      const currentTxs = get().transactions || [];
+
+      // El outbox durable es la primera fuente de recuperación de ventas offline.
+      // Tras una recarga, la transacción debe reaparecer aunque el snapshot de
+      // Zustand no hubiera alcanzado a persistirse antes de cerrar la pestaña.
+      const durableTransactions = getOfflineQueue()
+        .filter(item => item.type === 'transaction' && item.status !== 'conflict')
+        .map(item => item.data as Transaction)
+        .filter((tx: any) => tx?.id && tx.status !== 'refunded' && tx.status !== 'cancelled');
+
+      const missingDurable = durableTransactions.filter(
+        (tx: any) => !currentTxs.some((ct: any) => ct.id === tx.id)
+      );
+
+      if (missingDurable.length > 0) {
+        set((state) => ({
+          transactions: [...missingDurable, ...(state.transactions || [])]
+        }));
+        get().addNotification(
+          'Se recuperaron ' + missingDurable.length + ' venta(s) offline pendientes de sincronización.',
+          'info'
+        );
+      }
+
+      // Respaldo legacy: solo recupera una venta que siga representada por el outbox.
       const backupRaw = localStorage.getItem('mare_sales_backup_v1');
       if (!backupRaw) return;
       const backupList = JSON.parse(backupRaw);
       if (!Array.isArray(backupList) || backupList.length === 0) return;
 
       const queuedTransactionIds = new Set(
-        getOfflineQueue().filter(item => item.type === 'transaction').map(item => item.actionId)
+        getOfflineQueue()
+          .filter(item => item.type === 'transaction' && item.status !== 'conflict')
+          .map(item => item.actionId)
       );
-      // The legacy backup is not authoritative. Only a transaction that is
-      // still represented in the durable outbox may be restored automatically.
-      // This prevents a historical backup from resurrecting a sale intentionally
-      // removed from the cloud.
-      const currentTxs = get().transactions || [];
+      const afterDurable = get().transactions || [];
       const recoverable = backupList.filter((bt: any) =>
         bt?.id &&
         queuedTransactionIds.has(bt.id) &&
-        !currentTxs.some((ct: any) => ct.id === bt.id)
+        !afterDurable.some((ct: any) => ct.id === bt.id)
       );
 
       if (recoverable.length > 0) {
-        console.info(`[Backup Safety] Recuperando ${recoverable.length} venta(s) que aún tienen operación durable pendiente.`);
         set((state) => ({ transactions: [...recoverable, ...(state.transactions || [])] }));
-        get().addNotification(`Se recuperaron ${recoverable.length} venta(s) pendientes del respaldo local.`, 'info');
+        get().addNotification(
+          'Se recuperaron ' + recoverable.length + ' venta(s) del respaldo local.',
+          'info'
+        );
       }
     } catch (e) {
-      console.error("[Backup Safety] Error leyendo respaldo local:", e);
+      console.error('[Backup Safety] Error recuperando ventas locales:', e);
     }
   },
-
   notifications: [],
   addNotification: (message, type = 'info', details) => {
     const id = crypto.randomUUID();
