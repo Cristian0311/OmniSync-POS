@@ -5,6 +5,8 @@ import { cn } from "../lib/utils";
 import { useStore } from "../store/useStore";
 import { Product } from "../types";
 import { normalizeSemanticText } from "../utils/textUtils";
+import { VoiceCommandButton } from "./VoiceCommandButton";
+import { matchVoiceProducts, parseVoiceCommand } from "../utils/voiceCommands";
 
 type POSCatalogProps = {
   baseCurrencySymbol: string;
@@ -82,6 +84,55 @@ export const POSCatalog = React.memo(function POSCatalog({
   }, [productSearchIndex, debouncedSearchQuery, activeCategoryId, currentBranchStockMap]);
 
   const getProductStock = (productId: string) => currentBranchStockMap.get(productId) || 0;
+
+  const handleVoiceCommand = (spokenText: string) => {
+    const command = parseVoiceCommand(spokenText);
+    if (command.action === "search") {
+      setSearchQuery(command.query);
+      return;
+    }
+    if (command.action === "clear") {
+      setSearchQuery("");
+      return;
+    }
+
+    const matches = matchVoiceProducts(products || [], command.query, 3);
+    if (!matches.length) {
+      setSearchQuery(command.query);
+      return;
+    }
+
+    const first = matches[0];
+    const normalizedQuery = normalizeSemanticText(command.query);
+    const exact = [first.name, first.sku, first.barcode, first.id]
+      .map(value => normalizeSemanticText(value || ""))
+      .includes(normalizedQuery);
+
+    if (!exact && matches.length > 1) {
+      setSearchQuery(command.query);
+      return;
+    }
+
+    const stock = getProductStock(first.id);
+    if (stock <= 0) {
+      onOutOfStock();
+      return;
+    }
+
+    if (command.action === "add") {
+      const needsConfig = first.hasSerial || !!first.availableSizes?.length || !!first.availableColors?.length;
+      if (needsConfig) {
+        onSelectConfiguredProduct(first);
+        return;
+      }
+      const quantity = Math.min(command.quantity, stock);
+      for (let i = 0; i < quantity; i++) addToCart(first);
+      return;
+    }
+
+    setSearchQuery(command.query);
+  };
+
   const handleProductClick = (product: Product) => {
     if (getProductStock(product.id) <= 0) {
       onOutOfStock();
@@ -148,6 +199,11 @@ export const POSCatalog = React.memo(function POSCatalog({
     </div>
   </div>
 </div>
+
+    <div className="px-3 pb-2 flex items-center justify-end gap-2">
+      <span className="text-[10px] font-bold text-slate-400">Di: “agrega 15 tenis”</span>
+      <VoiceCommandButton onCommand={handleVoiceCommand} />
+    </div>
 
 {/* Product Grid */}
 <div className="flex-1 overflow-y-auto p-2 sm:p-3 lg:p-4 bg-primary">
