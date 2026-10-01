@@ -547,8 +547,10 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
     case 'inventory_audit': { const d=data; const {error}=await supabase.from('inventory_audits').upsert({id:d.id,date:d.date,branch_id:d.branchId,user_id:d.userId,status:d.status,items:d.items||[],notes:d.notes}); if(error) throw error; return true; }
     case 'transaction': {
       const transaction = data as Transaction;
-      // IDN settlement records must be persisted without consuming inventory again.
-      if (transaction.notes === 'LIQUIDACION_IDN') {
+      // Una liquidación IDN con productos es una venta física y usa la misma RPC
+      // atómica/idempotente que el POS normal para descontar stock.
+      // Una liquidación sin productos sigue siendo solo administrativa.
+      if (transaction.notes === 'LIQUIDACION_IDN' && (transaction.items || []).length === 0) {
         const { error } = await supabase.from('transactions').upsert({
           id: transaction.id, date: transaction.date, total: transaction.total,
           tax: transaction.tax || 0, discount: transaction.discount || 0,
@@ -602,7 +604,18 @@ async function processQueueItem(supabase: any, item: OfflineQueueItem): Promise<
           // Recuperar el inventario real de la sucursal elimina el descuento
           // optimista que se aplicó mientras el dispositivo estaba offline.
           try {
-            await useStore.getState().refreshBranchInventory();
+            const branchId = transaction.branchId;
+            if (branchId) {
+              const inventoryRes = await pullBranchInventoryFromSupabase(branchId);
+              if (inventoryRes.success) {
+                useStore.setState(state => ({
+                  inventory: [
+                    ...(state.inventory || []).filter(item => item.branchId !== branchId),
+                    ...inventoryRes.inventory
+                  ]
+                }));
+              }
+            }
             await useStore.getState().refreshBranchOperationalData();
           } catch (refreshError) {
             console.warn('[transaction] No se pudo reconciliar el estado local tras rechazo definitivo:', refreshError);
