@@ -182,7 +182,7 @@ export async function pullBankDataFromSupabase(): Promise<{ success: boolean; ba
   try {
     const [cardsRes, txData] = await Promise.all([
       supabase.from('bank_cards').select('*'),
-      fetchAllRows(supabase, 'bank_transactions', 'date')
+      supabase.from('bank_transactions').select('*').order('date', { ascending: false }).limit(250)
     ]);
     if (cardsRes.error) throw cardsRes.error;
     return {
@@ -219,17 +219,17 @@ export async function pullBankDataFromSupabase(): Promise<{ success: boolean; ba
 }
 
 
-export async function pullBranchOperationalDataFromSupabase(branchId: string): Promise<{ success: boolean; transactions: Transaction[]; cashSessions: CashRegisterSession[]; inventory: InventoryLevel[]; transfers: InventoryTransfer[]; message?: string }> {
+export async function pullBranchOperationalDataFromSupabase(branchId: string, options?: { sessionId?: string; transactionLimit?: number; transferLimit?: number }): Promise<{ success: boolean; transactions: Transaction[]; cashSessions: CashRegisterSession[]; inventory: InventoryLevel[]; transfers: InventoryTransfer[]; message?: string }> {
   const supabase = getSupabase();
   if (!supabase) return { success: false, transactions: [], cashSessions: [], inventory: [], transfers: [], message: 'Supabase no configurado' };
   try {
     const [txRes, sessionsRes, invRes, transferRes] = await Promise.all([
-      supabase.from('transactions').select('*').eq('branch_id', branchId).order('created_at', { ascending: false }).limit(1000),
+      (() => { let q = supabase.from('transactions').select('*').eq('branch_id', branchId).order('created_at', { ascending: false }).limit(options?.transactionLimit ?? 250); if (options?.sessionId) q = q.eq('session_id', options.sessionId); return q; })(),
       supabase.from('cash_sessions').select('*').eq('branch_id', branchId).order('opened_at', { ascending: false }).limit(20),
       supabase.from('inventory').select('*').eq('branch_id', branchId),
       supabase.from('inventory_transfers').select('*')
         .or(`from_branch_id.eq.${branchId},to_branch_id.eq.${branchId}`)
-        .order('date', { ascending: false }).limit(5000)
+        .order('date', { ascending: false }).limit(options?.transferLimit ?? 500)
     ]);
     const firstError = [txRes, sessionsRes, invRes, transferRes].find(r => r.error)?.error;
     if (firstError) throw firstError;
@@ -329,13 +329,13 @@ export async function pullPosBootstrapFromSupabase(branchId?: string): Promise<{
       supabase.from('products').select('*').eq('status', 'active'),
       branchId ? supabase.from('inventory').select('*').eq('branch_id', branchId) : supabase.from('inventory').select('*'),
       supabase.from('users').select('*').eq('is_active', true),
-      supabase.from('customers').select('*').order('name').limit(5000),
+      supabase.from('customers').select('*').order('name').limit(500),
       supabase.from('currencies').select('*'),
       supabase.from('idn_settlement_prices').select('*'),
-      branchId ? supabase.from('transactions').select('*').eq('branch_id', branchId).order('created_at', { ascending: false }).limit(1000) : supabase.from('transactions').select('*').order('created_at', { ascending: false }).limit(1000),
-      branchId ? supabase.from('cash_sessions').select('*').eq('branch_id', branchId).order('opened_at', { ascending: false }).limit(20) : supabase.from('cash_sessions').select('*').order('opened_at', { ascending: false }).limit(20),
+      branchId ? supabase.from('transactions').select('*').eq('branch_id', branchId).order('created_at', { ascending: false }).limit(250) : supabase.from('transactions').select('*').order('created_at', { ascending: false }).limit(250),
+      branchId ? supabase.from('cash_sessions').select('*').eq('branch_id', branchId).order('opened_at', { ascending: false }).limit(12) : supabase.from('cash_sessions').select('*').order('opened_at', { ascending: false }).limit(12),
       supabase.from('settings').select('*').eq('id', 'global').maybeSingle(),
-      supabase.from('inventory_transfers').select('*').order('date', { ascending: false }).limit(5000),
+      supabase.from('inventory_transfers').select('*').order('date', { ascending: false }).limit(500),
       supabase.from('bank_cards').select('*'),
       fetchAllRows(supabase, 'bank_transactions', 'date')
     ]);
