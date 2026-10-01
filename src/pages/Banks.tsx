@@ -318,8 +318,7 @@ export default function Banks() {
     setMovementToDelete(null);
   };
 
-  const filteredTransactions = bankTransactions
-    .filter(t => selectedCardId ? t.cardId === selectedCardId : true)
+  const filteredTransactions = filteredBankTransactions
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   return (
@@ -518,7 +517,7 @@ export default function Banks() {
               </thead>
               <tbody className="divide-y divide-base">
                 {filteredTransactions.map(t => {
-                  const card = bankCards.find(c => c.id === t.cardId);
+                  const card = bankCardById.get(t.cardId);
                   const isIncome = t.type === 'deposit' || t.type === 'payment_received';
                   return (
                     <tr key={t.id} className="hover:bg-subtle/50 transition-colors">
