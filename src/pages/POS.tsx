@@ -75,25 +75,13 @@ export default function POS() {
   const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false);
 
   useEffect(() => {
-    const updateCount = () => {
-      setPendingOfflineCount(getOfflineQueueCount());
-      setOfflineConflictCount(getOfflineConflictCount());
-    };
-    const handleOnline = () => {
-      setIsOnline(true);
-      updateCount();
-    };
-    const handleOffline = () => {
-      setIsOnline(false);
-      updateCount();
-    };
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    window.addEventListener('offline_queue_updated', updateCount);
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('offline_queue_updated', updateCount);
     };
   }, []);
 
