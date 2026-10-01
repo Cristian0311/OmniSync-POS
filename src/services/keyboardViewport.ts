@@ -229,22 +229,26 @@ export function initKeyboardViewport() {
     }, 80);
   };
 
-  const handleViewportChange = () => {
+  const handleViewportResize = () => {
     scheduleKeyboardSettle();
+  };
+
+  const handleViewportScroll = () => {
+    schedule();
   };
 
   document.addEventListener('focusin', handleFocusIn);
   document.addEventListener('focusout', handleFocusOut);
-  window.visualViewport?.addEventListener('resize', handleViewportChange);
-  window.visualViewport?.addEventListener('scroll', handleViewportChange);
+  window.visualViewport?.addEventListener('resize', handleViewportResize);
+  window.visualViewport?.addEventListener('scroll', handleViewportScroll);
 
   schedule();
 
   return () => {
     document.removeEventListener('focusin', handleFocusIn);
     document.removeEventListener('focusout', handleFocusOut);
-    window.visualViewport?.removeEventListener('resize', handleViewportChange);
-    window.visualViewport?.removeEventListener('scroll', handleViewportChange);
+    window.visualViewport?.removeEventListener('resize', handleViewportResize);
+    window.visualViewport?.removeEventListener('scroll', handleViewportScroll);
     clearDelayedRuns();
     if (cleanupTimer) clearTimeout(cleanupTimer);
     if (activeModalSurface) activeModalSurface.classList.remove('keyboard-modal-surface');
