@@ -2,8 +2,10 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { applyDevicePerformanceProfile } from './utils/devicePerformance';
+import { startPerformanceAudit } from './utils/performanceAudit';
 
 applyDevicePerformanceProfile();
+startPerformanceAudit();
 import './index.css';
 
 // Recover gracefully when a cached HTML/service-worker version references a
