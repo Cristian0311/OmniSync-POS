@@ -14,6 +14,10 @@ let pollIntervalId: any = null;
 let branchRepairIntervalId: any = null;
 let isSyncInProgress = false;
 let debounceTimeout: any = null;
+let lastOperationalRefreshAt = 0;
+let lastGlobalRefreshAt = 0;
+const MIN_OPERATIONAL_REFRESH_MS = 5000;
+const MIN_GLOBAL_REFRESH_MS = 15000;
 let bootstrappedBranchId: string | null = null;
 const BRANCH_SCOPED_TABLES = new Set(['inventory','transactions','cash_sessions','supplier_orders','inventory_audits']);
 const REMOTE_SYNC_TABLES = ['settings','cash_movements','currencies','branches','categories','products','users','inventory','customers','cash_sessions','transactions','idn_settlement_prices','inventory_transfers','warranties','returns','quotes','time_shifts','bank_cards','bank_transactions','suppliers','supplier_orders','inventory_audits','salary_settlements','inventory_movements','inventory_audit_items'];
@@ -79,7 +83,8 @@ export function initMultiDeviceRealtimeSync(): () => void {
         // cola y después hacer el refresh autoritativo.
         if (getOfflineQueueCount() > 0) {
           triggerBackgroundSync(false).catch(() => {});
-        } else {
+        } else if (Date.now() - lastOperationalRefreshAt >= MIN_OPERATIONAL_REFRESH_MS) {
+          lastOperationalRefreshAt = Date.now();
           useStore.getState().refreshBranchOperationalData().catch(() => {});
         }
       }, 500);
@@ -116,7 +121,8 @@ export function initMultiDeviceRealtimeSync(): () => void {
     if (globalCatalog.has(table)) {
       if (debounceTimeout) clearTimeout(debounceTimeout);
       debounceTimeout = setTimeout(() => {
-        if (navigator.onLine && !isSyncInProgress) {
+        if (navigator.onLine && !isSyncInProgress && Date.now() - lastGlobalRefreshAt >= MIN_GLOBAL_REFRESH_MS) {
+          lastGlobalRefreshAt = Date.now();
           useStore.getState().refreshGlobalCatalogData().catch(() => {});
         }
       }, 700);
@@ -151,8 +157,14 @@ export function initMultiDeviceRealtimeSync(): () => void {
     if (getOfflineQueueCount() > 0) {
       triggerBackgroundSync(false).catch(() => {});
     } else {
-      useStore.getState().refreshBranchOperationalData().catch(() => {});
-      useStore.getState().refreshGlobalCatalogData().catch(() => {});
+      if (Date.now() - lastOperationalRefreshAt >= MIN_OPERATIONAL_REFRESH_MS) {
+        lastOperationalRefreshAt = Date.now();
+        useStore.getState().refreshBranchOperationalData().catch(() => {});
+      }
+      if (Date.now() - lastGlobalRefreshAt >= MIN_GLOBAL_REFRESH_MS) {
+        lastGlobalRefreshAt = Date.now();
+        useStore.getState().refreshGlobalCatalogData().catch(() => {});
+      }
     }
   };
   const handleVisibilityChange = () => {
@@ -179,8 +191,8 @@ export function initMultiDeviceRealtimeSync(): () => void {
       // state instead of letting an open/closed cash session become stale.
       useStore.getState().refreshBranchOperationalData().catch(() => {});
     }
-  }, 30000);
-  branchRepairIntervalId = setInterval(() => { if (navigator.onLine && !isSyncInProgress) reconcileRemoteState(false).catch(() => {}); }, 120000);
+  }, 120000);
+  branchRepairIntervalId = setInterval(() => { if (navigator.onLine && !isSyncInProgress) reconcileRemoteState(false).catch(() => {}); }, 300000);
   return () => {
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.removeEventListener('focus', handleWindowFocus);
