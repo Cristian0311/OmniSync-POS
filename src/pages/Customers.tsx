@@ -1,5 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Users, Search, Plus, Star, Phone, Mail, Edit, Trash2, History, X, Package, Clock, DollarSign, ShoppingBag, HelpCircle } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { Customer, Transaction } from "../types";
@@ -15,11 +15,15 @@ export default function Customers() {
   const [viewingHistory, setViewingHistory] = useState<Customer | null>(null);
   const [newCustomer, setNewCustomer] = useState({ name: "", email: "", phone: "", taxId: "" });
 
-  const filteredCustomers = customers.filter(c => 
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.phone?.includes(searchQuery)
-  );
+  const filteredCustomers = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return customers;
+    return customers.filter(c => 
+      c.name.toLowerCase().includes(query) ||
+      c.email?.toLowerCase().includes(query) ||
+      c.phone?.includes(searchQuery)
+    );
+  }, [customers, searchQuery]);
 
   const getCustomerTransactions = (customerId: string) => {
     return transactions.filter(t => t.customerId === customerId).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
