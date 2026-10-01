@@ -1562,10 +1562,11 @@ export const useStore = create<AppState>()(
     // por la misma RPC atómica e idempotente que una venta normal.
     // Solo una liquidación IDN sin líneas es un registro administrativo y no toca stock.
     if (transaction.notes === 'LIQUIDACION_IDN' && (transaction.items || []).length === 0) {
-      await enqueueOfflineItem('transaction', transaction, transaction.id);
+      const durableTransaction = { ...transaction, offlinePending: true };
+      await enqueueOfflineItem('transaction', durableTransaction, transaction.id);
       if (typeof navigator !== 'undefined' && navigator.onLine) {
         try {
-          const synced = await pushTransactionToSupabase(transaction);
+          const synced = await pushTransactionToSupabase(durableTransaction);
           if (!synced) throw new Error('Supabase no confirmó la liquidación IDN');
           removeFromOfflineQueueByTransactionId(transaction.id);
         } catch (err) {
@@ -1588,7 +1589,8 @@ export const useStore = create<AppState>()(
       // Primero hacemos durable la operación. Esto elimina la ventana peligrosa
       // entre "el cajero confirmó" y "la RPC terminó": si la pestaña muere o la
       // red cae durante el request, el ticket ya existe en IndexedDB para replay.
-      await enqueueOfflineItem('transaction', transaction, transaction.id);
+      const durableTransaction = { ...transaction, offlinePending: true };
+      await enqueueOfflineItem('transaction', durableTransaction, transaction.id);
       let localSaleApplied = false;
       try {
         const res = await callProcessTransactionRPC(transaction);
@@ -1608,7 +1610,7 @@ export const useStore = create<AppState>()(
 
         // El espejo local se aplica como máximo una vez. Si después falla la
         // reconciliación remota, la misma venta NO puede volver a descontar stock.
-        applyLocalCompletedSale(transaction);
+        applyLocalCompletedSale({ ...transaction, offlinePending: false });
         localSaleApplied = true;
         // Las ventas son datos críticos: no esperamos al debounce normal de 250 ms.
         // Queda persistida en IndexedDB antes de devolver "venta confirmada".
@@ -1633,8 +1635,9 @@ export const useStore = create<AppState>()(
 
     // Offline: apply once to the local model and persist the exact operation for
     // later RPC execution. The transaction id is the idempotency key.
-    await enqueueOfflineItem('transaction', transaction, transaction.id);
-    applyLocalCompletedSale(transaction);
+    const durableTransaction = { ...transaction, offlinePending: true };
+    await enqueueOfflineItem('transaction', durableTransaction, transaction.id);
+    applyLocalCompletedSale(durableTransaction);
     // Persistencia inmediata: una recarga justo después de "Cobrar" debe
     // encontrar la venta aunque el navegador siga completamente offline.
     await flushLocalStateStorage();
@@ -3472,7 +3475,7 @@ export const useStore = create<AppState>()(
           const pending = new Set(getOfflineQueue().filter(i => i.type === 'transaction' || i.type === 'void_transaction').map(i => String(i.data?.id || i.actionId)));
           const map = new Map<string, Transaction>();
           for (const item of state.transactions || []) {
-            if (item.branchId !== branchId || pending.has(String(item.id))) map.set(item.id, item);
+            if (item.branchId !== branchId || pending.has(String(item.id)) || item.offlinePending === true) map.set(item.id, item);
           }
           for (const item of d.transactions || []) map.set(item.id, item);
           return Array.from(map.values());
@@ -3606,7 +3609,14 @@ export const useStore = create<AppState>()(
           const offlineQueuedTxIds = new Set(
             getOfflineQueue().filter(i => i.type === 'transaction' || i.type === 'void_transaction').map(i => i.data.id)
           );
-          const mergedTransactionsRaw = replaceRemoteRecords(data.transactions, state.transactions || [], offlineQueuedTxIds);
+          const offlinePendingTxIds = new Set(
+            (state.transactions || []).filter((tx: any) => tx.offlinePending === true).map((tx: any) => tx.id)
+          );
+          const mergedTransactionsRaw = replaceRemoteRecords(
+            data.transactions,
+            state.transactions || [],
+            new Set([...offlineQueuedTxIds, ...offlinePendingTxIds])
+          );
           // Nunca purgar una venta local únicamente porque una lectura remota
           // todavía no la devuelve. Entre commits/realtime/reconexiones puede
           // existir una ventana de consistencia y esa purga era precisamente la
@@ -3893,16 +3903,19 @@ export const useStore = create<AppState>()(
       // Zustand no hubiera alcanzado a persistirse antes de cerrar la pestaña.
       const durableTransactions = getOfflineQueue()
         .filter(item => item.type === 'transaction' && item.status !== 'conflict')
-        .map(item => item.data as Transaction)
+        .map(item => ({ ...(item.data as Transaction), offlinePending: true }))
         .filter((tx: any) => tx?.id && tx.status !== 'refunded' && tx.status !== 'cancelled');
 
+      const durableById = new Map(durableTransactions.map((tx: any) => [String(tx.id), tx]));
       const missingDurable = durableTransactions.filter(
         (tx: any) => !currentTxs.some((ct: any) => ct.id === tx.id)
       );
 
-      if (missingDurable.length > 0) {
+      if (missingDurable.length > 0 || durableById.size > 0) {
         set((state) => ({
-          transactions: [...missingDurable, ...(state.transactions || [])]
+          transactions: (state.transactions || []).map((tx: any) =>
+            durableById.has(String(tx.id)) ? { ...tx, offlinePending: true } : tx
+          ).concat(missingDurable)
         }));
         get().addNotification(
           'Se recuperaron ' + missingDurable.length + ' venta(s) offline pendientes de sincronización.',
