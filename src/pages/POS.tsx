@@ -448,12 +448,11 @@ export default function POS() {
         const match = t.id?.match(/LIQ-IDN-(\d+)/i);
         return match ? Math.max(max, parseInt(match[1], 10)) : max;
       }, 0);
-      let nextIdnNum = Math.max(currentTransactions.length, maxIdnNum) + 1;
-      let idnTxId = `LIQ-IDN-${nextIdnNum.toString().padStart(2, '0')}`;
-      if (currentTransactions.some(t => t.id === idnTxId)) {
-        const wSuffix = targetWorker.name?.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase() || 'W';
-        idnTxId = `LIQ-IDN-${nextIdnNum.toString().padStart(2, '0')}-${wSuffix}`;
-      }
+      const nextIdnNum = Math.max(currentTransactions.length, maxIdnNum) + 1;
+      // El número visible sigue siendo legible, pero el ID físico incluye una
+      // huella aleatoria para evitar colisiones entre POS/tablets trabajando offline.
+      const idnSerial = crypto.randomUUID().replace(/-/g, '').slice(0, 10).toUpperCase();
+      const idnTxId = `LIQ-IDN-${nextIdnNum.toString().padStart(2, '0')}-${idnSerial}`;
 
       const transaction: Transaction = {
         id: idnTxId,
@@ -2089,10 +2088,10 @@ export default function POS() {
       tx.ncfType = 'B01';
     }
 
-    const saleConfirmed = await Promise.race([
-      processTransaction(tx),
-      new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error('La confirmación de la venta está tardando demasiado. La operación quedó protegida para reintento y no se perderá.')), 25000))
-    ]);
+    // processTransaction ya protege la venta con el outbox durable. No usamos
+    // una Promise.race aquí porque podría liberar el botón mientras el cobro
+    // real aún sigue en vuelo y permitir una segunda venta accidental.
+    const saleConfirmed = await processTransaction(tx);
     if (!saleConfirmed) {
       setPosError('La venta no fue confirmada. Verifique el stock, turno y conexión antes de continuar.');
       setTimeout(() => setPosError(''), 5000);
