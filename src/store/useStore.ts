@@ -1557,6 +1557,11 @@ export const useStore = create<AppState>()(
     }
   },
   processTransaction: async (transaction) => {
+    // La cola debe estar hidratada antes de aceptar una venta. Esto evita que
+    // una venta creada justo después de abrir/recargar el POS compita con la
+    // migración inicial de IndexedDB y quede fuera del snapshot durable.
+    await waitForOfflineQueueReady();
+
     // Una liquidación IDN con productos representa una venta física que acaba
     // de ocurrir y debe usar el mismo flujo atómico de ventas normales.
     // Una liquidación IDN sin líneas es solo un registro administrativo.
