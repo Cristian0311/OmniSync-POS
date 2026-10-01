@@ -34,14 +34,19 @@ export function useReportsAnalytics(params: {
     transferFromFilter, transferToFilter, transferSearch
   } = params;
 
+  const productById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
+  const categoryById = useMemo(() => new Map(categories.map(category => [category.id, category])), [categories]);
+  const branchById = useMemo(() => new Map(branches.map(branch => [branch.id, branch])), [branches]);
+  const userById = useMemo(() => new Map(users.map(user => [user.id, user])), [users]);
+
   const categoryData = useMemo(() => {
     const data: Record<string, number> = {};
     transactions.forEach(tx => {
       (tx.items || []).forEach(item => {
         const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
-        const prod = products.find(p => p.id === prodId);
+        const prod = prodId ? productById.get(prodId) : undefined;
         const categoryId = prod?.categoryId || (typeof item.product === 'object' ? item.product?.categoryId : '') || 'unclassified';
-        const category = categories.find(c => c.id === categoryId);
+        const category = categoryById.get(categoryId);
         const categoryName = category?.name || 'Otros';
         data[categoryName] = (data[categoryName] || 0) + (item.total || (item.price * item.quantity) || 0);
       });
@@ -50,7 +55,7 @@ export function useReportsAnalytics(params: {
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
-  }, [transactions, products, categories]);
+  }, [transactions, productById, categoryById]);
 
   const hourData = useMemo(() => {
     const data: Record<number, number> = {};
@@ -69,11 +74,11 @@ export function useReportsAnalytics(params: {
     const data: Record<string, number> = {};
     branches.forEach(b => data[b.name] = 0);
     transactions.forEach(tx => {
-      const branch = branches.find(b => b.id === tx.branchId);
+      const branch = branchById.get(tx.branchId);
       if (branch) data[branch.name] += tx.total;
     });
     return Object.entries(data).map(([name, total]) => ({ name, total }));
-  }, [transactions, branches]);
+  }, [transactions, branches, branchById]);
 
   const idnTransactions = useMemo(() => {
     const todayYMD = getLocalDateYMD(new Date().toISOString());
@@ -92,10 +97,10 @@ export function useReportsAnalytics(params: {
       } else if (sessionFilter === 'yesterday') {
         if (tYMD !== yesterdayYMD) return false;
       }
-      const user = users.find(u => u.id === t.userId);
+      const user = userById.get(t.userId);
       return t.id.startsWith('LIQ-IDN-') || t.notes === 'LIQUIDACION_IDN' || (t.notes && t.notes.includes('IDN')) || user?.isIndependent === true;
     });
-  }, [transactions, selectedBranchFilter, selectedFilterDate, sessionFilter, users]);
+  }, [transactions, selectedBranchFilter, selectedFilterDate, sessionFilter, userById]);
 
   const filteredTransfers = useMemo(() => {
     const todayYMD = getLocalDateYMD(new Date().toISOString());
@@ -121,15 +126,15 @@ export function useReportsAnalytics(params: {
         const q = transferSearch.toLowerCase();
         const pName = (t.productName || '').toLowerCase();
         const vLabel = (t.variantLabel || '').toLowerCase();
-        const fromN = (branches.find(b => b.id === t.fromBranchId)?.name || t.fromBranchName || '').toLowerCase();
-        const toN = (branches.find(b => b.id === t.toBranchId)?.name || t.toBranchName || '').toLowerCase();
+        const fromN = (branchById.get(t.fromBranchId)?.name || t.fromBranchName || '').toLowerCase();
+        const toN = (branchById.get(t.toBranchId)?.name || t.toBranchName || '').toLowerCase();
         if (!pName.includes(q) && !vLabel.includes(q) && !fromN.includes(q) && !toN.includes(q) && !t.id.toLowerCase().includes(q)) {
           return false;
         }
       }
       return true;
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [transfers, transferFromFilter, transferToFilter, selectedBranchFilter, selectedFilterDate, sessionFilter, transferSearch, branches]);
+  }, [transfers, transferFromFilter, transferToFilter, selectedBranchFilter, selectedFilterDate, sessionFilter, transferSearch, branchById]);
 
   const transferStats = useMemo(() => {
     const totalCount = filteredTransfers.length;
@@ -137,20 +142,20 @@ export function useReportsAnalytics(params: {
 
     const originCounts: Record<string, number> = {};
     filteredTransfers.forEach(t => {
-      const name = branches.find(b => b.id === t.fromBranchId)?.name || t.fromBranchName || 'Origen';
+      const name = branchById.get(t.fromBranchId)?.name || t.fromBranchName || 'Origen';
       originCounts[name] = (originCounts[name] || 0) + t.quantity;
     });
     const topOrigin = Object.entries(originCounts).sort((a, b) => b[1] - a[1])[0] || ['Ninguna', 0];
 
     const destCounts: Record<string, number> = {};
     filteredTransfers.forEach(t => {
-      const name = branches.find(b => b.id === t.toBranchId)?.name || t.toBranchName || 'Destino';
+      const name = branchById.get(t.toBranchId)?.name || t.toBranchName || 'Destino';
       destCounts[name] = (destCounts[name] || 0) + t.quantity;
     });
     const topDest = Object.entries(destCounts).sort((a, b) => b[1] - a[1])[0] || ['Ninguna', 0];
 
     return { totalCount, totalUnits, topOrigin, topDest };
-  }, [filteredTransfers, branches]);
+  }, [filteredTransfers, branchById]);
 
   const filteredTransactions = useMemo(() => {
     const todayYMD = getLocalDateYMD(new Date().toISOString());
@@ -162,7 +167,8 @@ export function useReportsAnalytics(params: {
       if (t.deletedAt) return false;
       if (selectedBranchFilter !== 'all' && t.branchId !== selectedBranchFilter) return false;
       if (selectedWorkerFilter !== 'all') {
-        const emp = users.find(u => u.id === t.userId || (u.name && t.cashierName && u.name.toLowerCase() === t.cashierName.toLowerCase()));
+        const directUser = userById.get(t.userId);
+        const emp = directUser || users.find(u => u.name && t.cashierName && u.name.toLowerCase() === t.cashierName.toLowerCase());
         if (emp?.id !== selectedWorkerFilter && t.userId !== selectedWorkerFilter && t.cashierName !== selectedWorkerFilter) return false;
       }
       const tYMD = getLocalDateYMD(t.date);
@@ -175,7 +181,7 @@ export function useReportsAnalytics(params: {
       }
       return true;
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [transactions, selectedBranchFilter, selectedWorkerFilter, selectedFilterDate, sessionFilter, users]);
+  }, [transactions, selectedBranchFilter, selectedWorkerFilter, selectedFilterDate, sessionFilter, userById, users]);
 
   const idnWorkerStats = useMemo(() => {
     const map = new Map<string, {
@@ -190,9 +196,9 @@ export function useReportsAnalytics(params: {
     }>();
 
     idnTransactions.forEach(tx => {
-      const worker = users.find(u => u.id === tx.userId);
+      const worker = userById.get(tx.userId);
       const name = tx.cashierName || worker?.name || 'Vendedor IDN';
-      const branchName = branches.find(b => b.id === tx.branchId)?.name || 'Almacén Asignado';
+      const branchName = branchById.get(tx.branchId)?.name || 'Almacén Asignado';
 
       if (!map.has(name)) {
         map.set(name, {
@@ -208,7 +214,8 @@ export function useReportsAnalytics(params: {
       }
 
       const itemStats = (tx.items || []).reduce((acc, item) => {
-        const prod = products.find(p => p.id === (typeof item.product === 'string' ? item.product : item.product?.id));
+        const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
+        const prod = prodId ? productById.get(prodId) : undefined;
         const qty = item.quantity || 0;
         const settlementPrice = item.price || 0;
         const publicPrice = prod?.price || item.product?.price || settlementPrice;
@@ -228,7 +235,7 @@ export function useReportsAnalytics(params: {
     });
 
     return Array.from(map.values());
-  }, [idnTransactions, users, branches, products]);
+  }, [idnTransactions, userById, branchById, productById]);
 
   const idnTotals = useMemo(() => {
     return idnWorkerStats.reduce((acc, curr) => {
