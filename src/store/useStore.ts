@@ -1557,14 +1557,11 @@ export const useStore = create<AppState>()(
     }
   },
   processTransaction: async (transaction) => {
-    // IDN settlement is an accounting/reporting record, not a second physical sale.
-    // The units were already consumed by the actual POS sales. Never send this
-    // record through the stock-mutating POS RPC.
-    if (transaction.notes === 'LIQUIDACION_IDN') {
-      // Las liquidaciones IDN también son operaciones críticas: deben quedar en
-      // la cola durable y solo se eliminan de ella cuando Supabase confirma
-      // físicamente el registro. No usamos el RPC de venta porque volvería a
-      // descontar inventario.
+    // Una liquidación IDN con productos representa una venta física que acaba
+    // de ocurrir y DEBE descontar inventario en el almacén asignado. Se procesa
+    // por la misma RPC atómica e idempotente que una venta normal.
+    // Solo una liquidación IDN sin líneas es un registro administrativo y no toca stock.
+    if (transaction.notes === 'LIQUIDACION_IDN' && (transaction.items || []).length === 0) {
       await enqueueOfflineItem('transaction', transaction, transaction.id);
       if (typeof navigator !== 'undefined' && navigator.onLine) {
         try {
@@ -1572,9 +1569,7 @@ export const useStore = create<AppState>()(
           if (!synced) throw new Error('Supabase no confirmó la liquidación IDN');
           removeFromOfflineQueueByTransactionId(transaction.id);
         } catch (err) {
-          console.warn('[processTransaction] Liquidación IDN no confirmada; queda durable para reintento:', err);
-          // La operación ya está durablemente en la cola. No reportar éxito
-          // hasta que Supabase confirme para evitar falsos completados.
+          console.warn('[processTransaction] Liquidación IDN sin ventas no confirmada; queda durable para reintento:', err);
           return false;
         }
       }
@@ -1616,7 +1611,7 @@ export const useStore = create<AppState>()(
         applyLocalCompletedSale(transaction);
         localSaleApplied = true;
 
-        const inventoryReconciled = await get().refreshBranchInventory();
+        const inventoryReconciled = await refreshInventoryBranchesFromSupabase([transaction.branchId]);
         if (!inventoryReconciled) {
           throw new Error('Venta confirmada, pero el inventario local aún no pudo reconciliarse con Supabase');
         }
