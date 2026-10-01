@@ -7,6 +7,7 @@ import { Product } from "../types";
 import { normalizeSemanticText } from "../utils/textUtils";
 import { VoiceCommandButton } from "./VoiceCommandButton";
 import { matchVoiceProducts, parseVoiceCommand } from "../utils/voiceCommands";
+import { getDevicePerformanceTier } from "../utils/devicePerformance";
 
 type POSCatalogProps = {
   baseCurrencySymbol: string;
@@ -23,7 +24,17 @@ export const POSCatalog = React.memo(function POSCatalog({
   onSelectConfiguredProduct,
   onOutOfStock,
 }: POSCatalogProps) {
-  const { categories, products, inventory, currentBranchId, addToCart } = useStore(useShallow((state) => ({ categories: state.categories, products: state.products, inventory: state.inventory, currentBranchId: state.currentBranchId, addToCart: state.addToCart })));
+  const { categories, products, inventory, cart, currentBranchId, addToCart, updateCartQty } = useStore(useShallow((state) => ({
+    categories: state.categories,
+    products: state.products,
+    inventory: state.inventory,
+    cart: state.cart,
+    currentBranchId: state.currentBranchId,
+    addToCart: state.addToCart,
+    updateCartQty: state.updateCartQty
+  })));
+  const performanceTier = getDevicePerformanceTier();
+  const ultraLowMemory = performanceTier === "ultra";
   const [activeCategoryId, setActiveCategoryId] = useState("Todos");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
@@ -96,19 +107,23 @@ export const POSCatalog = React.memo(function POSCatalog({
       return;
     }
 
-    const matches = matchVoiceProducts(products || [], command.query, 3);
+    const matches = matchVoiceProducts(products || [], command.query, 5, command.price);
     if (!matches.length) {
       setSearchQuery(command.query);
       return;
     }
 
-    const first = matches[0];
+    const pricedMatches = command.price !== undefined
+      ? matches.filter(product => Math.abs(Number(product.price) - command.price!) < 0.0001)
+      : matches;
+    const candidates = pricedMatches.length ? pricedMatches : matches;
+    const first = candidates[0];
     const normalizedQuery = normalizeSemanticText(command.query);
     const exact = [first.name, first.sku, first.barcode, first.id]
       .map(value => normalizeSemanticText(value || ""))
       .includes(normalizedQuery);
 
-    if (!exact && matches.length > 1) {
+    if (!exact && candidates.length > 1) {
       setSearchQuery(command.query);
       return;
     }
@@ -126,7 +141,17 @@ export const POSCatalog = React.memo(function POSCatalog({
         return;
       }
       const quantity = Math.min(command.quantity, stock);
-      for (let i = 0; i < quantity; i++) addToCart(first);
+      addToCart(first, undefined, undefined, quantity);
+      return;
+    }
+
+    const cartMatch = cart.find(item => item.product?.id === first.id);
+    if (cartMatch && (command.action === "remove" || command.action === "decrease" || command.action === "increase")) {
+      const delta = command.action === "increase"
+        ? command.quantity
+        : -command.quantity;
+      updateCartQty(cartMatch.id, delta);
+      setSearchQuery("");
       return;
     }
 
@@ -235,7 +260,7 @@ export const POSCatalog = React.memo(function POSCatalog({
           )}
 
           <div className="w-full h-24 sm:h-28 bg-subtle rounded-lg mb-1.5 flex items-center justify-center overflow-hidden relative border border-base">
-            {product.image ? (
+            {product.image && !ultraLowMemory ? (
               <img 
                 src={product.image} 
                 alt={product?.name || "Producto"} 
@@ -246,7 +271,7 @@ export const POSCatalog = React.memo(function POSCatalog({
                   e.currentTarget.src = '';
                   e.currentTarget.style.display = 'none';
                 }}
-               loading="lazy" decoding="async" />
+               loading="lazy" decoding="async" className="pos-product-image" />
             ) : (
               <div className={cn("w-full h-full opacity-20 flex items-center justify-center font-black text-muted text-xl", product.color)}>
                 {(product?.name || "PR").substring(0, 2).toUpperCase()}
