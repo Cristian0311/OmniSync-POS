@@ -16,6 +16,7 @@ type Recognition = {
   onresult: ((event: any) => void) | null;
   onerror: ((event: any) => void) | null;
   onend: (() => void) | null;
+  maxAlternatives: number;
 };
 
 export function VoiceCommandButton({ onCommand, disabled }: Props) {
@@ -50,10 +51,14 @@ export function VoiceCommandButton({ onCommand, disabled }: Props) {
     const recognition = new SpeechRecognition() as Recognition;
     recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.lang = "es-ES";
+    recognition.maxAlternatives = 1;
+    recognition.lang = navigator.language?.toLowerCase().startsWith("es") ? navigator.language : "es-ES";
     recognition.onresult = (event) => {
       const text = event?.results?.[0]?.[0]?.transcript?.trim();
-      if (text) onCommand(text);
+      if (text) {
+        setMessage("");
+        onCommand(text);
+      }
     };
     recognition.onerror = (event) => {
       const code = event?.error || "";
@@ -91,7 +96,7 @@ export function VoiceCommandButton({ onCommand, disabled }: Props) {
         className={cn(
           "shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-xl border transition-all",
           listening
-            ? "bg-rose-50 border-rose-300 text-rose-600 animate-pulse"
+            ? "bg-rose-50 border-rose-300 text-rose-600"
             : "bg-slate-50 border-slate-200 text-slate-500 hover:text-indigo-600 hover:border-indigo-300",
           disabled && "opacity-50 cursor-not-allowed"
         )}
