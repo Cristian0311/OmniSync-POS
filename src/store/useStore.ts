@@ -1561,47 +1561,57 @@ export const useStore = create<AppState>()(
     // de ocurrir y debe usar el mismo flujo atómico de ventas normales.
     // Una liquidación IDN sin líneas es solo un registro administrativo.
     if (transaction.notes === 'LIQUIDACION_IDN' && (transaction.items || []).length === 0) {
-      await enqueueOfflineItem('transaction', transaction, transaction.id);
+      const durableTransaction = { ...transaction, offlinePending: true };
+      await enqueueOfflineItem('transaction', durableTransaction, transaction.id);
 
       if (typeof navigator !== 'undefined' && navigator.onLine) {
         try {
-          const synced = await pushTransactionToSupabase(transaction);
+          const synced = await pushTransactionToSupabase(durableTransaction);
           if (!synced) throw new Error('Supabase no confirmó la liquidación IDN');
           removeFromOfflineQueueByTransactionId(transaction.id);
+          set((state) => ({
+            transactions: [{ ...transaction, offlinePending: false }, ...state.transactions.filter(t => t.id !== transaction.id)],
+            cart: [],
+            currentCustomerId: undefined
+          }));
         } catch (err) {
-          // La operación ya quedó en la cola durable. También debe quedar en el
-          // estado local para que una recarga con conexión inestable no la haga
-          // desaparecer de la pantalla.
           console.warn('[processTransaction] Liquidación IDN pendiente; conservada localmente para reintento:', err);
+          set((state) => ({
+            transactions: [{ ...durableTransaction }, ...state.transactions.filter(t => t.id !== transaction.id)],
+            cart: [],
+            currentCustomerId: undefined
+          }));
         }
+      } else {
+        set((state) => ({
+          transactions: [{ ...durableTransaction }, ...state.transactions.filter(t => t.id !== transaction.id)],
+          cart: [],
+          currentCustomerId: undefined
+        }));
       }
-
-      set((state) => ({
-        transactions: [{ ...transaction }, ...state.transactions.filter(t => t.id !== transaction.id)],
-        cart: [],
-        currentCustomerId: undefined
-      }));
       await flushLocalStateStorage();
       return true;
     }
 
     // Primero persistimos la operación en la cola durable. Así, aunque la
     // pestaña se cierre durante el cobro, existe una operación reintentable.
-    await enqueueOfflineItem('transaction', transaction, transaction.id);
+    const durableTransaction = { ...transaction, offlinePending: true };
+    await enqueueOfflineItem('transaction', durableTransaction, transaction.id);
 
     // Offline real o conexión inestable: el POS debe conservar inmediatamente
     // la venta localmente. En una conexión mala navigator.onLine puede seguir
     // siendo true aunque la RPC falle por timeout/DNS/TLS.
-    const applyLocalPendingSale = async () => {
+    const applyLocalSale = async (pending: boolean) => {
+      const localTransaction = { ...transaction, offlinePending: pending };
       const alreadyLocal = useStore.getState().transactions.some(
         t => t.id === transaction.id && !t.deletedAt
       );
-      if (!alreadyLocal) applyLocalCompletedSale(transaction);
+      if (!alreadyLocal || pending === false) applyLocalCompletedSale(localTransaction);
       await flushLocalStateStorage();
     };
 
     if (typeof navigator === 'undefined' || navigator.onLine === false) {
-      await applyLocalPendingSale();
+      await applyLocalSale(true);
       return true;
     }
 
@@ -1622,7 +1632,7 @@ export const useStore = create<AppState>()(
           return false;
         }
 
-        await applyLocalPendingSale();
+        await applyLocalSale(true);
         get().addNotification(
           'Venta guardada localmente. Se sincronizará automáticamente cuando la conexión sea estable.',
           'info'
@@ -1630,9 +1640,9 @@ export const useStore = create<AppState>()(
         return true;
       }
 
-      // Confirmada en Supabase: reflejarla localmente antes de liberar el
-      // control al POS y hacer durable el estado para una posible recarga.
-      await applyLocalPendingSale();
+      // Confirmada en Supabase: reflejarla localmente como confirmada antes de
+      // retirar la operación de la cola durable.
+      await applyLocalSale(false);
 
       // La confirmación remota ya ocurrió. Si este refresh falla, la venta no
       // vuelve a un estado de error ni se vuelve a cobrar; el sincronizador
@@ -1651,7 +1661,7 @@ export const useStore = create<AppState>()(
       // el siguiente replay será idempotente por transaction.id.
       console.warn('[processTransaction] Conexión inestable durante el cobro; venta conservada localmente:', err);
       try {
-        await applyLocalPendingSale();
+        await applyLocalSale(true);
       } catch (persistError) {
         console.error('[processTransaction] No se pudo persistir el espejo local de la venta:', persistError);
       }
