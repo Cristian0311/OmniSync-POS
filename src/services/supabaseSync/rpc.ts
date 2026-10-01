@@ -327,7 +327,32 @@ export async function callProcessTransactionRPC(tx: Transaction): Promise<{ succ
       throw e;
     }
 
-    return { success: true, data: { ...(data || {}), persisted, already_existed: Boolean(data?.already_existed) } };
+    // La RPC garantiza el stock y la creación atómica, pero no recibe algunos
+    // metadatos del ticket por compatibilidad con su firma actual. Guardarlos
+    // aquí evita que vendedor/cajero/subtotal/vuelto desaparezcan al sincronizar.
+    const { data: metadataRow, error: metadataError } = await supabase
+      .from('transactions')
+      .update({
+        subtotal: Number(tx.subtotal || 0),
+        cashier_name: tx.cashierName || null,
+        seller_employee_ids: tx.sellerEmployeeIds || [],
+        change_given: Number(tx.changeGiven || 0),
+        change_payments: tx.changePayments || [],
+        ncf: tx.ncf || persisted.ncf || null,
+        ncf_type: tx.ncfType || persisted.ncf_type || null
+      })
+      .eq('id', tx.id)
+      .select('id,subtotal,cashier_name,seller_employee_ids,change_given,change_payments,ncf,ncf_type')
+      .maybeSingle();
+
+    if (metadataError) throw metadataError;
+    if (!metadataRow) {
+      const e: any = new Error('La venta existe, pero sus metadatos no pudieron persistirse.');
+      e.code = 'TRANSACTION_METADATA_NOT_PERSISTED';
+      throw e;
+    }
+
+    return { success: true, data: { ...(data || {}), persisted: { ...persisted, ...metadataRow }, already_existed: Boolean(data?.already_existed) } };
   } catch (e: any) {
     console.error("[RPC] process_pos_transaction_v2 failed:", e);
     return { success: false, error: formatSupabaseError(e), errorCode: e.code || e.statusCode || undefined };
