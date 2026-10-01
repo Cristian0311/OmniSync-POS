@@ -60,12 +60,12 @@ async function writeNow(value: string): Promise<void> {
       try { localStorage.setItem('pos-store-storage', value); } catch {}
       return;
     }
-    await new Promise<void>(resolve => {
+    await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
       tx.objectStore(STORE).put(value, KEY);
       tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-      tx.onabort = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('IndexedDB state write failed'));
+      tx.onabort = () => reject(tx.error || new Error('IndexedDB state write aborted'));
     });
   });
 
@@ -128,7 +128,15 @@ export async function clearLocalStateStorage(): Promise<void> {
   if (writeTimer) {
     clearTimeout(writeTimer);
     writeTimer = null;
+    const next = pendingValue;
     pendingValue = null;
+    if (next != null) {
+      try {
+        await writeNow(next);
+      } catch (error) {
+        console.warn('[localStateStorage] No se pudo vaciar la escritura pendiente antes de limpiar:', error);
+      }
+    }
   }
 
   // Esperar a cualquier escritura que ya esté en vuelo. Sin esto, un put()
