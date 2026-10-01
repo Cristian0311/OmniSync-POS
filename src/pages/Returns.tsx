@@ -1,5 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { RotateCcw, Search, CheckCircle, XCircle, AlertTriangle, ShieldCheck, X, Calendar, User, Package, Hash } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { cn, generateId } from "../lib/utils";
@@ -22,8 +22,10 @@ export default function Returns() {
     refundStatus: "not_required"
   });
 
-  const getProduct = (id: string) => products.find(p => p.id === id);
-  const getTransaction = (id: string) => transactions.find(t => t.id === id || t.id.includes(id));
+  const productById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
+  const transactionById = useMemo(() => new Map(transactions.map(transaction => [transaction.id, transaction])), [transactions]);
+  const getProduct = (id: string) => productById.get(id);
+  const getTransaction = (id: string) => transactionById.get(id) || transactions.find(t => t.id.includes(id));
 
   const foundTransaction = transactionSearch.length > 3 ? transactions.find(t => 
     t.id.toLowerCase().includes(transactionSearch.toLowerCase()) || 
@@ -48,7 +50,7 @@ export default function Returns() {
     setTransactionSearch("");
   };
 
-  const filteredReturns = returns.filter(ret => {
+  const filteredReturns = useMemo(() => returns.filter(ret => {
     const p = getProduct(ret.productId);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -57,9 +59,9 @@ export default function Returns() {
           !ret.id.toLowerCase().includes(q)) return false;
     }
     return true;
-  });
+  }), [returns, searchQuery, productById]);
 
-  const filteredWarranties = warranties.filter(w => {
+  const filteredWarranties = useMemo(() => warranties.filter(w => {
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       if (!w.productName.toLowerCase().includes(q) && 
@@ -68,7 +70,7 @@ export default function Returns() {
           !w.transactionId.toLowerCase().includes(q)) return false;
     }
     return true;
-  });
+  }), [warranties, searchQuery]);
 
   const isExpired = (expiryDate: string) => new Date(expiryDate) < new Date();
 
