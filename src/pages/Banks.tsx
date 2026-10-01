@@ -1,5 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { generateId, cn } from '../lib/utils';
 import { CreditCard, Plus, ArrowUpRight, ArrowDownRight, Activity, Trash2, ShieldCheck, RefreshCw, List, X, CheckCircle2 } from 'lucide-react';
@@ -46,6 +46,14 @@ export default function Banks() {
     amount: 0,
     reason: ""
   });
+
+  const bankCardById = useMemo(() => new Map(bankCards.map(card => [card.id, card])), [bankCards]);
+  const filteredBankTransactions = useMemo(
+    () => selectedCardId
+      ? bankTransactions.filter(transaction => transaction.cardId === selectedCardId)
+      : bankTransactions,
+    [bankTransactions, selectedCardId]
+  );
 
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [cardToDelete, setCardToDelete] = useState<string | null>(null);
