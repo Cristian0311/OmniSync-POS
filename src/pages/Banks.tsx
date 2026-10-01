@@ -47,6 +47,7 @@ export default function Banks() {
     reason: ""
   });
 
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const bankCardById = useMemo(() => new Map(bankCards.map(card => [card.id, card])), [bankCards]);
   const filteredBankTransactions = useMemo(
     () => selectedCardId
@@ -54,8 +55,6 @@ export default function Banks() {
       : bankTransactions,
     [bankTransactions, selectedCardId]
   );
-
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [cardToDelete, setCardToDelete] = useState<string | null>(null);
   const [movementToDelete, setMovementToDelete] = useState<BankTransaction | null>(null);
   const [isReconciling, setIsReconciling] = useState(false);
