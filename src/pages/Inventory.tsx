@@ -20,6 +20,10 @@ export default function Inventory() {
   } = useStore(useShallow((state) => ({ products: state.products, inventory: state.inventory, branches: state.branches, addProduct: state.addProduct, updateProduct: state.updateProduct, transferInventory: state.transferInventory, setInventoryQuantity: state.setInventoryQuantity, deleteProduct: state.deleteProduct, deleteCategory: state.deleteCategory, transfers: state.transfers, categories: state.categories, batchDeleteProducts: state.batchDeleteProducts, batchUpdateProducts: state.batchUpdateProducts, getBaseCurrency: state.getBaseCurrency, currencies: state.currencies, currentUser: state.currentUser, addNotification: state.addNotification, users: state.users })));
   const currentBranchId = currentUser?.branchId || branches[0]?.id || '';
   const baseCurrency = getBaseCurrency();
+  const categoryById = useMemo(
+    () => new Map((categories || []).map(category => [category.id, category])),
+    [categories]
+  );
 
   const getBranchDisplayName = (b: { id: string; name: string }) => {
     const assignedUser = (users || []).find(u => (u.assignedBranchId === b.id || u.branchId === b.id) && u.isIndependent);
@@ -336,34 +340,40 @@ export default function Inventory() {
     if (!products || !inventory) return { full: [], paginated: [] };
 
     const query = debouncedSearchQuery.trim().toLowerCase();
-    let filtered = products.map(product => {
-      const allLevels = inventoryByProduct.get(product.id) || [];
-      const productLevels = selectedBranch === 'all'
-        ? allLevels
-        : allLevels.filter(level => level.branchId === selectedBranch);
-      
-      const totalStock = productLevels.reduce((acc, curr) => acc + curr.quantity, 0);
-      const isLowStock = productLevels.some(i => i.quantity <= (product.minStockAlert || i.minQuantity));
-      
-      return {
-        ...product,
-        totalStock,
-        isLowStock,
-        levels: productLevels
-      };
-    });
+    // Apply cheap text/category filters before calculating stock levels.
+    // This avoids touching every inventory row when the user is searching.
+    let candidateProducts = products;
 
     if (query) {
-      filtered = filtered.filter(item => 
-        (item.name || '').toLowerCase().includes(query) || 
-        (item.sku || '').toLowerCase().includes(query) || 
-        !!item.barcode && item.barcode.toLowerCase().includes(query)
+      candidateProducts = candidateProducts.filter(product =>
+        (product.name || '').toLowerCase().includes(query) ||
+        (product.sku || '').toLowerCase().includes(query) ||
+        (!!product.barcode && product.barcode.toLowerCase().includes(query))
       );
     }
 
     if (selectedCategory !== "all") {
-      filtered = filtered.filter(p => p.categoryId === selectedCategory);
+      candidateProducts = candidateProducts.filter(product => product.categoryId === selectedCategory);
     }
+
+    let filtered = candidateProducts.map(product => {
+      const allLevels = inventoryByProduct.get(product.id) || [];
+      const productLevels = selectedBranch === 'all'
+        ? allLevels
+        : allLevels.filter(level => level.branchId === selectedBranch);
+
+      const totalStock = productLevels.reduce((acc, curr) => acc + curr.quantity, 0);
+      const isLowStock = productLevels.some(i => i.quantity <= (product.minStockAlert || i.minQuantity));
+      const variantLevels = productLevels.filter(level => !!level.variantLabel);
+
+      return {
+        ...product,
+        totalStock,
+        isLowStock,
+        levels: productLevels,
+        variantLevels
+      };
+    });
 
     if (stockFilter === 'in_stock') {
       filtered = filtered.filter(p => p.totalStock > 0);
@@ -377,7 +387,7 @@ export default function Inventory() {
       full: filtered,
       paginated: filtered.slice(0, displayLimit)
     };
-  }, [products, inventory, inventoryByProduct, debouncedSearchQuery, selectedBranch, selectedCategory, stockFilter, displayLimit]);
+  }, [products, inventoryByProduct, debouncedSearchQuery, selectedBranch, selectedCategory, stockFilter, displayLimit]);
 
   const inventoryView = inventoryData.paginated;
 
@@ -696,10 +706,14 @@ export default function Inventory() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-base">
-                {products.filter(p => 
-                  p.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) || 
-                  p.sku?.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
-                  p.barcode?.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
+                {(debouncedSearchQuery.trim()
+                  ? products.filter(p => {
+                      const q = debouncedSearchQuery.trim().toLowerCase();
+                      return p.name.toLowerCase().includes(q) ||
+                        p.sku?.toLowerCase().includes(q) ||
+                        p.barcode?.toLowerCase().includes(q);
+                    })
+                  : products
                 ).map(product => {
                   const rowKey = `${product.id}:::global`;
                   const changes = bulkChanges[rowKey] || {};
@@ -714,7 +728,7 @@ export default function Inventory() {
                           <div>
                             <div className="text-[11px] font-black text-primary uppercase leading-tight">{product.name}</div>
                             <div className="text-[8px] font-bold text-muted uppercase tracking-tighter">
-                              {categories.find(c => c.id === product.categoryId)?.name || 'Sin Categoría'}
+                              {categoryById.get(product.categoryId)?.name || 'Sin Categoría'}
                             </div>
                           </div>
                         </div>
@@ -840,7 +854,7 @@ export default function Inventory() {
                               </span>
                             )}
                           </div>
-                          <span className="text-[9px] text-muted font-bold uppercase truncate">{categories.find(c => c.id === item.categoryId)?.name || 'General'}</span>
+                          <span className="text-[9px] text-muted font-bold uppercase truncate">{categoryById.get(item.categoryId)?.name || 'General'}</span>
                         </div>
                       </div>
                     </td>
@@ -870,15 +884,15 @@ export default function Inventory() {
                         )}>
                           {item.totalStock} {item.unit || 'uds'}
                         </span>
-                        {item.levels.filter(l => l.variantLabel).length > 0 && (
+                        {item.variantLevels.length > 0 && (
                           <div className="flex flex-wrap gap-1">
-                            {item.levels.filter(l => l.variantLabel).slice(0, 3).map((lvl, idx) => (
+                            {item.variantLevels.slice(0, 3).map((lvl, idx) => (
                               <span key={idx} className="text-[8px] font-bold text-slate-400 uppercase bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">
                                 {lvl.variantLabel}: {lvl.quantity}
                               </span>
                             ))}
-                            {item.levels.filter(l => l.variantLabel).length > 3 && (
-                              <span className="text-[7px] font-black text-slate-300 uppercase">+{item.levels.filter(l => l.variantLabel).length - 3}</span>
+                            {item.variantLevels.length > 3 && (
+                              <span className="text-[7px] font-black text-slate-300 uppercase">+{item.variantLevels.length - 3}</span>
                             )}
                           </div>
                         )}
