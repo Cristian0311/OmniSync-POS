@@ -1880,6 +1880,7 @@ export default function POS() {
 
   const handleThermalPrint = async (tx: import("../types").Transaction, options?: { silent?: boolean }) => {
     try {
+      const { printThermalReceipt } = await import("../lib/escpos");
       const lines = getTransactionReceiptLines(tx);
       await printThermalReceipt({
         lines,
@@ -1910,6 +1911,7 @@ export default function POS() {
   const handlePrintClosureThermal = async (session: CashRegisterSession | null, options?: { silent?: boolean }) => {
     if (!session) return;
     try {
+      const { printThermalReceipt } = await import("../lib/escpos");
       const lines = getClosureReceiptLines(session);
       await printThermalReceipt({
         lines,
