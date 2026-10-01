@@ -29,11 +29,31 @@ const InventoryAudit = lazy(() => import("./pages/InventoryAudit"));
 const Banks = lazy(() => import("./pages/Banks"));
 
 function PageLoading() {
+  const location = window.location.pathname;
+  const labels: Record<string, string> = {
+    "/": "Cargando Dashboard…",
+    "/pos": "Cargando Punto de Venta…",
+    "/inventory": "Cargando Inventario…",
+    "/inventory-audit": "Cargando Auditoría de Stock…",
+    "/transfers": "Cargando Transferencias…",
+    "/customers": "Cargando Clientes…",
+    "/suppliers": "Cargando Proveedores…",
+    "/banks": "Cargando Cuentas Bancarias…",
+    "/returns": "Cargando Devoluciones…",
+    "/reports": "Cargando Reportes…",
+    "/settings": "Cargando Configuración…",
+    "/shop": "Cargando tienda…",
+  };
+  const label = labels[location] || "Cargando sección…";
+
   return (
-    <div className="flex-1 min-h-[50vh] flex items-center justify-center p-6">
-      <div className="flex flex-col items-center gap-2">
-        <div className="animate-spin rounded-full h-7 w-7 border-2 border-indigo-600 border-t-transparent"></div>
-        <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Cargando módulo...</span>
+    <div className="flex-1 min-h-[50vh] relative" aria-live="polite" aria-busy="true">
+      <div className="fixed inset-x-0 bottom-5 z-[9998] flex justify-center pointer-events-none px-4">
+        <div className="omni-loading-bubble">
+          <span className="omni-loading-spinner" aria-hidden="true" />
+          <span className="min-w-0">{label}</span>
+          <span className="omni-loading-dots" aria-hidden="true">•••</span>
+        </div>
       </div>
     </div>
   );
