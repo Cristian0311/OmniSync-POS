@@ -62,18 +62,18 @@ function extractQuantity(text: string): { quantity: number; text: string } {
 function parseSpokenPrice(text: string): { price?: number; currencyCode?: VoiceCommand["currencyCode"]; text: string } {
   // Price is intentionally parsed only when introduced by a clear phrase such as
   // "de 3700" / "a 3700" so a trailing quantity is never mistaken for a price.
-  const match = text.match(/\\b(?:de|a|por|precio|valor)\\s+\\$?\\s*(\\d{1,3}(?:[.\\s]\\d{3})*|\\d+(?:[.,]\\d+)?)\\s*(cup|mn|usd|dolares?|euros?)?\\b/i);
+  const match = text.match(/\b(?:de|a|por|precio|valor)\s+\$?\s*(\d{1,3}(?:[.\s]\d{3})*|\d+(?:[.,]\d+)?)\s*(cup|mn|usd|dolares?|euros?)?\b/i);
   if (!match) return { text };
 
-  const rawNumber = match[1].replace(/\\s/g, "");
+  const rawNumber = match[1].replace(/\s/g, "");
   const hasDot = rawNumber.includes(".");
   const hasComma = rawNumber.includes(",");
   let normalizedNumber = rawNumber;
 
-  if (hasDot && !hasComma && /\\.\\d{3}$/.test(rawNumber)) {
-    normalizedNumber = rawNumber.replace(/\\./g, "");
+  if (hasDot && !hasComma && /\.\d{3}$/.test(rawNumber)) {
+    normalizedNumber = rawNumber.replace(/\./g, "");
   } else if (hasDot && hasComma) {
-    normalizedNumber = rawNumber.replace(/\\./g, "").replace(",", ".");
+    normalizedNumber = rawNumber.replace(/\./g, "").replace(",", ".");
   } else {
     normalizedNumber = rawNumber.replace(",", ".");
   }
@@ -92,7 +92,7 @@ function parseSpokenPrice(text: string): { price?: number; currencyCode?: VoiceC
   return {
     price,
     currencyCode,
-    text: text.replace(match[0], " ").replace(/\\s+/g, " ").trim(),
+    text: text.replace(match[0], " ").replace(/\s+/g, " ").trim(),
   };
 }
 
@@ -117,9 +117,9 @@ export function parseVoiceCommand(input: string): VoiceCommand {
   const priced = parseSpokenPrice(rest);
   const extracted = extractQuantity(priced.text);
   const query = extracted.text
-    .replace(/^(de|del|la|el|los|las)\\s+/i, "")
-    .replace(/\\s+(unidades?|uds?|piezas?|productos?)\\s+(de|del)\\s+/i, " ")
-    .replace(/\\s+(al|a la|en el|en la)\\s+(carrito|carro|cesta)(\\s+de\\s+compras?)?$/i, "")
+    .replace(/^(de|del|la|el|los|las)\s+/i, "")
+    .replace(/\s+(unidades?|uds?|piezas?|productos?)\s+(de|del)\s+/i, " ")
+    .replace(/\s+(al|a la|en el|en la)\s+(carrito|carro|cesta)(\s+de\s+compras?)?$/i, "")
     .trim();
   return {
     action,
