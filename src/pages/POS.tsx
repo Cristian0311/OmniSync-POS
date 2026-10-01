@@ -2452,7 +2452,7 @@ export default function POS() {
 
           <div className="flex items-center gap-2 sm:gap-3">
             {!isCurrentUserIndependent && (
-              {/* Cancel and return to Employee selector button */}}
+              {/* Cancel and return to Employee selector button */}
             <button
               type="button"
               onClick={handleCancelAndReturnToEmployeeSelector}
