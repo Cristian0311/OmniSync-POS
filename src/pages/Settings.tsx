@@ -1,5 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { Settings as SettingsIcon, Save, DollarSign, Building2, Users, Plus, Trash2, Edit, LayoutGrid, Store, AlertTriangle, RefreshCw, Usb, Bluetooth, Wifi, Printer, CheckCircle2, ExternalLink, AlertCircle, Sparkles, ChevronRight, Package, Search, X, Database, CreditCard, CloudUpload, CloudDownload, Check, Sun, Moon } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { InfoTooltip } from "../components/InfoTooltip";
@@ -61,6 +61,8 @@ export default function Settings() {
   })));
 
   const baseCurrency = getBaseCurrency();
+  const productById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
+  const employees = useMemo(() => users.filter(user => user.role === 'employee'), [users]);
 
   const [rates, setRates] = useState<{ [code: string]: number }>(
     currencies.reduce((acc, c) => ({ ...acc, [c.code]: c.rateToBase }), {})
@@ -71,7 +73,6 @@ export default function Settings() {
   useEffect(() => {
     setTicketConfig(receiptConfig);
   }, [receiptConfig]);
-  const employees = users.filter(u => u.role === 'employee');
   const [employeeSalaries, setEmployeeSalaries] = useState<{ [id: string]: number }>({});
   
   const [printerStatus, setPrinterStatus] = useState<{
@@ -313,10 +314,14 @@ export default function Settings() {
     showToast("Precio de liquidación guardado.");
   };
 
-  const filteredIDNProducts = products.filter(p => 
-    p.name.toLowerCase().includes(idnProductSearch.toLowerCase()) || 
-    p.sku.toLowerCase().includes(idnProductSearch.toLowerCase())
-  ).slice(0, 5);
+  const filteredIDNProducts = useMemo(() => {
+    const query = idnProductSearch.trim().toLowerCase();
+    if (!query) return products.slice(0, 5);
+    return products.filter(p => 
+      p.name.toLowerCase().includes(query) || 
+      p.sku.toLowerCase().includes(query)
+    ).slice(0, 5);
+  }, [products, idnProductSearch]);
 
   const handleRegisterEmployeeManual = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1146,7 +1151,7 @@ export default function Settings() {
                       <div className="flex items-center gap-2 px-1">
                         <Package size={14} className="text-amber-600" />
                         <span className="text-[9px] font-black uppercase text-amber-600">
-                          {products.find(p => p.id === selectedIDNProduct)?.name}
+                          {productById.get(selectedIDNProduct)?.name}
                         </span>
                       </div>
                     )}
@@ -1155,7 +1160,7 @@ export default function Settings() {
                   {/* List of custom prices */}
                   <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar pr-1">
                     {idnSettlementPrices.filter(p => p.userId === selectedUserForConfig.id).map(p => {
-                      const prod = products.find(pr => pr.id === p.productId);
+                      const prod = productById.get(p.productId);
                       return (
                         <div key={p.id} className="bg-primary p-2.5 rounded-xl border border-base flex items-center justify-between gap-3 shadow-sm">
                           <div className="min-w-0 flex-1">
@@ -1339,7 +1344,7 @@ export default function Settings() {
 
                 <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-1">
                   {idnSettlementPrices.filter(p => p.userId === selectedIDNUser.id).map(p => {
-                    const product = products.find(prod => prod.id === p.productId);
+                    const product = productById.get(p.productId);
                     return (
                       <div key={p.id} className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-4 shadow-sm group">
                         <div className="min-w-0 flex-1">
