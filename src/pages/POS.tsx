@@ -2575,6 +2575,18 @@ export default function POS() {
               </button>
             )}
 
+            {/* Impresora térmica: siempre visible en el POS IDN */}
+            <button
+              type="button"
+              onClick={() => setShowPrinterSetupModal(true)}
+              className="px-2.5 sm:px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all shadow-sm flex items-center gap-1.5 active:scale-95 border border-indigo-500/40"
+              title="Conectar o configurar la impresora térmica del ticket"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Impresora</span>
+              {connectedPrinterName && <span className="hidden lg:inline text-[8px] text-indigo-100 normal-case tracking-normal">Conectada</span>}
+            </button>
+
             <div className="hidden sm:flex flex-col items-end pl-2">
               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Total a Liquidar (CUP)</span>
               <span className="text-base font-black text-amber-400">{baseCurrency.symbol}{currentTotalToPay.toLocaleString()} CUP</span>
