@@ -785,6 +785,31 @@ export default function POS() {
   const baseCurrency = getBaseCurrency();
   const productById = React.useMemo(() => new Map((products || []).map(product => [product.id, product])), [products]);
   const userById = React.useMemo(() => new Map((users || []).map(user => [user.id, user])), [users]);
+
+  // Fuente única para salario/comisión de una venta:
+  // primero usamos el valor congelado en la transacción (snapshot), y solo
+  // si una venta antigua no lo tiene, usamos el catálogo actual.
+  const getTransactionItemCommissionValue = React.useCallback((item: any) => {
+    const rawProduct = item?.product ?? item?.productId;
+    const productId = typeof rawProduct === 'string' ? rawProduct : rawProduct?.id;
+    const product = productId ? productById.get(productId) : (typeof rawProduct === 'object' ? rawProduct : undefined);
+    const snapshot = item?.product_snapshot ?? item?.productSnapshot;
+    const value =
+      snapshot?.commissionValue ??
+      item?.commissionValue ??
+      rawProduct?.commissionValue ??
+      product?.commissionValue ??
+      0;
+    return Number(value) || 0;
+  }, [productById]);
+
+  const getSessionCommissionTotal = React.useCallback((sessionTransactions: Transaction[]) => {
+    return (sessionTransactions || []).reduce((sum, tx) => (
+      sum + (tx.items || []).reduce((itemSum, item) => (
+        itemSum + getTransactionItemCommissionValue(item) * Number(item.quantity || 0)
+      ), 0)
+    ), 0);
+  }, [getTransactionItemCommissionValue]);
   const currencyByCode = React.useMemo(() => new Map((currencies || []).map(currency => [currency.code, currency])), [currencies]);
 
   // Las liquidaciones de empleados se expresan siempre en CUP/MN, independientemente de la moneda base del POS.
@@ -899,12 +924,7 @@ export default function POS() {
 
           // commissionValue es el salario/comisión FIJO en CUP por unidad.
           // No usar rawItem.price/product.price para calcular el salario fijo.
-          const commissionValue = Number(
-            product?.commissionValue ??
-            rawItem.product_snapshot?.commissionValue ??
-            rawItem.commissionValue ??
-            0
-          ) || 0;
+          const commissionValue = getTransactionItemCommissionValue(rawItem);
           const salaryPerUnit = commissionValue / splitFactor;
 
           sellers.forEach((sellerId: string) => {
@@ -934,7 +954,7 @@ export default function POS() {
       String(a.employeeName).localeCompare(String(b.employeeName)) ||
       String(a.productName).localeCompare(String(b.productName))
     );
-  }, [currentSession, activeTransactions, currentBranchId, productById, userById]);
+  }, [currentSession, activeTransactions, currentBranchId, productById, userById, getTransactionItemCommissionValue]);
 
   const totalExpectedToDeliver = React.useMemo(() => {
     return expectedBalances.reduce((sum, line) => {
@@ -1751,15 +1771,7 @@ export default function POS() {
     const soldList = Object.values(soldMap);
     const totalSales = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
 
-    const commissions = sessionTx.reduce((sum, tx) => {
-      return sum + tx.items.reduce((s, item) => {
-        const prodId = typeof item.product === 'string' ? item.product : item.product.id;
-        const prod = products.find(p => p.id === prodId);
-        if (!prod) return s;
-        const commValue = prod.commissionValue || 0;
-        return s + (commValue * item.quantity);
-      }, 0);
-    }, 0);
+    const commissions = getSessionCommissionTotal(sessionTx);
 
     const employee = users.find(u => u.id === session.userId || u.name === session.workerName) || users.find(u => u.name?.toLowerCase() === session.workerName?.toLowerCase()) || users.find(u => u.role === 'employee') || currentUser;
     const isIndependent = employee?.isIndependent || false;
@@ -4217,14 +4229,7 @@ export default function POS() {
                         );
                         const totalSales = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
                         
-                        const productCommissions = sessionTx.reduce((sum, tx) => {
-                          return sum + (tx.items || []).reduce((itemSum, item) => {
-                            const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
-                            const prodObj = products.find(p => p.id === prodId);
-                            const commVal = prodObj?.commissionValue || 0;
-                            return itemSum + (commVal * (item.quantity || 0));
-                          }, 0);
-                        }, 0);
+                        const productCommissions = getSessionCommissionTotal(sessionTx);
 
                         // La liquidación por producto es exclusivamente la comisión fija
                         // configurada en CUP por unidad. No se mezcla con el precio de venta
@@ -4881,15 +4886,7 @@ export default function POS() {
                 const employee = users.find(u => u.id === lastClosedSession.userId || u.name === lastClosedSession.workerName) || users.find(u => u.name?.toLowerCase() === lastClosedSession.workerName?.toLowerCase()) || users.find(u => u.role === 'employee') || currentUser;
                 const isIndependent = employee?.isIndependent === true;
 
-                const commissions = isIndependent ? 0 : sessionTransactions.reduce((sum, tx) => {
-                  return sum + (tx.items || []).reduce((s, item) => {
-                    const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
-                    const prod = products.find(p => p.id === prodId);
-                    if (!prod) return s;
-                    const commValue = prod.commissionValue || 0;
-                    return s + (commValue * item.quantity);
-                  }, 0);
-                }, 0);
+                const commissions = isIndependent ? 0 : getSessionCommissionTotal(sessionTransactions);
 
                 const baseSalary = isIndependent ? 0 : (employee?.baseSalary || 0);
                 const settlement = salarySettlements.find(s => s.sessionId === lastClosedSession.id);
@@ -5167,15 +5164,7 @@ export default function POS() {
             const soldList = Object.values(soldMap);
             const totalSales = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
 
-            const commissions = sessionTx.reduce((sum, tx) => {
-              return sum + (tx.items || []).reduce((s, item) => {
-                const prodId = typeof item.product === 'string' ? item.product : item.product?.id;
-                const prod = products.find(p => p.id === prodId);
-                if (!prod) return s;
-                const commValue = prod.commissionValue || 0;
-                return s + (commValue * item.quantity);
-              }, 0);
-            }, 0);
+            const commissions = getSessionCommissionTotal(sessionTx);
 
             const employee = users.find(u => u.id === lastClosedSession.userId || u.name === lastClosedSession.workerName) || users.find(u => u.name?.toLowerCase() === lastClosedSession.workerName?.toLowerCase()) || users.find(u => u.role === 'employee') || currentUser;
             const baseSalary = employee?.baseSalary || 0;
