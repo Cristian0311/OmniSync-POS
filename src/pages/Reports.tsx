@@ -84,35 +84,42 @@ export default function Reports() {
   const getBaseCurrency = store.getBaseCurrency;
 
   useEffect(() => {
-    if (typeof navigator === 'undefined' || !navigator.onLine) return;
-
-    // Reports is an administrative, cross-branch view. It must use the complete
-    // operational snapshot from Supabase, not only the current branch cache.
     let cancelled = false;
-    const refreshReportsFromCloud = async () => {
+
+    // Reports must first reconstruct the durable local operational history.
+    // Esto es obligatorio incluso sin Internet: una venta del turno 3 puede
+    // estar todavía en IndexedDB mientras los turnos anteriores ya fueron
+    // cerrados. Nunca debemos mostrar un historial incompleto por depender
+    // únicamente del último snapshot de Zustand.
+    const refreshReports = async () => {
       try {
-        await store.syncWithSupabase();
+        await waitForOfflineQueueReady();
+        await useStore.getState().restoreTransactionsFromBackup();
         if (cancelled) return;
 
-        const cloud = await pullPosBootstrapFromSupabase();
-        if (!cloud.success || !cloud.data) return;
+        // When online, refresh the administrative cross-branch view from Supabase.
+        // Never overwrite local state while an offline write is waiting to replay.
+        if (typeof navigator !== 'undefined' && navigator.onLine) {
+          await store.syncWithSupabase();
+          if (cancelled || getOfflineQueueCount() > 0) return;
 
-        // Never overwrite local state while an offline write is waiting to be replayed.
-        if (getOfflineQueueCount() > 0) return;
+          const cloud = await pullPosBootstrapFromSupabase();
+          if (!cloud.success || !cloud.data || cancelled) return;
 
-        useStore.setState({
-          transactions: cloud.data.transactions || [],
-          cashSessions: cloud.data.cashSessions || [],
-          transfers: cloud.data.transfers || [],
-          bankCards: cloud.data.bankCards || [],
-          bankTransactions: cloud.data.bankTransactions || []
-        });
+          useStore.setState({
+            transactions: cloud.data.transactions || [],
+            cashSessions: cloud.data.cashSessions || [],
+            transfers: cloud.data.transfers || [],
+            bankCards: cloud.data.bankCards || [],
+            bankTransactions: cloud.data.bankTransactions || []
+          });
+        }
       } catch (error) {
-        console.warn('[Reports] No se pudo actualizar la vista global:', error);
+        console.warn('[Reports] No se pudo reconstruir/actualizar la vista global:', error);
       }
     };
 
-    void refreshReportsFromCloud();
+    void refreshReports();
     return () => { cancelled = true; };
   }, [store.syncWithSupabase]);
 
