@@ -3595,7 +3595,7 @@ export const useStore = create<AppState>()(
     set({ isSyncing: true });
     try {
       const { data, result } = await pullAllFromSupabase();
-      if (result.success && data) {
+      if (data) {
         set((state) => {
           // Helper para deduplicar arrays por ID o clave personalizada
           // AHORA ES ADITIVO: No descarta datos locales que no están en Supabase, 

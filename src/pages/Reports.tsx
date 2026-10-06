@@ -16,7 +16,6 @@ import { cn } from "../lib/utils";
 import { InfoTooltip } from "../components/InfoTooltip";
 import { useReportsAnalytics } from "../hooks/useReportsAnalytics";
 import type { ExcelExportData } from "../utils/excelExport";
-import { pullPosBootstrapFromSupabase } from "../services/supabaseSync/pull";
 import { getOfflineQueueCount } from "../services/offlineQueue";
 import { printThermalReceipt, format58mmLine } from "../lib/escpos";
 
@@ -100,19 +99,11 @@ export default function Reports() {
         // When online, refresh the administrative cross-branch view from Supabase.
         // Never overwrite local state while an offline write is waiting to replay.
         if (typeof navigator !== 'undefined' && navigator.onLine) {
+          // syncWithSupabase() pulls the complete operational history through
+          // fetchAllRows(). Do not replace it with the limited POS bootstrap,
+          // otherwise older tickets/turns disappear from Reports.
           await store.syncWithSupabase();
           if (cancelled || getOfflineQueueCount() > 0) return;
-
-          const cloud = await pullPosBootstrapFromSupabase();
-          if (!cloud.success || !cloud.data || cancelled) return;
-
-          useStore.setState({
-            transactions: cloud.data.transactions || [],
-            cashSessions: cloud.data.cashSessions || [],
-            transfers: cloud.data.transfers || [],
-            bankCards: cloud.data.bankCards || [],
-            bankTransactions: cloud.data.bankTransactions || []
-          });
         }
       } catch (error) {
         console.warn('[Reports] No se pudo reconstruir/actualizar la vista global:', error);
@@ -451,30 +442,30 @@ export default function Reports() {
     return Array.from(sessionMap.values());
   }, [cashSessions, transactions]);
 
-  // Los turnos visibles se presentan siempre consecutivos. La base de datos
-  // mantiene la misma secuencia después de cada eliminación mediante sus triggers.
+  // Los turnos son históricos y su número es inmutable.
+  // Reportes debe mostrar el turn_number real de Supabase/local, aunque existan
+  // huecos por turnos eliminados/cancelados; nunca se deben renumerar.
   const sessionTurnMap = useMemo(() => {
     const map = new Map<string, string>();
-    const ordered = [...reconciledSessions]
-      .filter(session => !session.deletedAt)
-      .sort((a, b) => {
-        const timeA = new Date(a.openedAt || a.closedAt || '').getTime();
-        const timeB = new Date(b.openedAt || b.closedAt || '').getTime();
-        if (timeA !== timeB) return timeA - timeB;
-        return a.id.localeCompare(b.id);
-      });
-
-    ordered.forEach((session, index) => {
-      map.set(session.id, `Turno-${index + 1}`);
+    reconciledSessions.forEach((session) => {
+      const turnNumber = Number(session.turnNumber);
+      if (Number.isFinite(turnNumber) && turnNumber > 0) {
+        map.set(session.id, `Turno-${turnNumber}`);
+      } else {
+        // Sesiones recuperadas sin turn_number conservan una etiqueta estable
+        // basada en su ID, evitando que una recarga cambie su identificación.
+        const stableId = String(session.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10).toUpperCase();
+        map.set(session.id, stableId ? `Turno-${stableId}` : 'Turno-SIN-NUMERO');
+      }
     });
     return map;
   }, [reconciledSessions]);
 
   const getSessionTurnNumber = useCallback((session: CashRegisterSession) => {
-    const label = sessionTurnMap.get(session.id) || '';
-    const match = label.match(/^(?:Turno-)?(\d+)$/i);
-    return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
-  }, [sessionTurnMap]);
+    const turnNumber = Number(session.turnNumber);
+    if (Number.isFinite(turnNumber) && turnNumber > 0) return turnNumber;
+    return Number.MAX_SAFE_INTEGER;
+  }, []);
 
   const sortSessionsByTurn = useCallback((a: CashRegisterSession, b: CashRegisterSession) => {
     const turnA = getSessionTurnNumber(a);
