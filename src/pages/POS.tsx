@@ -3742,6 +3742,26 @@ export default function POS() {
 
                     const totalSalesAmount = sessionTx.reduce((sum, tx) => sum + (tx.total || 0), 0);
 
+                    // El efectivo disponible del turno debe reflejar ventas en efectivo
+                    // y movimientos de caja: ingresos suman y egresos restan.
+                    const cashIncomeByCurrency = new Map<string, number>();
+                    const cashExpenseByCurrency = new Map<string, number>();
+                    (currentSession?.movements || []).forEach(m => {
+                      const amount = Number(m.amount) || 0;
+                      if (m.type === 'income') {
+                        cashIncomeByCurrency.set(m.currencyCode, (cashIncomeByCurrency.get(m.currencyCode) || 0) + amount);
+                      } else if (m.type === 'expense') {
+                        cashExpenseByCurrency.set(m.currencyCode, (cashExpenseByCurrency.get(m.currencyCode) || 0) + amount);
+                      }
+                    });
+                    const cupIncome = cashIncomeByCurrency.get(baseCurrency.code) || 0;
+                    const cupExpense = cashExpenseByCurrency.get(baseCurrency.code) || 0;
+                    const cashCupNet = cashCupSum + cupIncome - cupExpense;
+
+                    const usdIncome = cashIncomeByCurrency.get('USD') || 0;
+                    const usdExpense = cashExpenseByCurrency.get('USD') || 0;
+                    const cashUsdNet = cashUsdSum + usdIncome - usdExpense;
+
                     // Helper to determine payment category for a transaction
                     const getTxPaymentCategory = (tx: Transaction): 'usd' | 'transfer' | 'cash_cup' | 'mixed' => {
                       const payments = tx.payments || [];
@@ -3845,8 +3865,13 @@ export default function POS() {
                               <Banknote className="w-3.5 h-3.5" />
                             </div>
                             <span className="text-xs font-black text-emerald-900 truncate">
-                              {formatMoney(cashCupSum, baseCurrency.symbol)}
+                              {formatMoney(cashCupNet, baseCurrency.symbol)}
                             </span>
+                            {(cupIncome > 0 || cupExpense > 0) && (
+                              <span className="text-[7px] font-bold text-emerald-700 uppercase mt-0.5">
+                                Ventas {formatMoney(cashCupSum, baseCurrency.symbol)} · Ingresos +{formatMoney(cupIncome, baseCurrency.symbol)} · Egresos -{formatMoney(cupExpense, baseCurrency.symbol)}
+                              </span>
+                            )}
                           </div>
 
                           <div className="bg-amber-50/80 border border-amber-100 rounded-xl p-2.5 flex flex-col justify-between shadow-sm">
@@ -3856,10 +3881,10 @@ export default function POS() {
                             </div>
                             <div>
                               <span className="text-xs font-black text-amber-900 block truncate">
-                                ${cashUsdSum.toFixed(2)} USD
+                                ${cashUsdNet.toFixed(2)} USD
                               </span>
                               <span className="text-[8px] font-bold text-amber-600 block">
-                                {formatMoney(cashUsdSum * (currencies.find(c => c.code === 'USD')?.rateToBase || 1), baseCurrency.symbol)} eq.
+                                {formatMoney(cashUsdNet * (currencies.find(c => c.code === 'USD')?.rateToBase || 1), baseCurrency.symbol)} eq.
                               </span>
                             </div>
                           </div>
@@ -4774,7 +4799,7 @@ export default function POS() {
                 Cobrar Efectivo
               </button>
               
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-1 gap-1.5">
                 <button 
                   disabled={cart.length === 0}
                   onClick={() => {
@@ -4793,14 +4818,7 @@ export default function POS() {
                   <CreditCard className="w-3.5 h-3.5" />
                   Transferir
                 </button>
-                <button 
-                  disabled={cart.length === 0}
-                  onClick={() => openCheckout()}
-                  className="py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl font-black text-[9px] uppercase tracking-wider transition-all shadow-xs disabled:opacity-20 active:scale-98 flex items-center justify-center gap-1.5"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Cobro Mixto
-                </button>
+
               </div>
             </div>
           </div>
