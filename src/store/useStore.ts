@@ -2004,9 +2004,11 @@ export const useStore = create<AppState>()(
       lastTurnNumber: nextTurn,
       cart: [] // ASEGURAR QUE EL CARRITO ESTÉ VACÍO AL ABRIR NUEVO TURNO
     }));
-    // Offline-first: never fire-and-forget a master write. The session must
-    // survive a reload and be retried through the operation queue.
+    // Offline-first: persistir por dos vías antes de devolver el control.
+    // Esto evita que un cierre/apertura inmediata de otro turno deje un snapshot
+    // anterior en IndexedDB si el usuario recarga o cambia de módulo enseguida.
     await enqueueOfflineItem('cash_session', sessionWithSequentialId, `cash-open:${sessionWithSequentialId.id}`);
+    await flushLocalStateStorage();
     return true;
   },
   closeSession: async (sessionId, closingBalances, workerName, closingDate, discrepancyDeduction, sessionMeta) => {
@@ -2029,12 +2031,35 @@ export const useStore = create<AppState>()(
       return false;
     }
 
-    const sessionTxs = get().transactions.filter(t =>
-      t.sessionId
+    // Recuperar primero cualquier venta que esté durablemente en la cola.
+    // Esto es especialmente importante offline: el cierre del turno N+1 no
+    // puede depender de que Zustand haya terminado de hidratar el turno N.
+    if (typeof navigator === 'undefined' || navigator.onLine === false) {
+      try { await get().restoreTransactionsFromBackup(); } catch (error) {
+        console.warn('[closeSession] No se pudo reconstruir el historial offline antes del cierre:', error);
+      }
+    }
+
+    const queuedSessionTxs = getOfflineQueue()
+      .filter(item =>
+        item.type === 'transaction' &&
+        item.status !== 'conflict' &&
+        item.data?.sessionId === sessionId &&
+        item.data?.id
+      )
+      .map(item => item.data as Transaction);
+
+    const txById = new Map<string, Transaction>();
+    for (const tx of get().transactions || []) txById.set(String(tx.id), tx);
+    for (const tx of queuedSessionTxs) txById.set(String(tx.id), tx);
+
+    const sessionTxs = Array.from(txById.values()).filter(t =>
+      !t.deletedAt &&
+      (t.sessionId
         ? t.sessionId === session.id
         : (t.branchId === session.branchId &&
            new Date(t.date).getTime() >= new Date(session.openedAt).getTime() &&
-           (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime()))
+           (!session.closedAt || new Date(t.date).getTime() <= new Date(session.closedAt).getTime())))
     );
     const user = get().users.find(u => u.id === session.userId || u.name?.toLowerCase() === (workerName || session.workerName)?.toLowerCase());
     const commissions = sessionTxs.reduce((sum, tx) =>
@@ -2090,6 +2115,9 @@ export const useStore = create<AppState>()(
       salarySettlements: [...(state.salarySettlements || []).filter(st => st.sessionId !== sessionId), settlement],
       cart: []
     }));
+    // El cierre offline es un evento crítico: confirmar la escritura del estado
+    // local antes de permitir abrir otro turno o salir del POS.
+    await flushLocalStateStorage();
     return true;
   },
   updateCashSession: (id, updates) => {
