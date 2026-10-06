@@ -1188,28 +1188,39 @@ export default function POS() {
     }
   };
 
-  const handleAddMovement = (e: React.FormEvent) => {
+  const handleAddMovement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentSession) return;
     const amt = parseFloat(movementData.amount);
     if (isNaN(amt) || amt <= 0) return;
 
-    addCashMovement(currentSession.id, {
-      id: crypto.randomUUID(),
-      sessionId: currentSession.id,
-      branchId: currentSession.branchId || currentBranchId,
-      workerName: currentSession.workerName || sessionWorkerName || currentUser?.name || 'Vendedor',
-      type: movementData.type,
-      amount: amt,
-      currencyCode: movementData.currencyCode,
-      description: movementData.description,
-      date: new Date().toISOString()
-    });
+    try {
+      const saved = await addCashMovement(currentSession.id, {
+        id: crypto.randomUUID(),
+        sessionId: currentSession.id,
+        branchId: currentSession.branchId || currentBranchId,
+        workerName: currentSession.workerName || sessionWorkerName || currentUser?.name || 'Vendedor',
+        type: movementData.type,
+        amount: amt,
+        currencyCode: movementData.currencyCode,
+        description: movementData.description,
+        date: new Date().toISOString()
+      });
 
-    addNotification(`Movimiento de ${movementData.type === 'income' ? 'entrada' : 'salida'} registrado: ${formatMoney(amt, movementData.currencyCode)}`, 'success');
-    setMovementData({ type: 'expense', amount: '', currencyCode: 'CUP', description: '' });
+      if (!saved) {
+        throw new Error('El movimiento no pudo guardarse de forma duradera.');
+      }
+
+      addNotification(
+        `Movimiento de ${movementData.type === 'income' ? 'entrada' : 'salida'} registrado: ${formatMoney(amt, movementData.currencyCode)}`,
+        'success'
+      );
+      setMovementData({ type: 'expense', amount: '', currencyCode: 'CUP', description: '' });
+    } catch (error: any) {
+      console.error('[POS] Error guardando movimiento de caja:', error);
+      setPosError(error?.message || 'No se pudo guardar el movimiento de caja.');
+    }
   };
-
   // Barcode scanner moved lower
 
   const subtotalBase = cart.reduce((sum, item) => {
