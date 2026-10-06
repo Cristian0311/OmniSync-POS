@@ -1943,6 +1943,18 @@ export const useStore = create<AppState>()(
 
   cashSessions: [],
   openSession: async (session) => {
+    // Antes de crear un nuevo turno offline, reconstruir cualquier venta que
+    // siga protegida en el outbox. Así abrir/cerrar los turnos 2, 3, 4... nunca
+    // puede reemplazar el historial local acumulado por un snapshot incompleto.
+    if (typeof navigator === 'undefined' || navigator.onLine === false) {
+      try {
+        await waitForOfflineQueueReady();
+        await get().restoreTransactionsFromBackup();
+      } catch (error) {
+        console.warn('[openSession] No se pudo reconstruir el historial offline antes de abrir:', error);
+      }
+    }
+
     const existingSessions = get().cashSessions || [];
     let maxTurn = 0;
     existingSessions.forEach(s => {
