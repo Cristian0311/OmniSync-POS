@@ -925,29 +925,50 @@ export async function pushWarrantyToSupabase(warranty: Warranty) {
   }
 }
 
-export async function pushCurrencyToSupabase(currency: Currency) {
+export async function pushCurrencyToSupabase(currency: Currency): Promise<boolean> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    enqueueOfflineItem('currency', currency, currency.code);
-    return;
+    await enqueueOfflineItem('currency', currency, currency.code);
+    return false;
   }
+
   const supabase = getSupabase();
   if (!supabase) {
-    enqueueOfflineItem('currency', currency, currency.code);
-    return;
+    await enqueueOfflineItem('currency', currency, currency.code);
+    return false;
   }
+
   try {
     const row = {
       code: currency.code,
       name: currency.name,
       symbol: currency.symbol,
-      rate_to_base: currency.rateToBase,
-      is_base: currency.isBase
+      rate_to_base: Number(currency.rateToBase),
+      is_base: Boolean(currency.isBase)
     };
+
     const result = await safeUpsert(supabase, 'currencies', row, { onConflict: 'code' });
     if (result?.error) throw result.error;
-  } catch (e) {
-    enqueueOfflineItem('currency', currency, currency.code);
-    console.warn("Supabase push currency failed:", e);
+
+    // Verify the value that the server accepted. This prevents the UI from
+    // reporting success when RLS/schema/network conditions rejected the write.
+    const { data: verified, error: verifyError } = await supabase
+      .from('currencies')
+      .select('code, rate_to_base')
+      .eq('code', currency.code)
+      .maybeSingle();
+
+    if (verifyError) throw verifyError;
+
+    const serverRate = Number(verified?.rate_to_base);
+    if (!Number.isFinite(serverRate) || serverRate !== Number(currency.rateToBase)) {
+      throw new Error(`Supabase no confirmó la tasa ${currency.code}. Valor servidor: ${verified?.rate_to_base ?? 'sin valor'}.`);
+    }
+
+    return true;
+  } catch (e: any) {
+    await enqueueOfflineItem('currency', currency, currency.code);
+    console.warn('Supabase push currency failed:', e);
+    return false;
   }
 }
 

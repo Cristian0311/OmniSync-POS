@@ -764,15 +764,49 @@ export const useStore = create<AppState>()(
 
   currencies: INITIAL_CURRENCIES,
   
-  updateCurrencyRate: (code, newRate) => {
+  updateCurrencyRate: async (code, newRate) => {
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    const normalizedRate = Number(newRate);
+
+    if (!['CUP', 'USD', 'EUR'].includes(normalizedCode) || !Number.isFinite(normalizedRate) || normalizedRate <= 0) {
+      get().addNotification('La tasa de cambio no es válida.', 'error');
+      return false;
+    }
+
     set((state) => ({
       currencies: (state.currencies || INITIAL_CURRENCIES)
         .filter(c => ['CUP', 'USD', 'EUR'].includes(c.code))
-        .map(c => c.code === code ? { ...c, rateToBase: newRate } : c)
+        .map(c => c.code === normalizedCode ? { ...c, rateToBase: normalizedRate } : c)
     }));
-    const updated = get().currencies.find(c => c.code === code);
-    if (updated) {
-      pushCurrencyToSupabase(updated);
+
+    const updated = get().currencies.find(c => c.code === normalizedCode);
+    if (!updated) return false;
+
+    // Persist the local value before any subsequent sync can replace it.
+    try {
+      await flushLocalStateStorage();
+    } catch (error) {
+      console.warn('[Currency] No se pudo confirmar el snapshot local:', error);
+    }
+
+    try {
+      const saved = await pushCurrencyToSupabase(updated);
+      if (saved) {
+        return true;
+      }
+
+      get().addNotification(
+        `Tasa ${normalizedCode} guardada localmente y pendiente de sincronización.`,
+        'info'
+      );
+      return true;
+    } catch (error: any) {
+      get().addNotification(
+        `No se pudo guardar la tasa ${normalizedCode} en la nube.`,
+        'error',
+        error?.message || 'Error desconocido'
+      );
+      return false;
     }
   },
 
